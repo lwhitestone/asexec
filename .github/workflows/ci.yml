@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install (with dev extras)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+      - name: Run tests (offline — drand round is baked as a fixture)
+        run: python -m pytest -q
+      - name: CLI smoke
+        run: |
+          asexec --version
+          asexec keygen --out /tmp/ci.key
+          asexec preregister --key /tmp/ci.key --subject src --window 2099-01-01T00:00:00Z \
+            --target-provider p --target-model m --no-drand --out /tmp/pre.json
+          asexec verify /tmp/pre.json --tests bedrock

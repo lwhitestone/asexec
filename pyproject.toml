@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "asexec"
+version = "0.2.0"
+description = "Pre-registration & notarization primitive for AI evaluations — commit-then-reveal receipts so silence becomes evidence"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Luke Whitestone" }]
+keywords = ["ai-safety", "evaluations", "pre-registration", "attestation", "cryptography", "notarization"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security :: Cryptography",
+]
+dependencies = [
+    "pynacl>=1.5",   # ed25519 signing/verification
+    "py_ecc>=6.0",   # BLS12-381 verification for drand quicknet freshness anchor
+]
+
+[project.optional-dependencies]
+blake3 = ["blake3>=0.3"]   # optional alternative content-hash algorithm
+dev = ["pytest>=7"]
+
+[project.scripts]
+asexec = "asexec.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/lwhitestone/asexec"
+Issues = "https://github.com/lwhitestone/asexec/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/asexec"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
