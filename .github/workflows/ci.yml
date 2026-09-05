@@ -27,6 +27,6 @@ jobs:
         run: |
           asexec --version
           asexec keygen --out /tmp/ci.key
-          asexec preregister --key /tmp/ci.key --subject src --window 2099-01-01T00:00:00Z \
-            --target-provider p --target-model m --no-drand --out /tmp/pre.json
-          asexec verify /tmp/pre.json --tests bedrock
+          asexec prereg --key /tmp/ci.key --subject src --due 2099-01-01T00:00:00Z \
+            --target "model m via provider p" --out /tmp/pre.json
+          asexec verify /tmp/pre.json --tests BDR

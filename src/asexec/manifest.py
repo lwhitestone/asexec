@@ -10,89 +10,75 @@ A manifest is a small envelope::
 
 Only the ``payload`` (body) is signed, over the PAE construction in
 ``canonical.py``. Bespoke JSON, borrowing in-toto field names (`subject`,
-`predicateType`, `predicate`-style `notes`) without the DSSE/in-toto tooling.
+`predicateType`) without the DSSE/in-toto tooling.
+
+Typed construction/validation lives in ``models.py`` (Pydantic); the crypto
+here stays dict-based so the signed bytes are exactly the canonical bytes of a
+plain dict — see ``canonical.py``.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
-from . import PREDICATE_TYPE, SCHEMA_VERSION
 from .canonical import canonical_bytes, signing_input
 from .errors import ManifestError
+from .models import Anchor, Manifest, ManifestBody, Signature
 from . import keys
 
 # Bedrock = the mandatory minimum whose absence breaks verifiability of the
-# central commitment -> fulfillment / gap claim (the governing rule from the
-# interview). 0.2.0 splits it into two disjoint reasons a field is bedrock:
+# central commitment -> fulfillment / gap claim. Two disjoint reasons a field is
+# bedrock:
 #
 #   structural : format-frame invariants — a body without these is not an
 #                asexec manifest at all (they scope every other check).
-#   semantic   : the two claims the tool actually adjudicates — WHAT was
-#                committed to (target_identity) and BY WHEN it must be
-#                disclosed (disclosure_window). Without these there is no
-#                commitment to verify against.
+#   semantic   : the claim the tool actually adjudicates — WHAT was committed to
+#                (``target``). The deadline (``due``) is *optional*: a commitment
+#                with no deadline simply stays ``open`` forever, so it is not
+#                bedrock.
 #
 # Everything else — the drand floor, the ceiling witness, subject/hash_alg,
-# free-text — is individually optional (roadmap #1). `subject`/`hash_alg` are
-# *conditionally* required: a content claim is meaningless without its
+# declaration, free-text — is individually optional. `subject`/`hash_alg` are
+# *conditionally* required together: a content claim is meaningless without its
 # algorithm, so `hash_alg` is required iff `subject` is present.
 _BEDROCK_STRUCTURAL = ("schema_version", "predicateType", "phase")
-_BEDROCK_SEMANTIC = ("target_identity", "disclosure_window")
+_BEDROCK_SEMANTIC = ("target",)
+
+_DEFAULT_HASH_ALG = "sha-256"
 
 
-def _base_body(phase: str, target_identity: dict, disclosure_window: dict, *,
-               subject: Optional[List[dict]] = None,
-               hash_alg: Optional[str] = None) -> Dict[str, Any]:
-    body: Dict[str, Any] = {
-        "schema_version": SCHEMA_VERSION,
-        "predicateType": PREDICATE_TYPE,
-        "phase": phase,
-        "target_identity": target_identity,
-        "disclosure_window": disclosure_window,
-    }
-    # subject (and its algorithm) are now optional: a pre-registration may
-    # commit to a target + window before any harness exists to hash.
+def _build(phase: str, target, *, due=None, declaration=None,
+           subject=None, hash_alg=None, fulfills=None, prev_hash=None,
+           floor=None, identity=None, provenance=None,
+           repro_recipe=None, notes=None) -> Dict[str, Any]:
+    """Construct + validate a body via the model, return the plain signed dict."""
     if subject:
-        body["subject"] = subject
-        body["hash_alg"] = hash_alg or "sha-256"
-    return body
+        hash_alg = hash_alg or _DEFAULT_HASH_ALG
+    else:
+        hash_alg = None  # never a dangling algorithm without a subject
+    anchor = Anchor(floor=floor) if floor is not None else None
+    body = ManifestBody(
+        phase=phase, target=target, due=due, declaration=declaration,
+        subject=subject, hash_alg=hash_alg, fulfills=fulfills, prev_hash=prev_hash,
+        anchor=anchor, identity=identity, provenance=provenance,
+        repro_recipe=repro_recipe, notes=notes,
+    )
+    return body.to_body()
 
 
-def _attach_optional(body: Dict[str, Any], *, floor=None, identity=None,
-                     provenance=None, repro_recipe=None, notes=None) -> Dict[str, Any]:
-    if floor is not None:
-        # anchor.floor is the signed, sign-time freshness beacon (drand). The
-        # ceiling witness lives at the ENVELOPE level, not here, because its
-        # nonce is ref(body) and so cannot be inside the signed body.
-        body["anchor"] = {"floor": floor}
-    if identity is not None:
-        body["identity"] = identity
-    if provenance is not None:
-        body["provenance"] = provenance
-    if repro_recipe is not None:
-        body["repro_recipe"] = repro_recipe
-    if notes is not None:
-        body["notes"] = notes
-    return body
+def build_prereg(target, *, due=None, declaration=None,
+                 subject=None, hash_alg=None, **optional) -> Dict[str, Any]:
+    return _build("prereg", target, due=due, declaration=declaration,
+                  subject=subject, hash_alg=hash_alg, **optional)
 
 
-def build_preregistration(target_identity, disclosure_window, *,
-                          subject=None, hash_alg=None, **optional) -> Dict[str, Any]:
-    body = _base_body("preregistration", target_identity, disclosure_window,
-                      subject=subject, hash_alg=hash_alg)
-    return _attach_optional(body, **optional)
-
-
-def build_receipt(target_identity, disclosure_window, *, fulfills,
+def build_postreg(target, *, fulfills, due=None, declaration=None,
                   subject=None, prev_hash=None, hash_alg=None, **optional) -> Dict[str, Any]:
-    body = _base_body("receipt", target_identity, disclosure_window,
-                      subject=subject, hash_alg=hash_alg)
-    body["fulfills"] = fulfills
-    body["prev_hash"] = prev_hash
-    return _attach_optional(body, **optional)
+    return _build("postreg", target, due=due, declaration=declaration,
+                  subject=subject, hash_alg=hash_alg, fulfills=fulfills,
+                  prev_hash=prev_hash, **optional)
 
 
 def ref(body: Dict[str, Any]) -> str:
@@ -107,28 +93,28 @@ def ref(body: Dict[str, Any]) -> str:
 def sign(body: Dict[str, Any], private_key: bytes, public_key: bytes) -> Dict[str, Any]:
     _check_bedrock(body)
     sig = keys.sign(private_key, signing_input(body))
-    return {
-        "payloadType": "application/vnd.asexec+json",
-        "payload": body,
-        "signature": {
-            "alg": "ed25519",
-            "keyid": keys.keyid_for(public_key),
-            "pubkey": public_key.hex(),
-            "sig": sig.hex(),
-        },
-    }
+    signature = Signature(
+        keyid=keys.keyid_for(public_key), pubkey=public_key.hex(), sig=sig.hex(),
+    )
+    return Manifest(payload=body, signature=signature).model_dump(mode="json")
 
 
 def _check_bedrock(body: Dict[str, Any]) -> None:
+    """Dict-level signing gate.
+
+    Kept alongside the model so a body assembled by hand (not via ``build_*``)
+    still cannot be signed if it is missing a bedrock field — the model would
+    silently re-supply the structural defaults, so presence must be checked on
+    the dict as given.
+    """
     missing = [f for f in (_BEDROCK_STRUCTURAL + _BEDROCK_SEMANTIC)
                if f not in body or body[f] in (None, "", [], {})]
     if missing:
         raise ManifestError(f"manifest body missing mandatory field(s): {', '.join(missing)}")
-    # conditional: a subject (content claim) is meaningless without its algorithm.
     if body.get("subject") and not body.get("hash_alg"):
         raise ManifestError("manifest body has a 'subject' but no 'hash_alg'")
-    if body["phase"] == "receipt" and "fulfills" not in body:
-        raise ManifestError("receipt manifest missing mandatory 'fulfills'")
+    if body["phase"] == "postreg" and "fulfills" not in body:
+        raise ManifestError("postreg manifest missing mandatory 'fulfills'")
 
 
 def get_body(manifest: Dict[str, Any]) -> Dict[str, Any]:

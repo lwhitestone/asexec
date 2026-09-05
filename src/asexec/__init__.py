@@ -10,7 +10,7 @@ See the module docstrings and the README for what this does — and, loudly,
 what it does NOT — prove.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 SCHEMA_VERSION = "asexec"
 PREDICATE_TYPE = "https://asexec.dev/manifest"

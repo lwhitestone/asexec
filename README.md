@@ -21,12 +21,12 @@ selective-disclosure problem in AI safety evaluations.
 ## What this does — and, plainly, what it does NOT prove
 
 **It proves:**
-- A manifest (pre-registration or receipt) was not altered after signing.
-- A receipt references a specific prior pre-registration, and a receipt sequence wasn't
+- A manifest (pre-registration or post-registration) was not altered after signing.
+- A post-registration references a specific prior pre-registration, and a sequence wasn't
   silently truncated/reordered (a `prev_hash` chain).
-- Whether a declared disclosure window has elapsed and whether matching receipts exist —
-  rendered as an explicit state (`fulfilled` / `open` / `elapsed-no-receipt` /
-  `notarization-only`).
+- Whether a declared disclosure deadline (`due`) has elapsed and whether matching
+  post-registrations exist — rendered as an explicit state (`fulfilled` / `open` /
+  `elapsed-no-receipt` / `notarization-only`).
 - (Optional drand **floor**) that a manifest was created no earlier than a public moment —
   **freshness**, not backdating-resistance.
 - (Optional Roughtime **ceiling**) that a manifest was created no later than time T — but
@@ -65,29 +65,34 @@ Python ≥ 3.9. `verify` is fully offline; only the sign-time drand/ceiling fetc
 
 ```bash
 # 1. one-time: generate a pseudonymous keypair (no CA, no registration)
-asexec keygen --out lab.key
+asexec keygen --out lab.key            # or omit --out for asexec-<uuid>.key
 
-# 2. BEFORE the run: pre-register the harness + a disclosure deadline
-asexec preregister --key lab.key \
+# 2. BEFORE the run: pre-register the target + an (optional) disclosure deadline
+asexec prereg --key lab.key \
     --subject ./harness \
-    --target-provider anthropic --target-model claude-opus-4-8 \
-    --window 2026-08-30T00:00:00Z \
-    --declares "all runs of this harness against this model, in full" \
-    --out preregistration.json --commit
+    --target "claude-opus-4-8 via the anthropic API" \
+    --due 2026-08-30T00:00:00Z \
+    --declaration "all runs of this harness against this model, in full" \
+    --out preregistration.json
 
-# 3. AFTER each run: seal a receipt of the inputs + transcript
-asexec seal --key lab.key --fulfills preregistration.json \
+# 3. AFTER each run: post-register a receipt of the inputs + transcript
+asexec postreg --key lab.key --fulfills preregistration.json \
     --subject ./transcript.txt ./harness \
-    --out receipt.json --commit
+    --out postregistration.json
 
 # 4. ANYONE, offline: verify the cycle + render the commitment state.
-#    --tests names exactly which checks to run; 'bedrock' (sig + keyid) is required.
-asexec verify preregistration.json receipt.json \
-    --tests bedrock,content,chain,keyconsist --artifacts .
+#    --tests names exactly which checks to run; 'BDR' (sig + keyid) is required.
+asexec verify preregistration.json postregistration.json \
+    --tests BDR,content,chain,keyconsist --artifacts .
 ```
 
-Publish `preregistration.json` and `receipt.json` to a public repo. A third party clones it
-and runs step 4 with no network and no involvement from you.
+`--target` takes plain text (as above) or structured JSON via `--target-file`; likewise
+`--declaration`/`--declaration-file` and `--notes`/`--notes-file`. Only `--target` is
+mandatory — `--due` is optional (a commitment with no deadline stays `open` rather than ever
+reaching `elapsed-no-receipt`).
+
+Publish `preregistration.json` and `postregistration.json` to a public repo. A third party
+clones it and runs step 4 with no network and no involvement from you.
 
 ### The verify code (what step 4 emits)
 
@@ -95,30 +100,31 @@ and runs step 4 with no network and no involvement from you.
 tier:
 
 ```
-asexec-verify/1 bedrock=PASS chain=PASS content=PASS keyconsist=PASS
+asexec-verify/1 BDR=PASS chain=PASS content=PASS keyconsist=PASS
 ```
 
 Grammar (`asexec-verify/1` versions the *code format* itself): the literal prefix, then one
 `name=RESULT` token per requested test (`RESULT ∈ {PASS, FAIL}`), **sorted alphabetically**,
 single-space delimited. So the same result set is byte-identical everywhere.
 
-- **You declare your appetite.** `--tests` is required and must include `bedrock` (the
+- **You declare your appetite.** `--tests` is required and must include `BDR` (bedrock — the
   mandatory minimum: signature + keyid). Everything else is opt-in: `content` (subject
-  digests vs. `--artifacts`), `chain` (`prev_hash` integrity), `keyconsist` (receipts share
+  digests vs. `--artifacts`), `chain` (`prev_hash` integrity), `keyconsist` (postregs share
   the prereg's key), `floor` (drand freshness), `ceiling` (Roughtime witness).
 - **Named, not scored — so it's forward-compatible.** Because the code *names* which tests
   ran, adding a test in a later version can never change the meaning of an older code. A code
   means exactly one thing, permanently; a percentage would need its version's denominator to
   interpret.
 - **A requested test that applies *nowhere* is `FAIL`**, never a silent omission (e.g.
-  `--tests bedrock,ceiling` on manifests with no ceiling → `ceiling=FAIL`).
+  `--tests BDR,ceiling` on manifests with no ceiling → `ceiling=FAIL`).
 - **The code is not a certificate.** A quoted or typed code carries the weight of "trust me,
   it passed" — zero. Real verification = you run the tool against the files and get the code.
   The tool prints that disclaimer with every code.
 
-Attach a Roughtime **ceiling** witness at sign time with `--ceiling` on `preregister`/`seal`
-(one network round trip; proves *created no later than* T). Omit `--no-drand` to keep the
-default drand **floor** (*created no earlier than*). The two are disjoint mechanisms — a
+Attach a Roughtime **ceiling** witness at sign time with `--ceiling` on `prereg`/`postreg`
+(one network round trip; proves *created no later than* T). Add `--drand` to attach a drand
+**floor** (*created no earlier than*; opt-in, one network fetch). The two are disjoint
+mechanisms — a
 public-randomness *beacon* (floor, embeddable) vs. an external *witness* over `hash(M)`
 (ceiling, envelope-level).
 
@@ -139,15 +145,17 @@ Bespoke signed JSON, signed over a DSSE-style PAE input (borrows in-toto field n
 tooling). The **bedrock** (mandatory) set is deliberately small — the fields whose absence
 would break verifiability of *commitment → fulfillment/gap*:
 
-- **semantic:** `target_identity` (what was committed to) + `disclosure_window` (by when it
-  must be disclosed);
-- **structural:** the format frame — `schema_version`, `predicateType`, `phase`.
+- **semantic:** `target` (what was committed to — plain text or structured JSON). This is the
+  *only* mandatory claim.
+- **structural:** the format frame — `schema_version`, `predicateType`, `phase`
+  (`prereg` | `postreg`).
 
-Everything else is individually optional: `subject` + `hash_alg` (conditionally paired —
-`hash_alg` is required *iff* a `subject` is present; a pre-registration may commit to a
-target + window before any harness exists to hash), `anchor.floor` (drand, default-on),
-`identity`, `provenance` + `repro_recipe`, free-form `notes`. Specificity is a trust gradient
-the reader prices.
+Everything else is individually optional: `due` (the disclosure deadline — a commitment
+without one simply stays `open`), `declaration` (plain-language or structured commitment
+text), `subject` + `hash_alg` (conditionally paired — `hash_alg` is required *iff* a
+`subject` is present; a pre-registration may commit to a target before any harness exists to
+hash), `anchor.floor` (drand, opt-in via `--drand`), `identity`, `provenance` +
+`repro_recipe`, free-form `notes`. Specificity is a trust gradient the reader prices.
 
 The **ceiling** witness (Roughtime) lives at the *envelope* level, beside `payload` and
 `signature` — not inside the signed body, because its nonce is the body's own hash
@@ -167,12 +175,14 @@ primitive dogfooded honestly at small scale, not a platform or an adoption play.
 
 ## Status
 
-**0.2.0 — alpha.** Rebalances the schema (smaller bedrock set), splits the freshness anchor
-into a typed `anchor.floor` (drand) + an external-witness `ceiling` (Roughtime), and replaces
-the verifier's pass/fail with the canonical `asexec-verify/1` code. See
-[`ROADMAP.md`](./ROADMAP.md) for the version-keyed backlog — including later items
-(per-key public index, re-execution/determinism mode) and what is *explicitly not
-scheduled* (hosted transparency log, identity binding / CA).
+**0.3.0 — alpha.** Realigns the vocabulary and hardens the types (breaking, no back-compat):
+`prereg`/`postreg` commands + phases, a free-form `target` (the only mandatory claim), an
+optional `due` deadline + `declaration`, opt-in drand `--drand`, the `BDR` bedrock code
+token, and Pydantic-typed manifest construction. Builds on 0.2.0's schema rebalance + typed
+`anchor.floor` (drand) / external-witness `ceiling` (Roughtime) + canonical
+`asexec-verify/1` code. See [`ROADMAP.md`](./ROADMAP.md) for the version-keyed backlog —
+including later items (per-key public index, re-execution/determinism mode) and what is
+*explicitly not scheduled* (hosted transparency log, identity binding / CA).
 
 > **Ceiling — status:** the Roughtime verification protocol (delegation chain, Merkle path,
 > validity window) is fully implemented and offline-verifiable. Long-term keys for four public

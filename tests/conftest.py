@@ -11,17 +11,13 @@ def keypair():
     return priv, pub
 
 
-def _window(closes):
-    return {"closes": closes, "declares": "all runs in full"}
-
-
 @pytest.fixture
 def make_commitment(tmp_path):
-    """Factory: build a signed prereg (+ optional receipts) over real artifacts.
+    """Factory: build a signed prereg (+ optional postregs) over real artifacts.
 
     Returns a dict with paths and the signing keypair. No drand (offline).
     """
-    def _make(closes="2099-01-01T00:00:00Z", n_receipts=1, priv=None, pub=None):
+    def _make(due="2099-01-01T00:00:00Z", n_receipts=1, priv=None, pub=None):
         if priv is None:
             priv, pub = keys.generate()
         art = tmp_path / "artifacts"
@@ -30,7 +26,8 @@ def make_commitment(tmp_path):
         target = {"kind": "api", "provider": "anthropic", "model_id": "m", "endpoint": ""}
 
         subj = hashing.build_subject([str(art / "harness")])
-        pre_body = manifest.build_preregistration(target, _window(closes), subject=subj)
+        pre_body = manifest.build_prereg(target, due=due, declaration="all runs in full",
+                                         subject=subj)
         pre = manifest.sign(pre_body, priv, pub)
         pre_path = tmp_path / "prereg.json"
         manifest.save(pre, str(pre_path))
@@ -42,7 +39,7 @@ def make_commitment(tmp_path):
             tpath = art / f"transcript{i}.txt"
             tpath.write_text(f"run {i}: score=0.{i}\n")
             rsubj = hashing.build_subject([str(tpath), str(art / "harness")])
-            rbody = manifest.build_receipt(target, _window(closes), fulfills=pre_ref,
+            rbody = manifest.build_postreg(target, due=due, fulfills=pre_ref,
                                            subject=rsubj, prev_hash=prev)
             r = manifest.sign(rbody, priv, pub)
             rp = tmp_path / f"receipt{i}.json"

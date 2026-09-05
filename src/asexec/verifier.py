@@ -7,7 +7,7 @@ Output: a canonical plaintext CODE, never a percentage or tier
 -------------------------------------------------------------
 ``verify`` runs a caller-chosen set of tests and emits one code per run::
 
-    asexec-verify/1 bedrock=PASS floor=PASS
+    asexec-verify/1 BDR=PASS floor=PASS
 
 Grammar (spec'd here so any implementation reproduces it byte-for-byte):
 
@@ -16,8 +16,8 @@ Grammar (spec'd here so any implementation reproduces it byte-for-byte):
   - One ``name=RESULT`` token per requested test, ``RESULT`` in ``{PASS, FAIL}``.
   - Tokens are **sorted alphabetically by name** and single-space delimited.
 
-So the same result set is byte-identical everywhere (``bedrock=PASS floor=PASS``,
-never ``floor=PASS bedrock=PASS``). Because the code *names* which tests ran,
+So the same result set is byte-identical everywhere (``BDR=PASS floor=PASS``,
+never ``floor=PASS BDR=PASS``). Because the code *names* which tests ran,
 adding a test in a later version can never change the meaning of an older code:
 a code means exactly one thing, permanently. A percentage/tier would need its
 version's denominator to interpret — the code is self-describing, a score is not.
@@ -30,8 +30,8 @@ every code.
 
 Tests (the catalog — only *verifiable* claims, no self-declarations)
 --------------------------------------------------------------------
-  - ``bedrock``    : signature over the PAE input + keyid matches pubkey.
-                     Applies to every manifest. **Required in every run.**
+  - ``BDR``        : bedrock — signature over the PAE input + keyid matches
+                     pubkey. Applies to every manifest. **Required in every run.**
   - ``ceiling``    : a ceiling witness (Roughtime) signature verifies against a
                      pinned key AND its nonce == ref(payload). Applies to
                      manifests that carry a ceiling.
@@ -48,14 +48,15 @@ A requested test is ``PASS`` iff it holds everywhere it applies AND it applies
 somewhere; a requested test that applies **nowhere** is ``FAIL``
 (requested-but-absent), never a silent omission or a vacuous pass.
 
-States (per commitment = a pre-registration + the receipts that fulfil it)
---------------------------------------------------------------------------
+States (per commitment = a prereg + the postregs that fulfil it)
+----------------------------------------------------------------
 Rendered in the human report above the code; the verifier RENDERS these, it
 never adjudicates intent or whether a commitment was "good enough":
-  - fulfilled          : >=1 valid receipt references this pre-registration
-  - open               : 0 receipts and the disclosure window has not elapsed
-  - elapsed-no-receipt : 0 receipts and the window has elapsed
-  - notarization-only  : a receipt with no matching pre-registration provided
+  - fulfilled          : >=1 valid postreg references this prereg
+  - open               : 0 postregs and the ``due`` deadline has not elapsed
+                         (or no ``due`` was declared — an open-ended commitment)
+  - elapsed-no-receipt : 0 postregs and the ``due`` deadline has elapsed
+  - notarization-only  : a postreg with no matching prereg provided
 """
 
 from __future__ import annotations
@@ -74,12 +75,12 @@ CODE_VERSION = "asexec-verify/1"
 
 # The test catalog, alphabetical (the order names appear in a code).
 TEST_CATALOG: Tuple[str, ...] = (
-    "bedrock", "ceiling", "chain", "content", "floor", "keyconsist",
+    "BDR", "ceiling", "chain", "content", "floor", "keyconsist",
 )
 
-# bedrock is the mandatory minimum: a run that does not check it is not a
+# BDR (bedrock) is the mandatory minimum: a run that does not check it is not a
 # meaningful asexec verification, so `verify` requires it explicitly.
-REQUIRED_TEST = "bedrock"
+REQUIRED_TEST = "BDR"
 
 DISCLAIMER = (
     "this code is only meaningful if reproduced — do not treat a quoted code "
@@ -111,12 +112,12 @@ NON_CLAIMS = [
 def parse_tests(spec: str) -> List[str]:
     """Parse a ``--tests`` string into a validated, de-duplicated list.
 
-    Raises ``VerificationError`` on an unknown test or if ``bedrock`` is absent
+    Raises ``VerificationError`` on an unknown test or if ``BDR`` is absent
     (no implicit default; the caller must declare its appetite explicitly).
     """
     names = [t.strip() for t in spec.split(",") if t.strip()]
     if not names:
-        raise VerificationError("no tests requested; --tests must list at least 'bedrock'")
+        raise VerificationError("no tests requested; --tests must list at least 'BDR'")
     unknown = [t for t in names if t not in TEST_CATALOG]
     if unknown:
         raise VerificationError(
@@ -237,11 +238,11 @@ def verify_paths(paths: List[str], tests: List[str],
                "keyid": sig.get("keyid"), "signature": sig, "floor": floor,
                "ceiling": ceiling, "content": content}
         manifests_report.append(rec)
-        if body.get("phase") == "preregistration" and sig.get("ref"):
+        if body.get("phase") == "prereg" and sig.get("ref"):
             preregs[sig["ref"]] = {"ref": sig["ref"], "keyid": sig.get("keyid"),
-                                   "window": body.get("disclosure_window", {}),
+                                   "due": body.get("due"),
                                    "receipts": []}
-        elif body.get("phase") == "receipt":
+        elif body.get("phase") == "postreg":
             receipts.append((sig.get("ref"), body, sig))
 
     notarization_only = []
@@ -300,10 +301,10 @@ def _evaluate(tests, manifests, commitments, artifacts_dir) -> Dict[str, Dict[st
     res: Dict[str, Dict[str, Any]] = {}
     with_receipts = [c for c in commitments if c["receipts"]]
 
-    if "bedrock" in tests:
+    if "BDR" in tests:
         units = [bool(m["signature"].get("signature_ok") and m["signature"].get("keyid_ok"))
                  for m in manifests]
-        res["bedrock"] = _tally(units, "no manifests to verify", "manifest(s)")
+        res["BDR"] = _tally(units, "no manifests to verify", "manifest(s)")
 
     if "floor" in tests:
         units = [m["floor"]["status"] == "verified"
@@ -341,11 +342,11 @@ def _build_code(tests: List[str], results: Dict[str, Dict[str, Any]]) -> str:
 def _commitment_state(pr: Dict[str, Any], now: float) -> str:
     if pr["receipts"]:
         return "fulfilled"
-    closes = pr["window"].get("closes")
-    if not closes:
+    due = pr.get("due")
+    if not due:
         return "open"  # no deadline declared -> cannot elapse
     try:
-        return "elapsed-no-receipt" if now >= _parse_iso(closes) else "open"
+        return "elapsed-no-receipt" if now >= _parse_iso(due) else "open"
     except Exception:
         return "open"
 

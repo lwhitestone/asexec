@@ -10,8 +10,7 @@ def _target():
     return {"kind": "api", "provider": "p", "model_id": "m", "endpoint": ""}
 
 
-def _win():
-    return {"closes": "2099-01-01T00:00:00Z"}
+DUE = "2099-01-01T00:00:00Z"
 
 
 def _subj():
@@ -22,13 +21,20 @@ def test_schema_and_predicate_identifiers():
     # Plain, unversioned format identifiers (no parallel v1/v2 numbering scheme).
     assert SCHEMA_VERSION == "asexec"
     assert PREDICATE_TYPE == "https://asexec.dev/manifest"
-    body = manifest.build_preregistration(_target(), _win(), subject=_subj())
+    body = manifest.build_prereg(_target(), due=DUE, subject=_subj())
     assert body["schema_version"] == "asexec"
     assert body["predicateType"] == "https://asexec.dev/manifest"
+    assert body["phase"] == "prereg"
+
+
+def test_target_may_be_freeform_text():
+    # freeform: a plain-string target is a valid (lower-disclosure) commitment.
+    body = manifest.build_prereg("claude-opus-4-8 via the anthropic API", due=DUE)
+    assert body["target"] == "claude-opus-4-8 via the anthropic API"
 
 
 def test_ref_is_signature_independent():
-    body = manifest.build_preregistration(_target(), _win(), subject=_subj())
+    body = manifest.build_prereg(_target(), due=DUE, subject=_subj())
     priv1, pub1 = keys.generate()
     priv2, pub2 = keys.generate()
     m1 = manifest.sign(body, priv1, pub1)
@@ -40,24 +46,30 @@ def test_ref_is_signature_independent():
 
 def test_sign_then_verify_matches():
     priv, pub = keys.generate()
-    body = manifest.build_preregistration(_target(), _win(), subject=_subj())
+    body = manifest.build_prereg(_target(), due=DUE, subject=_subj())
     m = manifest.sign(body, priv, pub)
     assert keys.verify(pub, signing_input(m["payload"]), bytes.fromhex(m["signature"]["sig"]))
 
 
 def test_subject_optional_at_prereg():
-    # 0.2.0: a pre-registration may commit to target + window before hashing a harness.
+    # a pre-registration may commit to a target before hashing a harness.
     priv, pub = keys.generate()
-    body = manifest.build_preregistration(_target(), _win())
+    body = manifest.build_prereg(_target(), due=DUE)
     assert "subject" not in body and "hash_alg" not in body
     m = manifest.sign(body, priv, pub)  # bedrock without subject is fine
-    assert m["payload"]["phase"] == "preregistration"
+    assert m["payload"]["phase"] == "prereg"
+
+
+def test_due_optional_at_prereg():
+    # a deadline is optional: such a commitment simply stays 'open' forever.
+    body = manifest.build_prereg(_target())
+    assert "due" not in body
 
 
 def test_subject_requires_hash_alg():
     # a subject present but its algorithm stripped -> conditional bedrock fails.
     priv, pub = keys.generate()
-    body = manifest.build_preregistration(_target(), _win(), subject=_subj())
+    body = manifest.build_prereg(_target(), due=DUE, subject=_subj())
     del body["hash_alg"]
     with pytest.raises(ManifestError):
         manifest.sign(body, priv, pub)
@@ -65,25 +77,25 @@ def test_subject_requires_hash_alg():
 
 def test_missing_semantic_bedrock_rejected():
     priv, pub = keys.generate()
-    # no disclosure_window
+    # no target (the only semantic bedrock field)
     body = {"schema_version": SCHEMA_VERSION, "predicateType": PREDICATE_TYPE,
-            "phase": "preregistration", "target_identity": _target()}
+            "phase": "prereg", "due": DUE}
     with pytest.raises(ManifestError):
         manifest.sign(body, priv, pub)
 
 
 def test_missing_structural_bedrock_rejected():
     priv, pub = keys.generate()
-    body = manifest.build_preregistration(_target(), _win(), subject=_subj())
+    body = manifest.build_prereg(_target(), due=DUE, subject=_subj())
     del body["predicateType"]  # structural frame invariant gone
     with pytest.raises(ManifestError):
         manifest.sign(body, priv, pub)
 
 
-def test_receipt_requires_fulfills():
+def test_postreg_requires_fulfills():
     priv, pub = keys.generate()
-    body = manifest.build_preregistration(_target(), _win(), subject=_subj())
-    body["phase"] = "receipt"  # now it's a receipt with no fulfills
+    body = manifest.build_prereg(_target(), due=DUE, subject=_subj())
+    body["phase"] = "postreg"  # now it's a postreg with no fulfills
     with pytest.raises(ManifestError):
         manifest.sign(body, priv, pub)
 
@@ -92,7 +104,7 @@ def test_floor_lands_in_anchor_and_ref_stable_across_ceiling():
     priv, pub = keys.generate()
     floor = {"floor_type": "drand", "chain_hash": "ab", "round": 1,
              "signature": "cd", "randomness": "ef"}
-    body = manifest.build_preregistration(_target(), _win(), subject=_subj(), floor=floor)
+    body = manifest.build_prereg(_target(), due=DUE, subject=_subj(), floor=floor)
     assert body["anchor"]["floor"]["floor_type"] == "drand"
     m = manifest.sign(body, priv, pub)
     ref_before = manifest.ref(manifest.get_body(m))
