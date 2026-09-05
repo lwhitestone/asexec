@@ -261,7 +261,7 @@ def test_ceiling_through_verify_paths(make_commitment, monkeypatch):
     manifest.attach_ceiling(mani, _ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response))
     manifest.save(mani, c["prereg"])
 
-    rep = verifier.verify_paths([c["prereg"]], ["bedrock", "ceiling"])
+    rep = verifier.verify_paths([c["prereg"]], ["BDR", "ceiling"])
     assert rep["results"]["ceiling"]["result"] == "PASS"
-    assert rep["code"] == "asexec-verify/1 bedrock=PASS ceiling=PASS"
+    assert rep["code"] == "asexec-verify/1 BDR=PASS ceiling=PASS"
     assert rep["ceiling_trust"] and "trusting synthetic" in rep["ceiling_trust"][0]

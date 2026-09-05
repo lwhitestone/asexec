@@ -1,65 +1,111 @@
 """asexec command-line interface.
 
-Commands: keygen · preregister · seal · verify · identity.
+Commands: keygen · prereg · postreg · verify · identity.
 
-Design boundaries (from the plan): files-first (optional ``--commit`` for git
-convenience, commit only, never push); ``verify`` is fully offline; only the
-sign-time drand fetch and ``identity verify`` touch the network.
+Design boundaries: files-first; ``verify`` is fully offline; only the sign-time
+drand (``--drand``) / ceiling (``--ceiling``) fetches and ``identity verify``
+touch the network.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import subprocess
+import os
 import sys
-from typing import List, Optional
+import uuid
+from datetime import datetime
+from typing import Any, Callable, List, Optional, TypeVar, Union
 
 from . import __version__, drand, hashing, identity, keys, manifest, verifier
 from .errors import VerificationError
 
 OK = "✓"
 NO = "✗"
+T = TypeVar("T")
 
 
 # --------------------------------------------------------------------------- #
-# helpers
+# input helpers — one typed "arg XOR file" primitive, reused everywhere
 # --------------------------------------------------------------------------- #
-def _target_identity(args) -> dict:
-    if args.target_weights:
-        alg = args.hash_alg
-        return {"kind": "weights",
-                "digest": {alg: hashing.digest_path(args.target_weights, alg)}}
-    if args.target_provider or args.target_model:
-        return {"kind": "api", "provider": args.target_provider or "",
-                "model_id": args.target_model or "", "endpoint": args.target_endpoint or ""}
-    raise SystemExit("error: give --target-weights PATH or --target-provider/--target-model")
+def _load_json(path: str) -> Union[str, dict]:
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except json.JSONDecodeError as e:
+        raise SystemExit(f"error: {path} must contain valid JSON: {e}")
 
 
-def _disclosure_window(args) -> dict:
-    win = {"closes": args.window}
-    if args.declares:
-        win["declares"] = args.declares
-    return win
+def _get_arg_or_file(args, arg_name: str, file_arg_name: str,
+                     load_file: Callable[[str], T]) -> Optional[Union[str, T]]:
+    """Load a value from either ``--<arg>`` or ``--<file-arg>``, but not both."""
+    value = getattr(args, arg_name, None)
+    file_path = getattr(args, file_arg_name, None)
+    if value and file_path:
+        raise SystemExit(
+            f"error: provide --{arg_name.replace('_', '-')} "
+            f"OR --{file_arg_name.replace('_', '-')}, not both")
+    if value:
+        return value
+    if file_path:
+        try:
+            return load_file(file_path)
+        except FileNotFoundError:
+            raise SystemExit(
+                f"error: --{file_arg_name.replace('_', '-')} not found: {file_path}")
+    return None
 
 
-def _floor(no_drand: bool) -> Optional[dict]:
+def _get_target(args) -> Optional[Union[str, dict]]:
+    return _get_arg_or_file(args, "target", "target_file", _load_json)
+
+
+def _get_declaration(args) -> Optional[Union[str, dict]]:
+    return _get_arg_or_file(args, "declaration", "declaration_file", _load_json)
+
+
+def _get_notes(args) -> Optional[Union[str, dict]]:
+    return _get_arg_or_file(args, "notes", "notes_file", _load_json)
+
+
+def _get_due(args) -> Optional[str]:
+    """Validate the provided ``--due`` ISO-8601 deadline; return it verbatim."""
+    if not args.due:
+        return None
+    try:
+        datetime.fromisoformat(args.due.replace("Z", "+00:00"))
+    except ValueError:
+        raise SystemExit(f"error: --due is not a valid ISO-8601 timestamp: {args.due}")
+    return args.due
+
+
+def _get_floor(args) -> Optional[dict]:
     """Fetch a drand freshness floor (anchor.floor) at sign time, or None."""
-    if no_drand:
+    if not args.drand:
         return None
     try:
         return drand.fetch_floor()
     except Exception as e:
-        sys.stderr.write(f"warning: drand fetch failed ({e}); continuing without freshness floor\n")
+        sys.stderr.write(
+            f"warning: drand fetch failed ({e}); continuing without freshness floor\n")
         return None
 
 
-def _attach_ceiling(mani: dict, body: dict, want_ceiling: bool) -> None:
-    """Optionally fetch a Roughtime ceiling witness and attach it to the envelope.
+def _build_subject(paths: Optional[List[str]], hash_alg: str) -> Optional[list]:
+    return hashing.build_subject(paths, hash_alg) if paths else None
 
-    Sign-time and network-touching (like the drand fetch). The nonce is the
-    body ref, so this must run *after* signing; it does not perturb ref.
-    """
+
+def _resolve_ref(value: str) -> str:
+    """A --fulfills/--prev value may be a manifest file path or a literal ref."""
+    if os.path.isfile(value):
+        return manifest.ref(manifest.get_body(manifest.load(value)))
+    return value
+
+
+def _attach_ceiling(mani: dict, body: dict, want_ceiling: bool) -> None:
+    """Optionally fetch a Roughtime ceiling witness and attach it (sign-time,
+    network). The nonce is the body ref, so this must run *after* signing; it
+    does not perturb ref."""
     if not want_ceiling:
         return
     from . import roughtime
@@ -68,113 +114,89 @@ def _attach_ceiling(mani: dict, body: dict, want_ceiling: bool) -> None:
     try:
         ceiling = roughtime.fetch_ceiling(nonce)
     except Exception as e:
-        sys.stderr.write(f"warning: ceiling witness fetch failed ({e}); continuing without a ceiling\n")
+        sys.stderr.write(
+            f"warning: ceiling witness fetch failed ({e}); continuing without a ceiling\n")
         return
     manifest.attach_ceiling(mani, ceiling)
     print(f"  ceiling : {ceiling.get('ceiling_type')} witness {ceiling.get('witness_id')} "
           f"@ {ceiling.get('midpoint')} (±{ceiling.get('radius')}s)")
 
 
-def _subject(args, hash_alg: str) -> Optional[list]:
-    return hashing.build_subject(args.subject, hash_alg) if args.subject else None
-
-
-def _notes(args) -> Optional[dict]:
-    return {"text": args.notes} if getattr(args, "notes", None) else None
-
-
-def _git_commit(path: str, message: str) -> None:
-    try:
-        subprocess.run(["git", "add", path], check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", message], check=True, capture_output=True)
-        print(f"  committed {path}")
-    except Exception as e:
-        sys.stderr.write(f"warning: --commit failed ({e})\n")
-
-
-def _resolve_ref(value: str) -> str:
-    """A --fulfills/--prev value may be a manifest file path or a literal ref."""
-    import os
-
-    if os.path.isfile(value):
-        return manifest.ref(manifest.get_body(manifest.load(value)))
-    return value
-
-
 # --------------------------------------------------------------------------- #
 # commands
 # --------------------------------------------------------------------------- #
 def cmd_keygen(args) -> int:
-    priv, pub = keys.generate()
-    kid = keys.save(priv, args.out)
+    out = args.out or f"asexec-{uuid.uuid4()}.key"
+    priv, _pub = keys.generate()
+    kid = keys.save(priv, out)
     print(f"{OK} generated ed25519 key")
-    print(f"  secret : {args.out} (keep private; mode 0600)")
-    print(f"  public : {args.out}.pub")
+    print(f"  secret : {out} (keep private; mode 0600)")
+    print(f"  public : {out}.pub")
     print(f"  keyid  : {kid}")
     return 0
 
 
-def cmd_preregister(args) -> int:
+def cmd_prereg(args) -> int:
+    target = _get_target(args)
+    if target is None:
+        raise SystemExit("error: give --target or --target-file (the only mandatory claim)")
     priv, pub = keys.load_signing_key(args.key)
-    body = manifest.build_preregistration(
-        _target_identity(args), _disclosure_window(args),
-        subject=_subject(args, args.hash_alg), hash_alg=args.hash_alg,
-        floor=_floor(args.no_drand), notes=_notes(args),
+    subject = _build_subject(args.subject, args.hash_alg)
+    body = manifest.build_prereg(
+        target,
+        due=_get_due(args),
+        declaration=_get_declaration(args),
+        subject=subject, hash_alg=args.hash_alg,
+        floor=_get_floor(args), notes=_get_notes(args),
     )
     mani = manifest.sign(body, priv, pub)
     _attach_ceiling(mani, body, args.ceiling)
     manifest.save(mani, args.out)
     print(f"{OK} pre-registration written: {args.out}")
-    print(f"  ref   : {manifest.ref(body)}")
-    print(f"  closes: {body['disclosure_window'].get('closes')}")
-    if args.commit:
-        _git_commit(args.out, f"asexec: pre-register {manifest.ref(body)}")
+    print(f"  ref : {manifest.ref(body)}")
+    if body.get("due"):
+        print(f"  due : {body['due']}")
     return 0
 
 
-def cmd_seal(args) -> int:
+def cmd_postreg(args) -> int:
     priv, pub = keys.load_signing_key(args.key)
-    # Inherit target_identity / window / hash_alg from the fulfilled prereg if it's a file.
-    import os
 
     prereg_body = None
     if os.path.isfile(args.fulfills):
         prereg_body = manifest.get_body(manifest.load(args.fulfills))
+
+    # target / due / declaration / hash_alg inherit from the fulfilled prereg
+    # unless overridden on this postreg.
+    target = _get_target(args)
+    if target is None:
+        if prereg_body is None:
+            raise SystemExit("error: no --target and --fulfills is not a readable prereg")
+        target = prereg_body["target"]
+
+    due = _get_due(args) or (prereg_body or {}).get("due")
+    declaration = _get_declaration(args) or (prereg_body or {}).get("declaration")
     hash_alg = args.hash_alg or (prereg_body or {}).get("hash_alg") or hashing.DEFAULT_ALG
 
-    if args.target_weights or args.target_provider or args.target_model:
-        target = _target_identity(argparse.Namespace(**{**vars(args), "hash_alg": hash_alg}))
-    elif prereg_body:
-        target = prereg_body["target_identity"]
-    else:
-        raise SystemExit("error: no target identity and --fulfills is not a readable prereg")
-
-    if args.window:
-        window = _disclosure_window(args)
-    elif prereg_body:
-        window = prereg_body["disclosure_window"]
-    else:
-        raise SystemExit("error: no --window and --fulfills is not a readable prereg")
-
-    subject = hashing.build_subject(args.subject, hash_alg)
-    body = manifest.build_receipt(
-        target, window,
+    subject = _build_subject(args.subject, hash_alg)
+    body = manifest.build_postreg(
+        target,
         fulfills=_resolve_ref(args.fulfills),
-        subject=subject, prev_hash=_resolve_ref(args.prev) if args.prev else None,
-        hash_alg=hash_alg, floor=_floor(args.no_drand),
-        provenance=args.provenance, notes=_notes(args),
+        due=due, declaration=declaration,
+        subject=subject, hash_alg=hash_alg,
+        prev_hash=_resolve_ref(args.prev) if args.prev else None,
+        floor=_get_floor(args), notes=_get_notes(args),
+        provenance=args.provenance,
         repro_recipe=json.loads(args.repro_recipe) if args.repro_recipe else None,
     )
     mani = manifest.sign(body, priv, pub)
     _attach_ceiling(mani, body, args.ceiling)
     manifest.save(mani, args.out)
-    print(f"{OK} receipt written: {args.out}")
-    print(f"  ref     : {manifest.ref(body)}")
-    print(f"  fulfills: {body['fulfills']}")
+    print(f"{OK} post-registration written: {args.out}")
+    print(f"  ref      : {manifest.ref(body)}")
+    print(f"  fulfills : {body['fulfills']}")
     if body.get("prev_hash"):
-        print(f"  prev    : {body['prev_hash']}")
-    if args.commit:
-        _git_commit(args.out, f"asexec: seal receipt {manifest.ref(body)}")
+        print(f"  prev     : {body['prev_hash']}")
     return 0
 
 
@@ -184,10 +206,7 @@ def cmd_verify(args) -> int:
     except VerificationError as e:
         raise SystemExit(f"error: {e}")
 
-    now = None
-    if args.now:
-        now = verifier._parse_iso(args.now)
-    report = verifier.verify_paths(args.paths, tests, artifacts_dir=args.artifacts, now=now)
+    report = verifier.verify_paths(args.paths, tests, artifacts_dir=args.artifacts)
 
     print("=== manifests ===")
     for m in report["manifests"]:
@@ -220,13 +239,13 @@ def cmd_verify(args) -> int:
         print("  (no pre-registrations among the provided manifests)")
     for c in report["commitments"]:
         print(f"  [{c['state'].upper()}] prereg {c['ref']}")
-        print(f"    window closes : {c['window'].get('closes')}")
-        print(f"    receipts      : {len(c['receipts'])}"
+        print(f"    due          : {c.get('due') or '(none declared)'}")
+        print(f"    postregs     : {len(c['receipts'])}"
               + ("" if c["chain_ok"] else f"  {NO} {c['chain_note']}"))
         if not c["key_consistent"]:
-            print(f"    {NO} receipts signed by a different key than the pre-registration")
+            print(f"    {NO} postregs signed by a different key than the pre-registration")
     if report["notarization_only"]:
-        print("\n=== notarization-only (receipts with no matching pre-registration) ===")
+        print("\n=== notarization-only (postregs with no matching pre-registration) ===")
         for n in report["notarization_only"]:
             print(f"  {n['ref']}  (fulfills {n.get('fulfills')})")
 
@@ -278,11 +297,11 @@ def cmd_identity(args) -> int:
 # --------------------------------------------------------------------------- #
 # parser
 # --------------------------------------------------------------------------- #
-def _add_target_flags(p):
-    p.add_argument("--target-weights", help="path to local/open model weights (strong identity)")
-    p.add_argument("--target-provider", help="API model provider (weak identity)")
-    p.add_argument("--target-model", help="API model id/version")
-    p.add_argument("--target-endpoint", help="API endpoint")
+def _add_anchor_flags(p):
+    p.add_argument("--drand", action="store_true",
+                   help="attach a drand freshness floor (proves created no earlier than T; network)")
+    p.add_argument("--ceiling", action="store_true",
+                   help="attach a Roughtime ceiling witness (proves created no later than T; network)")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -295,53 +314,62 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--version", action="version", version=f"asexec {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    g = sub.add_parser("keygen", help="generate an ed25519 keypair (no CA)")
-    g.add_argument("--out", default="asexec.key", help="secret key file (default: asexec.key)")
-    g.set_defaults(func=cmd_keygen)
+    # asexec keygen
+    kg = sub.add_parser("keygen", help="generate an ed25519 keypair (no CA)")
+    kg.add_argument("--out", default=None,
+                    help="secret key file (default: asexec-<uuid>.key)")
+    kg.set_defaults(func=cmd_keygen)
 
-    pr = sub.add_parser("preregister", help="sign a pre-registration before a run")
-    pr.add_argument("--key", required=True)
-    pr.add_argument("--subject", nargs="+", help="path(s) to harness/eval to hash (optional at prereg time)")
-    pr.add_argument("--window", required=True, help="disclosure deadline, ISO-8601 (e.g. 2026-08-30T00:00:00Z)")
-    pr.add_argument("--declares", help="plain-language commitment text")
-    _add_target_flags(pr)
-    pr.add_argument("--hash-alg", default=hashing.DEFAULT_ALG, choices=hashing.available_algorithms())
-    pr.add_argument("--no-drand", action="store_true", help="omit the drand freshness floor")
-    pr.add_argument("--ceiling", action="store_true",
-                    help="attach a Roughtime ceiling witness (proves created no later than T; network)")
+    # asexec prereg
+    pr = sub.add_parser("prereg", help="sign a pre-registration before a run")
+    pr.add_argument("--key", required=True, help="key that signs the prereg")
+    pr.add_argument("--target", help="plain-text target details (what you commit to run)")
+    pr.add_argument("--target-file", help="structured JSON target details")
+    pr.add_argument("--due", help="disclosure deadline, ISO-8601 (optional; e.g. 2026-08-30T00:00:00Z)")
+    pr.add_argument("--declaration", help="plain-language commitment text")
+    pr.add_argument("--declaration-file", help="structured JSON declaration")
+    pr.add_argument("--subject", nargs="+",
+                    help="path(s) to harness/eval to hash (optional at prereg time)")
+    pr.add_argument("--hash-alg", default=hashing.DEFAULT_ALG,
+                    choices=hashing.available_algorithms())
     pr.add_argument("--notes", help="free-form context (hypothesis/methodology)")
+    pr.add_argument("--notes-file", help="structured JSON notes")
+    _add_anchor_flags(pr)
     pr.add_argument("--out", default="preregistration.json")
-    pr.add_argument("--commit", action="store_true", help="git add+commit the file (no push)")
-    pr.set_defaults(func=cmd_preregister)
+    pr.set_defaults(func=cmd_prereg)
 
-    sl = sub.add_parser("seal", help="sign a receipt after a run")
-    sl.add_argument("--key", required=True)
-    sl.add_argument("--fulfills", required=True, help="pre-registration file (or literal ref) this fulfils")
-    sl.add_argument("--subject", nargs="+", required=True, help="path(s) to outputs/transcript/harness to hash")
-    sl.add_argument("--prev", help="prior receipt file (or ref) in this commitment's chain")
-    sl.add_argument("--window", help="override disclosure window (default: inherit from prereg)")
-    sl.add_argument("--declares")
-    _add_target_flags(sl)
-    sl.add_argument("--hash-alg", default=None, choices=hashing.available_algorithms())
-    sl.add_argument("--no-drand", action="store_true")
-    sl.add_argument("--ceiling", action="store_true",
-                    help="attach a Roughtime ceiling witness (proves created no later than T; network)")
-    sl.add_argument("--provenance", choices=["asserted", "reproducible"], default="asserted")
-    sl.add_argument("--repro-recipe", help="JSON: {seed, decode, runtime} if provenance=reproducible")
-    sl.add_argument("--notes")
-    sl.add_argument("--out", default="receipt.json")
-    sl.add_argument("--commit", action="store_true")
-    sl.set_defaults(func=cmd_seal)
+    # asexec postreg
+    po = sub.add_parser("postreg", help="sign a post-registration (receipt) after a run")
+    po.add_argument("--key", required=True)
+    po.add_argument("--fulfills", required=True,
+                    help="pre-registration file (or literal ref) this fulfils")
+    po.add_argument("--target", help="override target (default: inherit from prereg)")
+    po.add_argument("--target-file")
+    po.add_argument("--due", help="override disclosure deadline (default: inherit from prereg)")
+    po.add_argument("--declaration")
+    po.add_argument("--declaration-file")
+    po.add_argument("--subject", nargs="+",
+                    help="path(s) to outputs/transcript/harness to hash")
+    po.add_argument("--hash-alg", default=None, choices=hashing.available_algorithms())
+    po.add_argument("--prev", help="prior postreg file (or ref) in this commitment's chain")
+    po.add_argument("--provenance", choices=["asserted", "reproducible"], default="asserted")
+    po.add_argument("--repro-recipe", help="JSON: {seed, decode, runtime} if provenance=reproducible")
+    po.add_argument("--notes")
+    po.add_argument("--notes-file")
+    _add_anchor_flags(po)
+    po.add_argument("--out", default="postregistration.json")
+    po.set_defaults(func=cmd_postreg)
 
-    v = sub.add_parser("verify", help="verify manifests offline; emit a canonical verify code")
-    v.add_argument("paths", nargs="+", help="manifest file(s) or a directory of them")
-    v.add_argument("--tests", required=True,
-                   help="comma-separated tests to run (MUST include 'bedrock'). "
-                        f"available: {', '.join(verifier.TEST_CATALOG)}")
-    v.add_argument("--artifacts", help="directory of original artifacts, to check content hashes")
-    v.add_argument("--now", help="override 'now' (ISO-8601) for window evaluation (testing)")
-    v.set_defaults(func=cmd_verify)
+    # asexec verify
+    vy = sub.add_parser("verify", help="verify manifests offline; emit a canonical verify code")
+    vy.add_argument("paths", nargs="+", help="manifest file(s) or a directory of them")
+    vy.add_argument("--tests", required=True,
+                    help="comma-separated tests to run (MUST include 'BDR'). "
+                         f"available: {', '.join(verifier.TEST_CATALOG)}")
+    vy.add_argument("--artifacts", help="directory of original artifacts, to check content hashes")
+    vy.set_defaults(func=cmd_verify)
 
+    # asexec identity
     idp = sub.add_parser("identity", help="key<->domain binding via .well-known (no CA)")
     isub = idp.add_subparsers(dest="identity_cmd", required=True)
     ie = isub.add_parser("emit", help="write a .well-known/asexec.json for your key")

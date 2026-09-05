@@ -38,9 +38,10 @@ to the back since it's lowest-control.
 |---|---|---|---|
 | **0.1.0** | shipped (alpha) | Core primitive: keygen · preregister · seal · verify · identity; offline verifier; drand freshness | — |
 | **0.2.0** | shipped (alpha) | Schema rebalance + freshness/ceiling anchors + verifier redesign | #1–#6 |
-| **0.2.1** | next | AI-assisted-prototype handoff — provenance reset; AI assistance considered on a case-by-case basis from here on | — |
-| **0.3.0** | planned | Completeness: per-key public index convention | #10 |
-| **0.4.0** | planned | Re-execution / determinism mode | #12 |
+| **0.3.0** | shipped (alpha) | Term/type/schema realignment: prereg/postreg · free-form `target` · `due`/`declaration` · drand opt-in · `BDR` code token · Pydantic-typed construction | — |
+| **0.3.1** | next | AI-assisted-prototype handoff — provenance reset; AI assistance considered on a case-by-case basis from here on | — |
+| **0.4.0** | planned | Completeness: per-key public index convention | #10 |
+| **0.5.0** | planned | Re-execution / determinism mode | #12 |
 | *unversioned* | opportunistic | Federated cosigner witnesses · multi-party co-signing · regulatory cross-reference field | #15, #13, #14 |
 | *unversioned* | process (not a release) | Dogfooding · land design docs · team/customer usage | #7, #8, #9 |
 | *separate repo* | not core `asexec` | Verification website | #11 |
@@ -143,7 +144,32 @@ The mandatory-set change and the new verifier output are what make this a
      wasn't. A requested test that applies nowhere (e.g. `ceiling` with no
      ceilings present) is `FAIL` (requested-but-absent), never a silent omission.
 
-## 0.2.1 — AI-assisted-prototype handoff  *(next release)*
+## 0.3.0 — term/type/schema realignment  *(shipped)*
+
+A breaking format + CLI + verifier-output change that realigns the vocabulary
+and hardens the types. It adds **no new verifiable claims** — the trust model is
+unchanged; this is a naming / shape / validation pass. It is a `MINOR` bump
+because it changes the signed-byte schema and the verify code.
+
+- **Commands + phases renamed:** `preregister`→`prereg`, `seal`→`postreg`;
+  manifest `phase` values `preregistration`/`receipt`→`prereg`/`postreg`.
+- **Commitment fields realigned:** structured `target_identity` (weights/api
+  kinds) → a **free-form `target`** (plain text or JSON) — the *only* semantic
+  bedrock; `disclosure_window{closes,declares}` split into an **optional**
+  top-level `due` deadline + an optional `declaration`. A commitment with no
+  `due` renders `open` forever (never `elapsed-no-receipt`).
+- **drand floor is opt-in** (`--drand`), no longer default-on.
+- **Verify code bedrock token `bedrock`→`BDR`** (`asexec-verify/1 BDR=PASS …`);
+  the grammar and forward-compat properties are unchanged.
+- **Pydantic-typed construction** (`models.py`): the manifest body/envelope are
+  validated on construction; signing still occurs over the canonical bytes of a
+  plain dict (`model_dump` first), so the PAE signing input is unchanged.
+- **Scope trim:** dropped the `--commit` git convenience and the `--now` verify
+  hook. Ceiling/Roughtime, `prev_hash` chaining, content/subject hashing, and
+  provenance/`repro_recipe` all stay wired.
+- **No back-compat** with 0.2.0 manifests, by design (pre-1.0).
+
+## 0.3.1 — AI-assisted-prototype handoff  *(next release)*
 
 Marks the transition from AI-assisted prototyping to hand-curated maintenance.
 The git history and contributor provenance are reset to a single authored
@@ -151,14 +177,14 @@ baseline; AI assistance is considered on a case-by-case basis from here on. No
 format, schema, or verifier-output change — a `PATCH` bump that records the
 provenance handoff, not new capability.
 
-## 0.3.0 — per-key public index convention
+## 0.4.0 — per-key public index convention
 
 10. **Per-key public index convention** (`.well-known/asexec-index.json` or
     similar) — addresses the completeness/selective-non-registration gap (the
     highest-leverage remaining hole per the market-for-lemons argument).
     Convention-only, no hosting required.
 
-## 0.4.0 — re-execution / determinism mode
+## 0.5.0 — re-execution / determinism mode
 
 12. **Re-execution/determinism mode** — needs to degrade gracefully for
     legitimately non-deterministic evals or it will cry wolf. Wait for real
