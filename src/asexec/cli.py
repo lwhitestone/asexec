@@ -26,9 +26,10 @@ T = TypeVar("T")
 
 
 # --------------------------------------------------------------------------- #
-# input helpers — one typed "arg XOR file" primitive, reused everywhere
+# input helpers
 # --------------------------------------------------------------------------- #
 def _load_json(path: str) -> Union[str, dict]:
+    """Load JSON from the given path."""
     try:
         with open(path) as f:
             return json.load(f)
@@ -57,14 +58,17 @@ def _get_arg_or_file(args, arg_name: str, file_arg_name: str,
 
 
 def _get_target(args) -> Optional[Union[str, dict]]:
+    """Retrieve the target value (from arg xor file), if any."""
     return _get_arg_or_file(args, "target", "target_file", _load_json)
 
 
 def _get_declaration(args) -> Optional[Union[str, dict]]:
+    """Retrieve the declaration value (from arg xor file), if any."""
     return _get_arg_or_file(args, "declaration", "declaration_file", _load_json)
 
 
 def _get_notes(args) -> Optional[Union[str, dict]]:
+    """Retrieve the notes value (from arg xor file), if any."""
     return _get_arg_or_file(args, "notes", "notes_file", _load_json)
 
 
@@ -92,6 +96,8 @@ def _get_floor(args) -> Optional[dict]:
 
 
 def _build_subject(paths: Optional[List[str]], hash_alg: str) -> Optional[list]:
+    """Construct subject data (a list of filenames/dirnames and their associated
+    digest hashes) given source paths and a hash algorithm."""
     return hashing.build_subject(paths, hash_alg) if paths else None
 
 
@@ -126,6 +132,7 @@ def _attach_ceiling(mani: dict, body: dict, want_ceiling: bool) -> None:
 # commands
 # --------------------------------------------------------------------------- #
 def cmd_keygen(args) -> int:
+    """Generate a cryptographic key for signing pre- and post-registrations."""
     out = args.out or f"asexec-{uuid.uuid4()}.key"
     priv, _pub = keys.generate()
     kid = keys.save(priv, out)
@@ -137,6 +144,7 @@ def cmd_keygen(args) -> int:
 
 
 def cmd_prereg(args) -> int:
+    """Write a signed pre-registration, signalling the intended execution."""
     target = _get_target(args)
     if target is None:
         raise SystemExit("error: give --target or --target-file (the only mandatory claim)")
@@ -160,6 +168,8 @@ def cmd_prereg(args) -> int:
 
 
 def cmd_postreg(args) -> int:
+    """Write a signed post-registration, documenting the execution and fulfilling
+    a pre-registration as promised."""
     priv, pub = keys.load_signing_key(args.key)
 
     prereg_body = None
@@ -201,6 +211,9 @@ def cmd_postreg(args) -> int:
 
 
 def cmd_verify(args) -> int:
+    """Run a series of verification tests on the prereg-postreg cycle to prove that
+    this execution met the desired standards. Produces a code summarizing the tests
+    performed and the results of each."""
     try:
         tests = verifier.parse_tests(args.tests)
     except VerificationError as e:
@@ -270,6 +283,10 @@ def cmd_verify(args) -> int:
 
 
 def cmd_identity(args) -> int:
+    """Standalone emit/verify function pair for tying a known public identity via
+    domain to a public key, no certificate authority (CA) needed. ``emit`` a json file
+    which embeds the key and domain and publish it. Anyone may then ``verify`` that
+    the asserted identity association matched up at emit-time."""
     if args.identity_cmd == "emit":
         _priv, pub = keys.load_signing_key(args.key)
         pair = {"keyid": keys.keyid_for(pub), "pubkey": pub.hex()}
@@ -298,6 +315,7 @@ def cmd_identity(args) -> int:
 # parser
 # --------------------------------------------------------------------------- #
 def _add_anchor_flags(p):
+    """Time-anchor parsing helper, shared by prereg and postreg."""
     p.add_argument("--drand", action="store_true",
                    help="attach a drand freshness floor (proves created no earlier than T; network)")
     p.add_argument("--ceiling", action="store_true",
@@ -305,6 +323,7 @@ def _add_anchor_flags(p):
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """``asexec`` parsing core."""
     p = argparse.ArgumentParser(
         prog="asexec",
         description="Pre-registration & notarization primitive for AI evaluations. "

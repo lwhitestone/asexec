@@ -39,7 +39,7 @@ to the back since it's lowest-control.
 | **0.1.0** | shipped (alpha) | Core primitive: keygen · preregister · seal · verify · identity; offline verifier; drand freshness | — |
 | **0.2.0** | shipped (alpha) | Schema rebalance + freshness/ceiling anchors + verifier redesign | #1–#6 |
 | **0.3.0** | shipped (alpha) | Term/type/schema realignment: prereg/postreg · free-form `target` · `due`/`declaration` · drand opt-in · `BDR` code token · Pydantic-typed construction | — |
-| **0.3.1** | next | AI-assisted-prototype handoff — provenance reset; AI assistance considered on a case-by-case basis from here on | — |
+| **0.3.1** | shipped (alpha) | AI-assisted-prototype handoff — provenance reset; AI assistance considered on a case-by-case basis from here on | — |
 | **0.4.0** | planned | Completeness: per-key public index convention | #10 |
 | **0.5.0** | planned | Re-execution / determinism mode | #12 |
 | *unversioned* | opportunistic | Federated cosigner witnesses · multi-party co-signing · regulatory cross-reference field | #15, #13, #14 |
