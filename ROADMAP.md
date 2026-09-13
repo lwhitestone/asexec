@@ -1,9 +1,9 @@
 # Roadmap
 
-The canonical, version-keyed backlog for `asexec`. Scope is checked against
-[`NORTH_STAR.md`](./NORTH_STAR.md) — read it before proposing anything that
-expands the surface. The deeper design rationale is kept in the maintainer's
-local design notes.
+> [!NOTE]
+> This file is AI-generated and is meant as a rough context-setter.
+> Treat AI output with due skepticism.
+
 
 **Ordering logic:** cheap-and-sharp gaps first; items that form one coherent
 release ship together; completeness/adoption-adjacent work sits behind core
@@ -225,26 +225,14 @@ These gate the release work but are not themselves versioned artifacts.
    non-determinism, disclosure-window UX, whether the recommended bundle is
    actually usable in practice).
 
-8. **Land `NORTH_STAR.md` and the design-rationale doc in the repo** — commit
-   before wider external visibility so early readers get honest scope up front.
-   (`NORTH_STAR.md` and this `ROADMAP.md` are in-repo; deeper rationale is kept
-   in local design notes.)
-
-9. **Team/customer-facing usage** — first test of the social-contract thesis
+8. **Team/customer-facing usage** — first test of the social-contract thesis
    under real, if modest, stakes. Depends on dogfooding (#7) going reasonably
    smoothly.
 
 ## Separate deliverable (not core `asexec`)
 
-11. **Verification website** — explicitly *not* core `asexec`; its own
+10. **Verification website** — explicitly *not* core `asexec`; its own
     repo/deliverable with its own versioning. Lowers the barrier for
     non-technical reviewers. Designed so anyone could build a competing instance
     from the open manifest + code spec alone — not owned long-term by the core
     project.
-
-## Explicitly not scheduled
-
-Third-party witness services, hosted transparency log, identity binding / CA.
-All reintroduce trust/infra layers the project was built to avoid (see
-[`NORTH_STAR.md`](./NORTH_STAR.md)). Revisit only if a specific, concrete need
-forces the question — not on a timeline.

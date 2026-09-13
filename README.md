@@ -1,54 +1,56 @@
 # asexec — AsExecuted
 
-> Part of the work at **[lukewhitest.one](https://lukewhitest.one/)** — AI infrastructure & risk stewardship.
-
-**Pre-registered trials for AI evals.** A local-first, pseudonymous, offline-verifiable
-cryptographic primitive: an evaluator commits to running an eval *before* the results are
+**Pre-registered trials for AI executions.** A local-first, pseudonymous, offline-verifiable
+cryptographic primitive: a practitioner commits to running a test *before* the results are
 known, then publishes tamper-evident, independently-verifiable receipts of what actually
-happened — so that **silence, after a public commitment, becomes visible evidence of
-non-disclosure.**
+happened, so that silence, after a public commitment, becomes visible evidence of
+non-disclosure.
 
 It is the "as executed" counterpart to pre-registration ("as predicted"), borrowing the
 commit-then-reveal mechanism from clinical-trial pre-registration and applying it to the
-selective-disclosure problem in AI safety evaluations.
+selective-disclosure problem in AI safety.
 
-> **A primitive, not a platform.** A signing/verification library + thin CLI. No hosted
-> service, no CA, no leaderboard. Publish the files wherever you like (a public git repo is
-> the intended home).
+`asexec` is a primitive, not a platform. It offers a signing/verification library and a thin CLI.
+There is no hosted service, no CA, no leaderboard, etc, in the core product. Publish the files
+wherever you like according to how you wish to disclose.
 
 ---
 
-## What this does — and, plainly, what it does NOT prove
+## What does `asexec` prove?
 
-**It proves:**
+What a particular execution cycle's manifest proves is up to the practitioner (who can
+choose what to disclose) and the verifier (who can choose what to check). Proof comes
+in the form of `asexec verify` providing a code regarding the checks applied. Here
+are lists of what proof types `asexec` currenly offers, what it could theoretically offer
+and what it purposefully does not offer.
+
+**`asexec` can prove:**
 - A manifest (pre-registration or post-registration) was not altered after signing.
 - A post-registration references a specific prior pre-registration, and a sequence wasn't
   silently truncated/reordered (a `prev_hash` chain).
-- Whether a declared disclosure deadline (`due`) has elapsed and whether matching
-  post-registrations exist — rendered as an explicit state (`fulfilled` / `open` /
-  `elapsed-no-receipt` / `notarization-only`).
-- (Optional drand **floor**) that a manifest was created no earlier than a public moment —
-  **freshness**, not backdating-resistance.
-- (Optional Roughtime **ceiling**) that a manifest was created no later than time T — but
-  only by *trusting the named witness about time* (a signature-witness, not proof-of-work).
+- A declared disclosure deadline (`due`) did not expire prior to post-registration (rendered
+  as an explicit state `fulfilled`/`open`/`elapsed-no-receipt`/`notarization-only`).
+- A manifest was created no earlier than a public moment (floor "freshness" check, offered by
+  `drand`).
+- A manifest was created no later than time T (ceiling "witness" check offered by `Roughtime`;
+  a signature-witness, not proof-of-work).
 
-**It does NOT prove** (surfaced in `verify` output, not just here):
-- **Identity.** Keys are pseudonymous. Binding a key to a real entity is a separate,
-  optional `.well-known` check — asexec is not a CA.
-- **That the pre-registration truly preceded the run ("pre") — cryptographically, in the
-  general case.** A drand **floor** only proves *no earlier than* (freshness); on its own it
-  cannot bound backdating. An optional Roughtime **ceiling** proves *no later than* T, but in
-  a **different trust class**: you trust the named signer(s) to be honest about time, not the
-  trustless proof-of-work of an OpenTimestamps/Bitcoin ceiling. Without a ceiling, the "pre"
-  is *social* — it rests on publication to a **watched public repo** before the run.
-- **Provenance.** Content hashes prove a transcript wasn't *altered*; they do **not** prove
-  it is the output of the named harness+model (asserted by the signer, not re-executed).
-- **Completeness.** It renders only the manifests you give it; it cannot prove a lab
-  pre-registered every eval it should have (selective pre-registration).
-- **Eval quality / elicitation rigor / sandbagging.** Entirely out of scope — this makes the
-  *process* auditable, not the science.
-- **A quoted verify code is not proof.** The code is a summary of a computation, not a
-  certificate — meaningful only when *you* reproduce it from the files (see below).
+**`asexec` does not prove**:
+- Identity of practitioners. Keys are pseudonymous. Binding a key to a real entity is a separate,
+  optional `.well-known` check; asexec is not a CA.
+- Provenance. Content hashes prove a transcript wasn't altered; they do not prove it is the
+  output of the named harness+model (asserted by the signer, not re-executed).
+- Completeness. It renders only the manifests you give it; it cannot prove a lab pre-registered
+  every eval it should have (selective pre-registration). However, just like practitioners are not
+  forced to `asexec preg` all their testing, verifiers are not forced to trust results that were
+  signalled less than they could have been. It is a signal of good faith to pre-register as much
+  as you can!
+- Qualities of the science of evals, including eval quality, elicitation rigor, sandbagging, etc.
+  `asexec` aims to make the process of AI testing auditable, but does not make claims about the
+  science itself.
+- Verify code anti-forgery. The code is a summary of a computation, not a certificate. It is
+  meaningful to verifiers only when produced from the registration files. In other words, don't
+  blindly trust a verify code handed to you; see if you can reproduce it!
 
 ---
 
@@ -58,16 +60,16 @@ selective-disclosure problem in AI safety evaluations.
 pip install asexec          # ed25519 (PyNaCl) + BLS verification for drand (py_ecc)
 ```
 
-Python ≥ 3.9. `verify` is fully offline; only the sign-time drand/ceiling fetches and
+Python >= 3.9. `verify` is fully offline; only the sign-time drand/ceiling fetches and
 `identity verify` touch the network.
 
 ## Quickstart (the full commit-then-reveal cycle)
 
 ```bash
-# 1. one-time: generate a pseudonymous keypair (no CA, no registration)
-asexec keygen --out lab.key            # or omit --out for asexec-<uuid>.key
+# 1. Practitioner, one-time: generate a pseudonymous keypair (no CA, no registration)
+asexec keygen --out lab.key
 
-# 2. BEFORE the run: pre-register the target + an (optional) disclosure deadline
+# 2. Practitioner, BEFORE the run: pre-register the target
 asexec prereg --key lab.key \
     --subject ./harness \
     --target "claude-opus-4-8 via the anthropic API" \
@@ -75,58 +77,42 @@ asexec prereg --key lab.key \
     --declaration "all runs of this harness against this model, in full" \
     --out preregistration.json
 
-# 3. AFTER each run: post-register a receipt of the inputs + transcript
+# 3. Practitioner, AFTER each run: post-register a receipt of the inputs
 asexec postreg --key lab.key --fulfills preregistration.json \
     --subject ./transcript.txt ./harness \
     --out postregistration.json
 
-# 4. ANYONE, offline: verify the cycle + render the commitment state.
+# 4. Any verifier, anytime: verify the cycle and render the commitment state.
 #    --tests names exactly which checks to run; 'BDR' (sig + keyid) is required.
 asexec verify preregistration.json postregistration.json \
     --tests BDR,content,chain,keyconsist --artifacts .
 ```
 
-`--target` takes plain text (as above) or structured JSON via `--target-file`; likewise
-`--declaration`/`--declaration-file` and `--notes`/`--notes-file`. Only `--target` is
-mandatory — `--due` is optional (a commitment with no deadline stays `open` rather than ever
-reaching `elapsed-no-receipt`).
+For a detailed look at parameters and options, see: `asexec --help`.
 
-Publish `preregistration.json` and `postregistration.json` to a public repo. A third party
-clones it and runs step 4 with no network and no involvement from you.
+### The verify code (what step 4 produces)
 
-### The verify code (what step 4 emits)
-
-`verify` runs the tests you name and prints one **canonical code**, never a percentage or
-tier:
+`verify` runs the tests you name and prints one canonical code, e.g.:
 
 ```
 asexec-verify/1 BDR=PASS chain=PASS content=PASS keyconsist=PASS
 ```
 
-Grammar (`asexec-verify/1` versions the *code format* itself): the literal prefix, then one
-`name=RESULT` token per requested test (`RESULT ∈ {PASS, FAIL}`), **sorted alphabetically**,
-single-space delimited. So the same result set is byte-identical everywhere.
+Grammar (`asexec-verify/1` versions the code format): the literal prefix, then one
+`name=RESULT` token per requested test (`RESULT ∈ {PASS, FAIL}`), sorted alphabetically,
+single-space delimited. The same result set is byte-identical everywhere.
 
-- **You declare your appetite.** `--tests` is required and must include `BDR` (bedrock — the
+- You declare your appetite. `--tests` is required and must include `BDR` (bedrock - the
   mandatory minimum: signature + keyid). Everything else is opt-in: `content` (subject
   digests vs. `--artifacts`), `chain` (`prev_hash` integrity), `keyconsist` (postregs share
   the prereg's key), `floor` (drand freshness), `ceiling` (Roughtime witness).
-- **Named, not scored — so it's forward-compatible.** Because the code *names* which tests
+- Named, not scored, so it's forward-compatible. Because the code names which tests
   ran, adding a test in a later version can never change the meaning of an older code. A code
-  means exactly one thing, permanently; a percentage would need its version's denominator to
-  interpret.
-- **A requested test that applies *nowhere* is `FAIL`**, never a silent omission (e.g.
-  `--tests BDR,ceiling` on manifests with no ceiling → `ceiling=FAIL`).
-- **The code is not a certificate.** A quoted or typed code carries the weight of "trust me,
-  it passed" — zero. Real verification = you run the tool against the files and get the code.
-  The tool prints that disclaimer with every code.
-
-Attach a Roughtime **ceiling** witness at sign time with `--ceiling` on `prereg`/`postreg`
-(one network round trip; proves *created no later than* T). Add `--drand` to attach a drand
-**floor** (*created no earlier than*; opt-in, one network fetch). The two are disjoint
-mechanisms — a
-public-randomness *beacon* (floor, embeddable) vs. an external *witness* over `hash(M)`
-(ceiling, envelope-level).
+  means exactly one thing, permanently.
+- A requested test that applies nowhere is `FAIL`, never a silent omission (e.g.
+  `--tests BDR,ceiling` on manifests with no ceiling -> `ceiling=FAIL`).
+- The code is not a certificate. Real verification comes from the verifier running the tool
+  against the files and get the code.
 
 ## Identity (optional, no CA)
 
@@ -142,52 +128,53 @@ asexec identity verify --domain lab.example --key lab.key
 ## Manifest at a glance
 
 Bespoke signed JSON, signed over a DSSE-style PAE input (borrows in-toto field names, not the
-tooling). The **bedrock** (mandatory) set is deliberately small — the fields whose absence
-would break verifiability of *commitment → fulfillment/gap*:
+tooling). The bedrock (mandatory) set is deliberately small — the fields whose absence
+would break verifiability of commitment -> fulfillment/gap:
 
-- **semantic:** `target` (what was committed to — plain text or structured JSON). This is the
+- semantic: `target` (what was committed to - plain text or structured JSON). This is the
   *only* mandatory claim.
-- **structural:** the format frame — `schema_version`, `predicateType`, `phase`
+- structural: the format frame - `schema_version`, `predicateType`, `phase`
   (`prereg` | `postreg`).
 
 Everything else is individually optional: `due` (the disclosure deadline — a commitment
 without one simply stays `open`), `declaration` (plain-language or structured commitment
-text), `subject` + `hash_alg` (conditionally paired — `hash_alg` is required *iff* a
+text), `subject` + `hash_alg` (conditionally paired - `hash_alg` is required iff a
 `subject` is present; a pre-registration may commit to a target before any harness exists to
 hash), `anchor.floor` (drand, opt-in via `--drand`), `identity`, `provenance` +
 `repro_recipe`, free-form `notes`. Specificity is a trust gradient the reader prices.
 
-The **ceiling** witness (Roughtime) lives at the *envelope* level, beside `payload` and
-`signature` — not inside the signed body, because its nonce is the body's own hash
+The ceiling witness (Roughtime) lives at the envelope level, beside `payload` and
+`signature` - not inside the signed body, because its nonce is the body's own hash
 (`ref(payload)`), which can't be embedded in the thing it hashes. It is self-authenticated by
-the witness signature and binds to the manifest via `nonce == ref(payload)`.
+the witness signature and binds to the manifest via `nonce == ref(payload)`. This is a purposeful
+asymmetry between floor and ceiling, because the proof of floor requires a piece of information
+to be embedded in the manifest, while the ceiling proof requires the payload to be referenced
+by an external witness.
 
-## Design & rationale
+## Prior art and related projects 
 
-The full design record (context, blind-spots, brainstorm, interview, plan) is kept
-in the maintainer's local design notes. Prior art:
-AsPredicted / OSF pre-registration, ClinicalTrials.gov + the FDAAA TrialsTracker,
-OpenTimestamps, in-toto / DSSE, drand / League of Entropy.
+AsPredicted/OSF pre-registration, ClinicalTrials.gov + the FDAAA TrialsTracker,
+OpenTimestamps, in-toto/DSSE, drand/League of Entropy.
 
-**Scope & philosophy:** [`NORTH_STAR.md`](./NORTH_STAR.md) — what this project is for, and
-(deliberately) what it is *not* chasing. Read it before proposing scope expansions: this is a
-primitive dogfooded honestly at small scale, not a platform or an adoption play.
+## Author
+
+Designed by Luke Whitestone. Check out my other projects at: **[lukewhitest.one](https://lukewhitest.one/)**.
 
 ## Status
 
-**0.3.0 — alpha.** Realigns the vocabulary and hardens the types (breaking, no back-compat):
+Currently: **0.3.x - alpha.** Realigns the vocabulary and hardens the types (breaking, no back-compat):
 `prereg`/`postreg` commands + phases, a free-form `target` (the only mandatory claim), an
 optional `due` deadline + `declaration`, opt-in drand `--drand`, the `BDR` bedrock code
 token, and Pydantic-typed manifest construction. Builds on 0.2.0's schema rebalance + typed
 `anchor.floor` (drand) / external-witness `ceiling` (Roughtime) + canonical
 `asexec-verify/1` code. See [`ROADMAP.md`](./ROADMAP.md) for the version-keyed backlog —
 including later items (per-key public index, re-execution/determinism mode) and what is
-*explicitly not scheduled* (hosted transparency log, identity binding / CA).
+explicitly not scheduled (hosted transparency log, identity binding/CA).
 
-> **Ceiling — status:** the Roughtime verification protocol (delegation chain, Merkle path,
+> Ceiling — status: the Roughtime verification protocol (delegation chain, Merkle path,
 > validity window) is fully implemented and offline-verifiable. Long-term keys for four public
 > IETF-Roughtime servers are pinned from the official ecosystem list, and the wire format is
-> reconciled against a **live `int08h-Roughtime` capture** baked as an offline fixture. The
+> reconciled against a live `int08h-Roughtime` capture baked as an offline fixture. The
 > other three servers weren't reachable during capture (UDP egress, not a known format
 > mismatch), so end-to-end interop is proven for int08h and expected-but-unproven for the
 > rest. `--ceiling` fetch fails safe if a server's variant differs.
