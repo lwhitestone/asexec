@@ -1,17 +1,16 @@
-"""Roughtime ceiling witness (optional, opt-in).
+"""Roughtime ceiling witness.
 
-A **ceiling** proves a manifest was created *no later than* time T. Unlike the
-drand floor (a public *beacon*, embeddable in the signed body), a ceiling needs
-an external **witness** that ingested ``hash(M)`` and attested a time — so it
-attaches at the ENVELOPE level (its nonce is ``ref(payload)``, which cannot live
-inside the body it hashes). 0.2.0 uses Roughtime: a server signs a response
-committing to the client's nonce and a timestamp, under a long-lived key we
-**pin**. Verification is therefore fully offline against a pinned constant —
-exactly like a drand round — trading proof-of-work's "trust no one" for a
-signature-witness's "trust these signers about time" (a *different* trust class,
-surfaced explicitly by the verifier).
+A ceiling proves a manifest was created *no later than* time T. Unlike the drand
+floor (a public beacon, embeddable in the signed body), a ceiling needs an
+external witness that ingested ``hash(M)`` and attested a time - so it attaches
+at the envelope level (its nonce is ``ref(payload)``, which cannot live inside
+the body it hashes). 0.2.0+ uses Roughtime: a server signs a response committing
+to the client's nonce and a timestamp, under a long-lived key we pin. Verification
+is therefore fully offline against a pinned constant, exactly like a drand round.
+The trust class here is a signature-witness's "trust these signers about time"
+(a *different* trust class, surfaced explicitly by the verifier).
 
-Wire format (this implementation — spec'd here so any third party reproduces it)
+Wire format (this implementation - spec'd here so any third party reproduces it)
 --------------------------------------------------------------------------------
 A Roughtime *message* is a tag→value map serialized as::
 
@@ -26,7 +25,7 @@ A server **response** message carries:
   - ``NONC`` : (optional echo)
   - ``PATH`` : concatenated 64-byte sibling hashes of the Merkle path.
   - ``SREP`` : signed response = message{``RADI``,``MIDP``,``ROOT``}.
-  - ``CERT`` : message{``DELE``, ``SIG``} — the delegation.
+  - ``CERT`` : message{``DELE``, ``SIG``} - the delegation.
   - ``INDX`` : uint32 leaf index of this nonce in the Merkle tree.
 
   ``DELE`` = message{``MINT``,``MAXT``,``PUBK``}: the long-term key delegates the
@@ -40,7 +39,7 @@ leaf ``H(0x00 || nonce)``, interior ``H(0x01 || left || right)``.
 Verification (offline)
 ----------------------
   1. Resolve the server's long-term public key from the pinned ``SERVERS`` map
-     by ``witness_id`` — the key comes from a PINNED CONSTANT, never from the
+     by ``witness_id`` - the key comes from a PINNED CONSTANT, never from the
      attestation itself (that is what makes it a trust anchor).
   2. ``CERT.SIG`` verifies ``DELE`` under the pinned long-term key.
   3. ``SIG`` verifies ``SREP`` under the delegated key ``DELE.PUBK``.
@@ -49,7 +48,7 @@ Verification (offline)
   6. The nonce equals ``ref(payload)`` (checked by the caller).
 
 **Reconciliation status:** the wire format is confirmed against a *live*
-``int08h-Roughtime`` response — a real captured response is baked as an offline
+``int08h-Roughtime`` response - a real captured response is baked as an offline
 fixture (``tests/test_roughtime.py``) and verifies against the pinned key with
 no network, alongside the wire-accurate synthetic fixtures. The other pinned
 servers were not reached during capture (UDP reachability, not a known format
@@ -233,7 +232,7 @@ def verify_response(response: bytes, nonce: bytes, long_term_pubkey: bytes) -> D
     """Verify a raw Roughtime response against a nonce and a PINNED long-term key.
 
     Returns ``{"midpoint": <unix seconds>, "radius": <seconds>}`` on success;
-    raises ``VerificationError`` on any failed check (fail-safe — a parse or
+    raises ``VerificationError`` on any failed check (fail-safe - a parse or
     signature problem is a rejection, never a silent pass).
     """
     msg = parse_message(response)
@@ -332,7 +331,7 @@ def verify_ceiling(ceiling: Dict[str, object], expected_nonce: str,
 
 
 # --------------------------------------------------------------------------- #
-# sign-time client (network) — implemented to spec; unreconciled with real
+# sign-time client (network) - ALPHA: implemented to spec; unreconciled with real
 # servers (the deferred follow-up). Fails safe if a server's variant differs.
 # --------------------------------------------------------------------------- #
 def build_request(nonce: bytes, version: int = 1) -> bytes:

@@ -1,9 +1,9 @@
-# asexec — AsExecuted
+# asexec - AsExecuted
 
 **Pre-registered trials for AI executions.** A local-first, pseudonymous, offline-verifiable
 cryptographic primitive: a practitioner commits to running a test *before* the results are
 known, then publishes tamper-evident, independently-verifiable receipts of what actually
-happened, so that silence, after a public commitment, becomes visible evidence of
+happened, so that silence after public commitment becomes visible evidence of
 non-disclosure.
 
 It is the "as executed" counterpart to pre-registration ("as predicted"), borrowing the
@@ -20,9 +20,7 @@ wherever you like according to how you wish to disclose.
 
 What a particular execution cycle's manifest proves is up to the practitioner (who can
 choose what to disclose) and the verifier (who can choose what to check). Proof comes
-in the form of `asexec verify` providing a code regarding the checks applied. Here
-are lists of what proof types `asexec` currenly offers, what it could theoretically offer
-and what it purposefully does not offer.
+in the form of `asexec verify` providing a code regarding the checks applied.
 
 **`asexec` can prove:**
 - A manifest (pre-registration or post-registration) was not altered after signing.
@@ -36,19 +34,17 @@ and what it purposefully does not offer.
   a signature-witness, not proof-of-work).
 
 **`asexec` does not prove**:
-- Identity of practitioners. Keys are pseudonymous. Binding a key to a real entity is a separate,
-  optional `.well-known` check; asexec is not a CA.
 - Provenance. Content hashes prove a transcript wasn't altered; they do not prove it is the
   output of the named harness+model (asserted by the signer, not re-executed).
 - Completeness. It renders only the manifests you give it; it cannot prove a lab pre-registered
   every eval it should have (selective pre-registration). However, just like practitioners are not
-  forced to `asexec preg` all their testing, verifiers are not forced to trust results that were
-  signalled less than they could have been. It is a signal of good faith to pre-register as much
+  forced to `asexec prereg` all their testing, verifiers are not forced to trust results that were
+  telegraphed less than they could have been. It is a signal of good faith to pre-register as much
   as you can!
 - Qualities of the science of evals, including eval quality, elicitation rigor, sandbagging, etc.
   `asexec` aims to make the process of AI testing auditable, but does not make claims about the
   science itself.
-- Verify code anti-forgery. The code is a summary of a computation, not a certificate. It is
+- Anti-forgery of verify codes. The code is a summary of a computation, not a certificate. It is
   meaningful to verifiers only when produced from the registration files. In other words, don't
   blindly trust a verify code handed to you; see if you can reproduce it!
 
@@ -57,11 +53,8 @@ and what it purposefully does not offer.
 ## Install
 
 ```bash
-pip install asexec          # ed25519 (PyNaCl) + BLS verification for drand (py_ecc)
+pip install asexec # ed25519 (PyNaCl) + BLS verification for drand (py_ecc)
 ```
-
-Python >= 3.9. `verify` is fully offline; only the sign-time drand/ceiling fetches and
-`identity verify` touch the network.
 
 ## Quickstart (the full commit-then-reveal cycle)
 
@@ -114,25 +107,43 @@ single-space delimited. The same result set is byte-identical everywhere.
 - The code is not a certificate. Real verification comes from the verifier running the tool
   against the files and get the code.
 
-## Identity (optional, no CA)
+## Identity (optional domain control check, no CA)
 
 ```bash
-# a domain owner asserts which keys speak for it:
+# A domain owner asserts which keys speak for it:
 asexec identity emit --key lab.key --domain lab.example --out asexec.json
 #   -> publish at https://lab.example/.well-known/asexec.json
 
-# anyone checks the binding (point-in-time; a domain can rotate keys):
+# Anyone checks the binding (point-in-time; a domain can rotate keys):
 asexec identity verify --domain lab.example --key lab.key
+#   -> GET https://lab.example/.well-known/asexec.json
+#   -> returns bound==True iff specified key exists there.
 ```
+
+## Network requirements
+
+Most `asexec` functionality is fully offline, which serves to drastically reduce the trust
+serface. This includes all `asexec verify` operations, which are 100% offline by design;
+everything needed to perform a verification is baked-in to the prereg/postreg manifests.
+
+There are a few opt-in registration paths that use a network connection:
+
+- `prereg/postreg --drand`: Fetches a distributed randomness beacon round from `api.drand.sh`
+  (or a fallback) at sign-time.
+- `prereg/postreg --ceiling`: Makes a UDP socket call (with server-list fallbacks) to a
+  Roughtime server at sign-time.
+
+The `asexec identity` check loop is also network-dependent, as it is explicitly a domain-
+ownership check. It exists outside registration verification as an opt-in helper.
 
 ## Manifest at a glance
 
 Bespoke signed JSON, signed over a DSSE-style PAE input (borrows in-toto field names, not the
-tooling). The bedrock (mandatory) set is deliberately small — the fields whose absence
+tooling). The bedrock (mandatory) set is deliberately small - the fields whose absence
 would break verifiability of commitment -> fulfillment/gap:
 
 - semantic: `target` (what was committed to - plain text or structured JSON). This is the
-  *only* mandatory claim.
+  only mandatory claim.
 - structural: the format frame - `schema_version`, `predicateType`, `phase`
   (`prereg` | `postreg`).
 

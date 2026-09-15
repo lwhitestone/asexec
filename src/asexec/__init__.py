@@ -1,4 +1,4 @@
-"""asexec — a pre-registration & notarization primitive for AI evaluations.
+"""asexec - a pre-registration & notarization primitive for AI evaluations.
 
 Local-first, pseudonymous, offline-verifiable. An evaluator signs a
 *pre-registration* before a run and *receipts* after, publishing them to a
@@ -6,11 +6,10 @@ public git repo whose witnessed history is the (social) ceiling that gives
 "pre" its meaning. A third party can verify the commitment -> fulfillment /
 gap offline, trusting only a keypair and the published files.
 
-See the module docstrings and the README for what this does — and, loudly,
-what it does NOT — prove.
+See the module docstrings and the README for what this does!
 """
 
-__version__ = "0.3.0"
+__version__ = "0.3.3"
 
 SCHEMA_VERSION = "asexec"
 PREDICATE_TYPE = "https://asexec.dev/manifest"

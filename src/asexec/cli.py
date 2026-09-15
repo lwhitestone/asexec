@@ -1,10 +1,9 @@
 """asexec command-line interface.
 
-Commands: keygen · prereg · postreg · verify · identity.
+Commands: keygen, prereg, postreg, verify, identity.
 
-Design boundaries: files-first; ``verify`` is fully offline; only the sign-time
-drand (``--drand``) / ceiling (``--ceiling``) fetches and ``identity verify``
-touch the network.
+``verify`` is fully offline; only the sign-time drand (``--drand``)/ceiling (``--ceiling``)
+fetches and ``identity verify`` touch the network.
 """
 
 from __future__ import annotations

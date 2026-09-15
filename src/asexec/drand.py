@@ -1,9 +1,7 @@
-"""drand freshness anchor (optional, default-on).
+"""drand freshness anchor.
 
 Embedding a drand round proves a manifest was created *no earlier than* that
-round's time — a FRESHNESS / anti-precomputation floor. It is NOT an
-anti-backdating mechanism (that needs a ceiling; v1's ceiling is the witnessed
-public repo). See 00-context.md §3a and 02-brainstorm.md.
+round's time; it is a "freshness"/anti-precomputation floor.
 
 Verification is fully offline: the quicknet chain parameters are pinned as
 constants here (no network fetch at verify time). Only fetching a fresh round
@@ -87,8 +85,8 @@ def floor_record(round_data: dict) -> dict:
 
     The floor is the signed, sign-time *freshness beacon*: it proves the
     manifest was created **no earlier than** this round's public moment. It is
-    a beacon (a value fixed at T, independent of the manifest), which is why it
-    can be embedded in the signed body — unlike the ceiling witness.
+    a beacon (a value fixed at T, independent of the manifest), and can be
+    embedded in the signed body.
     """
     return {
         "floor_type": "drand",

@@ -1,19 +1,19 @@
 """Pydantic models for asexec manifest bodies and envelopes.
 
-These give typed *construction and validation* of manifests. They deliberately
-do NOT participate in the cryptography: signing is always over the canonical
-bytes of a plain ``dict`` (see ``canonical.py``). A model is built, validated,
-then dumped to a dict via :meth:`ManifestBody.to_body` (``mode="json"``,
-``exclude_none=True``) before it is signed / referenced / serialized.
+These give typed construction and validation of manifests. They do not participate
+in the cryptography: signing is always over the canonical bytes of a plain ``dict``
+(see ``canonical.py``). A model is built, validated, then dumped to a dict via
+:meth:`ManifestBody.to_body` (``mode="json"``, ``exclude_none=True``) before it is
+signed/referenced/serialized.
 
 The verifier reads raw dicts, never these models, so an unknown or future field
-in a published manifest can never break offline verification — the models only
-gate what *this* tool writes.
+in a published manifest can never break offline verification - the models only
+gate what this tool writes.
 
 Schema note (v3 term/type refactor): ``phase`` is ``prereg`` | ``postreg``;
 the commitment is expressed as a free-form ``target`` (what) plus an optional
 ``due`` deadline (by when) and an optional ``declaration`` (plain-language or
-structured description). Semantic bedrock is ``target`` alone — ``due`` is
+structured description). Semantic bedrock is ``target`` alone. ``due`` is
 optional (a commitment with no deadline simply stays ``open`` forever).
 """
 
@@ -26,7 +26,7 @@ from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from . import PREDICATE_TYPE, SCHEMA_VERSION
 
 # A field the caller may express either as a plain string or as structured JSON.
-# "take what is provided and compile it" — more disclosure buys more trust, but
+# "take what is provided and compile it" - more disclosure buys more trust, but
 # nothing beyond ``target`` is required.
 Freeform = Union[str, Dict[str, Any]]
 
@@ -64,18 +64,18 @@ class Anchor(BaseModel):
 class ManifestBody(BaseModel):
     """The signed body of a manifest (the ``payload``).
 
-    ``extra="forbid"`` because construction is fully typed here — a stray field
+    ``extra="forbid"`` because construction is fully typed here - a stray field
     is a bug in the caller, not something to sign silently.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    # structural bedrock — the format frame
+    # structural bedrock - the format frame
     schema_version: str = SCHEMA_VERSION
     predicateType: str = PREDICATE_TYPE
     phase: str
 
-    # semantic bedrock — WHAT was committed to (the only mandatory claim)
+    # semantic bedrock - WHAT was committed to (the only mandatory claim)
     target: Freeform
 
     # the commitment's optional shape

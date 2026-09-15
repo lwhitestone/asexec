@@ -1,7 +1,7 @@
 """Content hashing and the ``subject`` builder.
 
 SHA-256 is the default and always available (stdlib). The algorithm is named
-in every manifest (`hash_alg`, a mandatory field) so it is algorithm-agile:
+in every manifest (`hash_alg`, a mandatory field) so it can be substituted;
 other algorithms (e.g. BLAKE3, if the optional dependency is installed) can be
 selected without a format change.
 
@@ -10,9 +10,9 @@ regular file under the directory, take each file's hash, and hash the sorted
 list of ``"<hexhash>  <relpath>\\n"`` lines (bytewise-sorted by relpath).
 Deterministic and auditable with common tools.
 
-Documented v1 limitation: this captures file *contents* and *relative paths*
-only — not the executable bit, symlink targets, or empty directories. A
-future NAR-style serialization would capture those; see 04-plan.md.
+Limitation (v1): this captures file *contents* and *relative paths* only -
+not the executable bit, symlink targets, or empty directories. A future
+NAR-style serialization would capture those; see 04-plan.md.
 """
 
 from __future__ import annotations

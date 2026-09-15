@@ -14,7 +14,7 @@ Only the ``payload`` (body) is signed, over the PAE construction in
 
 Typed construction/validation lives in ``models.py`` (Pydantic); the crypto
 here stays dict-based so the signed bytes are exactly the canonical bytes of a
-plain dict — see ``canonical.py``.
+plain dict - see ``canonical.py``.
 """
 
 from __future__ import annotations
@@ -32,15 +32,15 @@ from . import keys
 # central commitment -> fulfillment / gap claim. Two disjoint reasons a field is
 # bedrock:
 #
-#   structural : format-frame invariants — a body without these is not an
+#   structural : format-frame invariants - a body without these is not an
 #                asexec manifest at all (they scope every other check).
-#   semantic   : the claim the tool actually adjudicates — WHAT was committed to
+#   semantic   : the claim the tool actually adjudicates - what was committed to
 #                (``target``). The deadline (``due``) is *optional*: a commitment
 #                with no deadline simply stays ``open`` forever, so it is not
 #                bedrock.
 #
-# Everything else — the drand floor, the ceiling witness, subject/hash_alg,
-# declaration, free-text — is individually optional. `subject`/`hash_alg` are
+# Everything else - the drand floor, the ceiling witness, subject/hash_alg,
+# declaration, free-text - is individually optional. `subject`/`hash_alg` are
 # *conditionally* required together: a content claim is meaningless without its
 # algorithm, so `hash_alg` is required iff `subject` is present.
 _BEDROCK_STRUCTURAL = ("schema_version", "predicateType", "phase")
@@ -103,7 +103,7 @@ def _check_bedrock(body: Dict[str, Any]) -> None:
     """Dict-level signing gate.
 
     Kept alongside the model so a body assembled by hand (not via ``build_*``)
-    still cannot be signed if it is missing a bedrock field — the model would
+    still cannot be signed if it is missing a bedrock field - the model would
     silently re-supply the structural defaults, so presence must be checked on
     the dict as given.
     """

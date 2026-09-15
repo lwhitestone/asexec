@@ -1,9 +1,7 @@
 """Canonical serialization and the PAE signing input.
 
-The single place a signing bug would be expensive. We never sign "some JSON";
-we sign the PAE (Pre-Authentication Encoding, borrowed from DSSE) of a fixed,
-documented canonical byte serialization of the payload. This removes the
-"which serialization did I sign?" ambiguity and its malleability foot-guns.
+We sign the PAE (Pre-Authentication Encoding, borrowed from DSSE) of a fixed,
+documented canonical byte serialization of the payload.
 """
 
 from __future__ import annotations

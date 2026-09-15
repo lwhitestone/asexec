@@ -1,13 +1,12 @@
 """Key <-> domain binding via a ``.well-known`` self-assertion.
 
-This is the ONE concrete identity mechanism in v1, and it is a *hook*: the
-manifest ``identity`` slot is an open list of assertions, so richer schemes
+The manifest ``identity`` slot is an open list of assertions, so richer schemes
 (web-of-trust, key transparency, external anchoring) can be added later as new
-assertion types with no core change. asexec is not a CA — a domain owner
+assertion types with no core change. asexec is not a CA - a domain owner
 asserts which keys speak for it; a verifier checks against the domain's
 existing TLS-served ``.well-known``.
 
-Caveat (surfaced to the user): the check is POINT-IN-TIME. A domain can rotate
+Caveat (surfaced to the user): the check is point-in-time. A domain can rotate
 or drop keys; a historical binding needs an archived snapshot.
 """
 

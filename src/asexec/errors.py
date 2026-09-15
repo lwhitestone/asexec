@@ -18,4 +18,4 @@ class HashAlgError(AsexecError):
 
 
 class NetworkError(AsexecError):
-    """A required network fetch (drand at sign time, or .well-known) failed."""
+    """A required network fetch failed."""

@@ -1,9 +1,9 @@
-"""The verifier — the product. A canonical verify CODE, honest non-claims.
+"""The verifier. A canonical verify code. Trust comes from reproducability.
 
 Everything the verifier does verifies offline against pinned constants; nothing
 here touches the network.
 
-Output: a canonical plaintext CODE, never a percentage or tier
+Output: a canonical plaintext code
 -------------------------------------------------------------
 ``verify`` runs a caller-chosen set of tests and emits one code per run::
 
@@ -14,23 +14,18 @@ Grammar (spec'd here so any implementation reproduces it byte-for-byte):
   - Literal prefix ``asexec-verify/1`` (this versions the code GRAMMAR itself,
     independent of the schema/PAE versions), then a single ASCII space.
   - One ``name=RESULT`` token per requested test, ``RESULT`` in ``{PASS, FAIL}``.
-  - Tokens are **sorted alphabetically by name** and single-space delimited.
+  - Tokens are sorted alphabetically by name and single-space delimited.
 
-So the same result set is byte-identical everywhere (``BDR=PASS floor=PASS``,
-never ``floor=PASS BDR=PASS``). Because the code *names* which tests ran,
-adding a test in a later version can never change the meaning of an older code:
-a code means exactly one thing, permanently. A percentage/tier would need its
-version's denominator to interpret — the code is self-describing, a score is not.
+The same result set is byte-identical everywhere. Because the code *names* which
+tests ran, adding a test in a later version can never change the meaning of an
+older code: a code means exactly one thing, permanently.
 
-**The code is NOT a certificate.** It is a summary of a computation, not a
-credential. Real verification = run this tool against the manifests (+
-artifacts) and get this code. A quoted or typed code carries the evidentiary
-weight of "trust me, it passed" — zero. The tool prints ``DISCLAIMER`` with
-every code.
+The verify code is a summary of a computation, not a credential. Real verification
+= run this tool against the manifests (+artifacts) and get this code.
 
-Tests (the catalog — only *verifiable* claims, no self-declarations)
+Tests (the catalog - only verifiable claims, no self-declarations)
 --------------------------------------------------------------------
-  - ``BDR``        : bedrock — signature over the PAE input + keyid matches
+  - ``BDR``        : bedrock - signature over the PAE input + keyid matches
                      pubkey. Applies to every manifest. **Required in every run.**
   - ``ceiling``    : a ceiling witness (Roughtime) signature verifies against a
                      pinned key AND its nonce == ref(payload). Applies to
@@ -54,7 +49,7 @@ Rendered in the human report above the code; the verifier RENDERS these, it
 never adjudicates intent or whether a commitment was "good enough":
   - fulfilled          : >=1 valid postreg references this prereg
   - open               : 0 postregs and the ``due`` deadline has not elapsed
-                         (or no ``due`` was declared — an open-ended commitment)
+                         (or no ``due`` was declared - an open-ended commitment)
   - elapsed-no-receipt : 0 postregs and the ``due`` deadline has elapsed
   - notarization-only  : a postreg with no matching prereg provided
 """
@@ -70,7 +65,7 @@ from .canonical import signing_input
 from .errors import VerificationError
 
 # The canonical grammar version for the verify code. Independent of the
-# schema/PAE versions — it versions the *code format*, not the signed bytes.
+# schema/PAE versions - it versions the *code format*, not the signed bytes.
 CODE_VERSION = "asexec-verify/1"
 
 # The test catalog, alphabetical (the order names appear in a code).
@@ -83,7 +78,7 @@ TEST_CATALOG: Tuple[str, ...] = (
 REQUIRED_TEST = "BDR"
 
 DISCLAIMER = (
-    "this code is only meaningful if reproduced — do not treat a quoted code "
+    "this code is only meaningful if reproduced - do not treat a quoted code "
     "as proof. Real verification = run this tool against the files and get "
     "this code yourself."
 )
@@ -96,11 +91,11 @@ NON_CLAIMS = [
     "lab pre-registered every eval it should have (selective pre-registration).",
     "FLOOR = FRESHNESS, NOT 'PRE': a drand floor proves a manifest was created "
     "NO EARLIER THAN a public moment (anti-precomputation). It does NOT prove "
-    "the pre-registration preceded the run — on its own it cannot bound "
+    "the pre-registration preceded the run - on its own it cannot bound "
     "backdating.",
     "CEILING = A DIFFERENT TRUST CLASS: an optional ceiling witness (Roughtime) "
     "proves creation NO LATER THAN time T, but only by trusting the named "
-    "signer(s) to be honest about time — a signature-witness trust, NOT the "
+    "signer(s) to be honest about time - a signature-witness trust, NOT the "
     "trustless proof-of-work of an OTS/Bitcoin ceiling. Without a ceiling, the "
     "'pre' is SOCIAL (the witnessed public repo), not cryptographic.",
     "IDENTITY: a key is pseudonymous. Binding it to a real entity is a separate "
@@ -231,7 +226,7 @@ def verify_paths(paths: List[str], tests: List[str],
         if ceiling.get("status") == "verified":
             ceiling_trust.append(
                 f"{p}: ceiling witnessed by {ceiling.get('witness_id')} at "
-                f"{ceiling.get('midpoint')} (±{ceiling.get('radius')}s) — you are "
+                f"{ceiling.get('midpoint')} (±{ceiling.get('radius')}s) - you are "
                 f"trusting {ceiling.get('witness_id')} to be honest about time "
                 f"(signature-witness trust class, distinct from the floor).")
         rec = {"path": p, "phase": body.get("phase"), "ref": sig.get("ref"),
@@ -284,7 +279,7 @@ def _tally(units: List[bool], nowhere_reason: str, fail_noun: str) -> Dict[str, 
     """Turn a list of per-unit pass booleans into a test result.
 
     PASS iff there is at least one applicable unit and all of them pass;
-    otherwise FAIL — distinguishing "applied nowhere" from "some failed" in the
+    otherwise FAIL - distinguishing "applied nowhere" from "some failed" in the
     human-readable reason (never a silent omission or a vacuous pass).
     """
     n = len(units)
