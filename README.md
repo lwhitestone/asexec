@@ -187,17 +187,17 @@ ruff check .
 
 ### Releases
 
+Releases are created with:
+
+```bash
+./scripts/release.sh [--skip-tests] X.Y.Z
+```
+
 Version numbers are kept in sync between:
 
 - "src/asexec/__init__.py"
 - "pyproject.toml"
 - Git release tags ("vX.Y.Z")
-
-Releases are created with:
-
-```bash
-./scripts/release.sh X.Y.Z
-```
 
 ## Author
 

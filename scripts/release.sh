@@ -3,13 +3,20 @@
 set -euo pipefail
 
 # Validate arguments.
-if [[ $# -ne 1 ]]; then
-    echo "Usage: $0 VERSION"
+SKIP_TESTS=false
+
+if [[ $# -eq 2 && "$1" == "--skip-tests" ]]; then
+    SKIP_TESTS=true
+    VERSION="$2"
+elif [[ $# -eq 1 ]]; then
+    VERSION="$1"
+else
+    echo "Usage: $0 [--skip-tests] VERSION"
     echo "Example: $0 0.3.4"
+    echo "Example: $0 --skip-tests 0.3.4"
     exit 2
 fi
 
-VERSION="$1"
 TAG="v$VERSION"
 
 INIT_FILE="src/asexec/__init__.py"
@@ -99,12 +106,14 @@ if git ls-remote --exit-code --tags "$REMOTE" "refs/tags/$TAG" >/dev/null 2>&1; 
     exit 1
 fi
 
-# Require pytest before modifying version files.
-if ! python -c 'import pytest' >/dev/null 2>&1; then
-    echo
-    echo "Error: pytest is not installed for this Python interpreter."
-    echo "Install pytest before releasing."
-    exit 1
+# Require pytest before modifying version files unless tests are explicitly skipped.
+if [[ "$SKIP_TESTS" == false ]]; then
+    if ! python -c 'import pytest' >/dev/null 2>&1; then
+        echo
+        echo "Error: pytest is not installed for this Python interpreter."
+        echo "Install pytest or use --skip-tests."
+        exit 1
+    fi
 fi
 
 # Restore version files if anything fails before the release commit.
@@ -156,8 +165,11 @@ echo
 echo "Version changes:"
 git diff -- "$INIT_FILE" "$PYPROJECT_FILE"
 
-# Run tests when test files exist.
-if [[ -d tests ]] && find tests -type f \( -name 'test_*.py' -o -name '*_test.py' \) -print -quit | grep -q .; then
+# Run tests unless explicitly skipped.
+if [[ "$SKIP_TESTS" == true ]]; then
+    echo
+    echo "WARNING: Tests skipped (--skip-tests)."
+elif [[ -d tests ]] && find tests -type f \( -name 'test_*.py' -o -name '*_test.py' \) -print -quit | grep -q .; then
     echo
     echo "Running tests..."
     python -m pytest
@@ -232,8 +244,13 @@ fi
 echo
 echo "Release complete:"
 echo
-echo "  Version: $VERSION"
-echo "  Commit:  $RELEASE_COMMIT"
-echo "  Tag:     $TAG"
-echo "  Branch:  $BRANCH"
-echo
+echo "Current version: $INIT_VERSION"
+echo "Release version: $VERSION"
+echo "Branch:          $BRANCH"
+echo "Tag:             $TAG"
+
+if [[ "$SKIP_TESTS" == true ]]; then
+    echo "Tests:           SKIPPED"
+else
+    echo "Tests:           REQUIRED"
+fi
