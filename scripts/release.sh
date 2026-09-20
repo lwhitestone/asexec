@@ -14,6 +14,16 @@ TAG="v$VERSION"
 
 INIT_FILE="src/asexec/__init__.py"
 PYPROJECT_FILE="pyproject.toml"
+REMOTE="origin"
+CLEANUP_NEEDED=false
+
+cleanup() {
+    if [[ "$CLEANUP_NEEDED" == true ]]; then
+        git restore -- "$INIT_FILE" "$PYPROJECT_FILE"
+    fi
+}
+
+trap cleanup EXIT
 
 # Validate the version.
 if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -76,8 +86,6 @@ if git rev-parse --verify --quiet "refs/tags/$TAG" >/dev/null; then
 fi
 
 # Verify the remote exists.
-REMOTE="origin"
-
 if ! git remote get-url "$REMOTE" >/dev/null 2>&1; then
     echo
     echo "Error: Git remote '$REMOTE' does not exist."
@@ -90,6 +98,17 @@ if git ls-remote --exit-code --tags "$REMOTE" "refs/tags/$TAG" >/dev/null 2>&1; 
     echo "Error: remote Git tag $TAG already exists on $REMOTE."
     exit 1
 fi
+
+# Require pytest before modifying version files.
+if ! python -c 'import pytest' >/dev/null 2>&1; then
+    echo
+    echo "Error: pytest is not installed for this Python interpreter."
+    echo "Install pytest before releasing."
+    exit 1
+fi
+
+# Restore version files if anything fails before the release commit.
+CLEANUP_NEEDED=true
 
 # Update the version declarations.
 echo
@@ -137,9 +156,15 @@ echo
 echo "Version changes:"
 git diff -- "$INIT_FILE" "$PYPROJECT_FILE"
 
-echo
-echo "Running tests..."
-python -m pytest
+# Run tests when test files exist.
+if [[ -d tests ]] && find tests -type f \( -name 'test_*.py' -o -name '*_test.py' \) -print -quit | grep -q .; then
+    echo
+    echo "Running tests..."
+    python -m pytest
+else
+    echo
+    echo "No tests found; skipping pytest."
+fi
 
 echo
 echo "Checking Git diff..."
@@ -151,6 +176,9 @@ echo "Creating release commit..."
 
 git add "$INIT_FILE" "$PYPROJECT_FILE"
 git commit -m "Release $TAG"
+
+# The release commit is now permanent; failures after this point leave it intact.
+CLEANUP_NEEDED=false
 
 RELEASE_COMMIT="$(git rev-parse HEAD)"
 
@@ -209,4 +237,3 @@ echo "  Commit:  $RELEASE_COMMIT"
 echo "  Tag:     $TAG"
 echo "  Branch:  $BRANCH"
 echo
-echo "The tag is the release boundary."
