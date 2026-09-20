@@ -123,7 +123,7 @@ asexec identity verify --domain lab.example --key lab.key
 ## Network requirements
 
 Most `asexec` functionality is fully offline, which serves to drastically reduce the trust
-serface. This includes all `asexec verify` operations, which are 100% offline by design;
+surface. This includes all `asexec verify` operations, which are 100% offline by design;
 everything needed to perform a verification is baked-in to the prereg/postreg manifests.
 
 There are a few opt-in registration paths that use a network connection:
@@ -166,6 +166,38 @@ by an external witness.
 
 AsPredicted/OSF pre-registration, ClinicalTrials.gov + the FDAAA TrialsTracker,
 OpenTimestamps, in-toto/DSSE, drand/League of Entropy.
+
+## Development and Releases
+
+### Ruff
+
+Ruff (https://docs.astral.sh/ruff/) is used for Python linting and formatting.
+
+Run the formatter with:
+
+```bash
+ruff format .
+```
+
+Check for lint issues with:
+
+```bash
+ruff check .
+```
+
+### Releases
+
+Version numbers are kept in sync between:
+
+- "src/asexec/__init__.py"
+- "pyproject.toml"
+- Git release tags ("vX.Y.Z")
+
+Releases are created with:
+
+```bash
+./scripts/release.sh X.Y.Z
+```
 
 ## Author
 
