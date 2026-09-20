@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "asexec"
-version = "0.3.4"
+version = "0.3.5"
 description = "Pre-registration & notarization primitive for AI evaluations — commit-then-reveal receipts so silence becomes evidence"
 readme = "README.md"
 requires-python = ">=3.9"
