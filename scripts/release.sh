@@ -244,13 +244,10 @@ fi
 echo
 echo "Release complete:"
 echo
-echo "Current version: $INIT_VERSION"
-echo "Release version: $VERSION"
-echo "Branch:          $BRANCH"
-echo "Tag:             $TAG"
-
+echo "  Version: $VERSION"
+echo "  Commit:  $RELEASE_COMMIT"
+echo "  Tag:     $TAG"
+echo "  Branch:  $BRANCH"
 if [[ "$SKIP_TESTS" == true ]]; then
-    echo "Tests:           SKIPPED"
-else
-    echo "Tests:           REQUIRED"
+    echo "  Tests:   SKIPPED"
 fi
