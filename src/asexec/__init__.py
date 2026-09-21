@@ -9,7 +9,7 @@ gap offline, trusting only a keypair and the published files.
 See the module docstrings and the README for what this does!
 """
 
-__version__ = "0.3.5"
+__version__ = "0.3.6"
 
 SCHEMA_VERSION = "asexec"
 PREDICATE_TYPE = "https://asexec.dev/manifest"
