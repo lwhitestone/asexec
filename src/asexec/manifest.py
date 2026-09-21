@@ -39,7 +39,7 @@ from . import keys
 #                with no deadline simply stays ``open`` forever, so it is not
 #                bedrock.
 #
-# Everything else - the drand floor, the ceiling witness, subject/hash_alg,
+# Everything else - the drand floor, the Roughtime ceiling witness, subject/hash_alg,
 # declaration, free-text - is individually optional. `subject`/`hash_alg` are
 # *conditionally* required together: a content claim is meaningless without its
 # algorithm, so `hash_alg` is required iff `subject` is present.
