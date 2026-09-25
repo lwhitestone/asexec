@@ -73,9 +73,17 @@ def test_keyid_stable_and_sign_verify():
 def test_key_save_load_roundtrip_and_perms(tmp_path):
     priv, pub = keys.generate()
     kp = tmp_path / "k.key"
+
     kid = keys.save(priv, str(kp))
+
+    # Skip 0600 enforcement on Windows (it's a Unix-only guarantee)
     import os
-    assert oct(os.stat(kp).st_mode)[-3:] == "600"
+    if os.name != "nt":
+        assert os.stat(kp).st_mode & 0o777 == 0o600
+
     p2, pub2 = keys.load_signing_key(str(kp))
-    assert p2 == priv and pub2 == pub and keys.keyid_for(pub2) == kid
+    assert p2 == priv
+    assert pub2 == pub
+    assert keys.keyid_for(pub2) == kid
     assert json.loads((tmp_path / "k.key.pub").read_text())["keyid"] == kid
+ 

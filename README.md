@@ -207,7 +207,7 @@ Designed by Luke Whitestone. Check out my other projects at: **[lukewhitest.one]
 
 Currently: **0.3.x - alpha.** Realigns the vocabulary and hardens the types (breaking, no back-compat):
 `prereg`/`postreg` commands + phases, a free-form `target` (the only mandatory claim), an
-optional `due` deadline + `declaration`, opt-in drand `--drand`, the `BDR` bedrock code
+optional `due` deadline + `declaration`, opt-in drand `--floor`, the `BDR` bedrock code
 token, and Pydantic-typed manifest construction. Builds on 0.2.0's schema rebalance + typed
 `anchor.floor` (drand) / external-witness `ceiling` (Roughtime) + canonical
 `asexec-verify/1` code. See [`ROADMAP.md`](./ROADMAP.md) for the version-keyed backlog —

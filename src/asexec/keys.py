@@ -32,7 +32,7 @@ def generate() -> Tuple[bytes, bytes]:
 
 
 def save(private_key: bytes, path: str) -> str:
-    """Write the secret key file (0600) and a sibling ``<path>.pub``.
+    """Write the secret key file (0600 on Unix) and a sibling ``<path>.pub``.
 
     Returns the keyid.
     """
@@ -45,13 +45,28 @@ def save(private_key: bytes, path: str) -> str:
         "private_key": private_key.hex(),
         "public_key": pub.hex(),
     }
-    # create with restrictive permissions from the start
+
     flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
     fd = os.open(path, flags, 0o600)
     with os.fdopen(fd, "w") as f:
         json.dump(secret, f, indent=2)
+
+    # Unix permission bits are not meaningful on Windows.
+    if os.name != "nt":
+        os.chmod(path, 0o600)
+
     with open(path + ".pub", "w") as f:
-        json.dump({"version": 1, "alg": KEY_ALG, "keyid": kid, "public_key": pub.hex()}, f, indent=2)
+        json.dump(
+            {
+                "version": 1,
+                "alg": KEY_ALG,
+                "keyid": kid,
+                "public_key": pub.hex(),
+            },
+            f,
+            indent=2,
+        )
+
     return kid
 
 

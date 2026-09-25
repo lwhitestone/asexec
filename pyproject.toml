@@ -1,6 +1,6 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["uv_build>=0.12.19,<0.13.0"]
+build-backend = "uv_build"
 
 [project]
 name = "asexec"
@@ -36,9 +36,16 @@ asexec = "asexec.cli:main"
 Homepage = "https://github.com/lwhitestone/asexec"
 Issues = "https://github.com/lwhitestone/asexec/issues"
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/asexec"]
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.uv.workspace]
+members = [
+    ".",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+]

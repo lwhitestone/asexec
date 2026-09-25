@@ -28,6 +28,13 @@ env/
 .ruff_cache/
 *.egg
 
+# Pytest
+.pytest_cache/
+.pytest-tmp/
+
+# uv / Python version management
+.python-version
+
 # OS / editor cruft
 .DS_Store
 Thumbs.db
