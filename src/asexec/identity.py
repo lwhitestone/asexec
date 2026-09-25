@@ -52,7 +52,7 @@ def fetch_wellknown(domain: str, timeout: int = 10) -> Dict:
         raise NetworkError(f"could not fetch {url}: {e}")
 
 
-def verify_binding(domain: str, keyid: Optional[str] = None,
+def match_binding(domain: str, keyid: Optional[str] = None,
                    pubkey_hex: Optional[str] = None, timeout: int = 10) -> Dict:
     """Check whether a key is asserted by a domain. Returns a result dict."""
     doc = fetch_wellknown(domain, timeout=timeout)

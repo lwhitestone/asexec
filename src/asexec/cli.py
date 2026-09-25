@@ -2,8 +2,8 @@
 
 Commands: keygen, prereg, postreg, verify, identity.
 
-``verify`` is fully offline; only the sign-time drand (``--drand``)/ceiling (``--ceiling``)
-fetches and ``identity verify`` touch the network.
+``verify`` is fully offline; only the sign-time drand (``--floor``)/Roughtime (``--ceiling``)
+fetches and ``identity match`` touch the network.
 """
 
 from __future__ import annotations
@@ -87,7 +87,7 @@ def _get_due(args) -> Optional[str]:
 
 def _get_floor(args) -> Optional[dict]:
     """Fetch a drand freshness floor (anchor.floor) at sign time, or None."""
-    if not args.drand:
+    if not args.floor:
         return None
     try:
         return drand.fetch_floor()
@@ -314,10 +314,10 @@ def cmd_verify(args) -> int:
 
 
 def cmd_identity(args) -> int:
-    """Standalone emit/verify function pair for tying a known public identity via
+    """Standalone emit/match function pair for tying a known public identity via
     domain to a public key, no certificate authority (CA) needed. ``emit`` a json file
-    which embeds the key and domain and publish it. Anyone may then ``verify`` that
-    the asserted identity association matched up at emit-time."""
+    which embeds the key and domain and publish it. Anyone may then check via
+    ``match`` that the asserted identity is placed at the given domain."""
     if args.identity_cmd == "emit":
         _priv, pub = keys.load_signing_key(args.key)
         pair = {"keyid": keys.keyid_for(pub), "pubkey": pub.hex()}
@@ -327,13 +327,13 @@ def cmd_identity(args) -> int:
         print(f"  publish at: https://<your-domain>/.well-known/asexec.json")
         print(f"  keyid     : {pair['keyid']}")
         return 0
-    if args.identity_cmd == "verify":
+    if args.identity_cmd == "match":
         keyid = args.keyid
         pubkey = args.pubkey
         if args.key:
             _priv, pub = keys.load_signing_key(args.key)
             keyid = keys.keyid_for(pub)
-        res = identity.verify_binding(args.domain, keyid=keyid, pubkey_hex=pubkey)
+        res = identity.match_binding(args.domain, keyid=keyid, pubkey_hex=pubkey)
         s = OK if res["bound"] else NO
         print(
             f"{s} key {'IS' if res['bound'] else 'is NOT'} asserted by {args.domain} "
@@ -341,7 +341,7 @@ def cmd_identity(args) -> int:
         )
         print(f"  caveat: {res['caveat']}")
         return 0 if res["bound"] else 2
-    raise SystemExit("error: use 'identity emit' or 'identity verify'")
+    raise SystemExit("error: use 'identity emit' or 'identity match'")
 
 
 # --------------------------------------------------------------------------- #
@@ -350,7 +350,7 @@ def cmd_identity(args) -> int:
 def _add_anchor_flags(p):
     """Time-anchor parsing helper, shared by prereg and postreg."""
     p.add_argument(
-        "--drand",
+        "--floor",
         action="store_true",
         help="attach a drand freshness floor (proves created no earlier than T; network)",
     )
@@ -447,7 +447,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # asexec verify
     vy = sub.add_parser(
-        "verify", help="verify manifests offline; emit a canonical verify code"
+        "verify", help="verify manifests offline; produce a canonical verify code"
     )
     vy.add_argument("paths", nargs="+", help="manifest file(s) or a directory of them")
     vy.add_argument(
@@ -471,7 +471,9 @@ def build_parser() -> argparse.ArgumentParser:
     ie.add_argument("--domain")
     ie.add_argument("--out", default="asexec.json")
     ie.set_defaults(func=cmd_identity)
-    iv = isub.add_parser("verify", help="check a key is asserted by a domain (network)")
+    iv = isub.add_parser(
+        "match",
+        help="check a key matches that which is asserted by a domain (network)")
     iv.add_argument("--domain", required=True)
     iv.add_argument("--keyid")
     iv.add_argument("--pubkey")

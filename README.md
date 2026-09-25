@@ -30,7 +30,7 @@ in the form of `asexec verify` providing a code regarding the checks applied.
   as an explicit state `fulfilled`/`open`/`elapsed-no-receipt`/`notarization-only`).
 - A manifest was created no earlier than a public moment (floor "freshness" check, offered by
   `drand`).
-- A manifest was created no later than time T (ceiling "witness" check offered by `Roughtime`;
+- A manifest was created no later than time T (ceiling "witness" check, offered by `Roughtime`;
   a signature-witness, not proof-of-work).
 
 **`asexec` does not prove**:
@@ -114,8 +114,8 @@ single-space delimited. The same result set is byte-identical everywhere.
 asexec identity emit --key lab.key --domain lab.example --out asexec.json
 #   -> publish at https://lab.example/.well-known/asexec.json
 
-# Anyone checks the binding (point-in-time; a domain can rotate keys):
-asexec identity verify --domain lab.example --key lab.key
+# Anyone checks the binding for a match (point-in-time; a domain can rotate keys):
+asexec identity match --domain lab.example --key lab.key
 #   -> GET https://lab.example/.well-known/asexec.json
 #   -> returns bound==True iff specified key exists there.
 ```
@@ -128,7 +128,7 @@ everything needed to perform a verification is baked-in to the prereg/postreg ma
 
 There are a few opt-in registration paths that use a network connection:
 
-- `prereg/postreg --drand`: Fetches a distributed randomness beacon round from `api.drand.sh`
+- `prereg/postreg --floor`: Fetches a distributed randomness beacon round from `api.drand.sh`
   (or a fallback) at sign-time.
 - `prereg/postreg --ceiling`: Makes a UDP socket call (with server-list fallbacks) to a
   Roughtime server at sign-time.
@@ -151,7 +151,7 @@ Everything else is individually optional: `due` (the disclosure deadline — a c
 without one simply stays `open`), `declaration` (plain-language or structured commitment
 text), `subject` + `hash_alg` (conditionally paired - `hash_alg` is required iff a
 `subject` is present; a pre-registration may commit to a target before any harness exists to
-hash), `anchor.floor` (drand, opt-in via `--drand`), `identity`, `provenance` +
+hash), `anchor.floor` (drand, opt-in via `--floor`), `identity`, `provenance` +
 `repro_recipe`, free-form `notes`. Specificity is a trust gradient the reader prices.
 
 The ceiling witness (Roughtime) lives at the envelope level, beside `payload` and
