@@ -6,7 +6,27 @@ on:
   pull_request:
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Ruff check
+        run: uv run ruff check .
+
+      - name: Ruff format check
+        run: uv run ruff format --check .
+
   test:
+    needs: lint
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -14,19 +34,41 @@ jobs:
         python-version: ["3.9", "3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
         with:
+          enable-cache: true
           python-version: ${{ matrix.python-version }}
+
       - name: Install (with dev extras)
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
+        run: uv sync --all-extras --dev
+
       - name: Run tests (offline — drand round is baked as a fixture)
-        run: python -m pytest -q
+        run: uv run pytest -q
+
       - name: CLI smoke
         run: |
-          asexec --version
-          asexec keygen --out /tmp/ci.key
-          asexec prereg --key /tmp/ci.key --subject src --due 2099-01-01T00:00:00Z \
+          uv run asexec --version
+          uv run asexec keygen --out /tmp/ci.key
+          uv run asexec prereg --key /tmp/ci.key --subject src --due 2099-01-01T00:00:00Z \
             --target "model m via provider p" --out /tmp/pre.json
-          asexec verify /tmp/pre.json --tests BDR
+          uv run asexec verify /tmp/pre.json --tests BDR
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Build package
+        run: uv build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/

@@ -1,19 +1,42 @@
 #!/usr/bin/env bash
+#
+# release.sh — bump the version, tag, and push a release.
+#
+# Usage:
+#   scripts/release.sh [--no-check] VERSION
+#
+# Examples:
+#   scripts/release.sh 0.3.4
+#   scripts/release.sh --no-check 0.3.4
+#
+# What it does:
+#   1. Verifies the working tree is clean and on a real branch
+#   2. Verifies src/asexec/__init__.py and pyproject.toml agree on the
+#      current version, and that VERSION is new
+#   3. Verifies tag vVERSION doesn't already exist locally or on origin
+#   4. Updates both version declarations to VERSION
+#   5. Runs scripts/check.sh (lint + tests) unless --no-check is passed
+#   6. Commits ("Release vVERSION"), creates an annotated tag, and pushes
+#      both to origin
+#
+# This script only tags and pushes — it does not build or publish a
+# package. If anything fails before the release commit, the version file
+# edits are automatically reverted.
 
 set -euo pipefail
 
 # Validate arguments.
-SKIP_TESTS=false
+SKIP_CHECK=false
 
-if [[ $# -eq 2 && "$1" == "--skip-tests" ]]; then
-    SKIP_TESTS=true
+if [[ $# -eq 2 && "$1" == "--no-check" ]]; then
+    SKIP_CHECK=true
     VERSION="$2"
 elif [[ $# -eq 1 ]]; then
     VERSION="$1"
 else
-    echo "Usage: $0 [--skip-tests] VERSION"
+    echo "Usage: $0 [--no-check] VERSION"
     echo "Example: $0 0.3.4"
-    echo "Example: $0 --skip-tests 0.3.4"
+    echo "Example: $0 --no-check 0.3.4"
     exit 2
 fi
 
@@ -21,6 +44,7 @@ TAG="v$VERSION"
 
 INIT_FILE="src/asexec/__init__.py"
 PYPROJECT_FILE="pyproject.toml"
+CHECK_SCRIPT="scripts/check.sh"
 REMOTE="origin"
 CLEANUP_NEEDED=false
 
@@ -106,12 +130,12 @@ if git ls-remote --exit-code --tags "$REMOTE" "refs/tags/$TAG" >/dev/null 2>&1; 
     exit 1
 fi
 
-# Require pytest before modifying version files unless tests are explicitly skipped.
-if [[ "$SKIP_TESTS" == false ]]; then
-    if ! python -c 'import pytest' >/dev/null 2>&1; then
+# Require the check script before modifying version files unless checks are explicitly skipped.
+if [[ "$SKIP_CHECK" == false ]]; then
+    if [[ ! -x "$CHECK_SCRIPT" ]]; then
         echo
-        echo "Error: pytest is not installed for this Python interpreter."
-        echo "Install pytest or use --skip-tests."
+        echo "Error: $CHECK_SCRIPT not found or not executable."
+        echo "Run scripts/dev-setup.sh first, or use --no-check."
         exit 1
     fi
 fi
@@ -165,17 +189,14 @@ echo
 echo "Version changes:"
 git diff -- "$INIT_FILE" "$PYPROJECT_FILE"
 
-# Run tests unless explicitly skipped.
-if [[ "$SKIP_TESTS" == true ]]; then
+# Run lint + tests unless explicitly skipped.
+if [[ "$SKIP_CHECK" == true ]]; then
     echo
-    echo "WARNING: Tests skipped (--skip-tests)."
-elif [[ -d tests ]] && find tests -type f \( -name 'test_*.py' -o -name '*_test.py' \) -print -quit | grep -q .; then
-    echo
-    echo "Running tests..."
-    python -m pytest
+    echo "WARNING: Checks skipped (--no-check)."
 else
     echo
-    echo "No tests found; skipping pytest."
+    echo "Running checks..."
+    "$CHECK_SCRIPT"
 fi
 
 echo
@@ -248,6 +269,6 @@ echo "  Version: $VERSION"
 echo "  Commit:  $RELEASE_COMMIT"
 echo "  Tag:     $TAG"
 echo "  Branch:  $BRANCH"
-if [[ "$SKIP_TESTS" == true ]]; then
-    echo "  Tests:   SKIPPED"
+if [[ "$SKIP_CHECK" == true ]]; then
+    echo "  Checks:  SKIPPED"
 fi

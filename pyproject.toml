@@ -27,7 +27,6 @@ dependencies = [
 
 [project.optional-dependencies]
 blake3 = ["blake3>=0.3"]   # optional alternative content-hash algorithm
-dev = ["pytest>=7"]
 
 [project.scripts]
 asexec = "asexec.cli:main"
@@ -40,6 +39,19 @@ Issues = "https://github.com/lwhitestone/asexec/issues"
 testpaths = ["tests"]
 pythonpath = ["src"]
 
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+ 
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+]
+
 [tool.uv.workspace]
 members = [
     ".",
@@ -48,4 +60,5 @@ members = [
 [dependency-groups]
 dev = [
     "pytest>=8.4.2",
+    "ruff>=0.6",
 ]
