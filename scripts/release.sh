@@ -48,6 +48,16 @@ CHECK_SCRIPT="scripts/check.sh"
 REMOTE="origin"
 CLEANUP_NEEDED=false
 
+# Some systems (e.g. Debian/Ubuntu-based) only provide `python3`.
+if command -v python >/dev/null 2>&1; then
+    PYTHON="python"
+elif command -v python3 >/dev/null 2>&1; then
+    PYTHON="python3"
+else
+    echo "Error: neither 'python' nor 'python3' found on PATH."
+    exit 1
+fi
+
 cleanup() {
     if [[ "$CLEANUP_NEEDED" == true ]]; then
         git restore -- "$INIT_FILE" "$PYPROJECT_FILE"
@@ -147,7 +157,7 @@ CLEANUP_NEEDED=true
 echo
 echo "Updating version declarations..."
 
-python - "$VERSION" "$INIT_FILE" "$PYPROJECT_FILE" <<'PY'
+"$PYTHON" - "$VERSION" "$INIT_FILE" "$PYPROJECT_FILE" <<'PY'
 import pathlib
 import re
 import sys
