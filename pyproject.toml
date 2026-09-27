@@ -7,7 +7,7 @@ name = "asexec"
 version = "0.3.10"
 description = "Pre-registration & notarization primitive for AI evaluations — commit-then-reveal receipts so silence becomes evidence"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [{ name = "Luke Whitestone" }]
@@ -41,7 +41,7 @@ pythonpath = ["src"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py39"
+target-version = "py311"
  
 [tool.ruff.lint]
 select = [
