@@ -13,8 +13,8 @@ import json
 import os
 import sys
 import uuid
-from datetime import datetime
 from collections.abc import Callable
+from datetime import datetime
 from typing import TypeVar
 
 from . import __version__, drand, hashing, identity, keys, manifest, verifier

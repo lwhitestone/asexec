@@ -19,7 +19,7 @@ optional (a commitment with no deadline simply stays ``open`` forever).
 
 from __future__ import annotations
 
-from typing import Any, Union
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
