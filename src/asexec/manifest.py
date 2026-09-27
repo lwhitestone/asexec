@@ -21,12 +21,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Dict, Optional
+from typing import Any
 
+from . import keys
 from .canonical import canonical_bytes, signing_input
 from .errors import ManifestError
 from .models import Anchor, Manifest, ManifestBody, Signature
-from . import keys
 
 # Bedrock = the mandatory minimum whose absence breaks verifiability of the
 # central commitment -> fulfillment / gap claim. Two disjoint reasons a field is
@@ -49,10 +49,22 @@ _BEDROCK_SEMANTIC = ("target",)
 _DEFAULT_HASH_ALG = "sha-256"
 
 
-def _build(phase: str, target, *, due=None, declaration=None,
-           subject=None, hash_alg=None, fulfills=None, prev_hash=None,
-           floor=None, identity=None, provenance=None,
-           repro_recipe=None, notes=None) -> Dict[str, Any]:
+def _build(
+    phase: str,
+    target,
+    *,
+    due=None,
+    declaration=None,
+    subject=None,
+    hash_alg=None,
+    fulfills=None,
+    prev_hash=None,
+    floor=None,
+    identity=None,
+    provenance=None,
+    repro_recipe=None,
+    notes=None,
+) -> dict[str, Any]:
     """Construct + validate a body via the model, return the plain signed dict."""
     if subject:
         hash_alg = hash_alg or _DEFAULT_HASH_ALG
@@ -60,28 +72,62 @@ def _build(phase: str, target, *, due=None, declaration=None,
         hash_alg = None  # never a dangling algorithm without a subject
     anchor = Anchor(floor=floor) if floor is not None else None
     body = ManifestBody(
-        phase=phase, target=target, due=due, declaration=declaration,
-        subject=subject, hash_alg=hash_alg, fulfills=fulfills, prev_hash=prev_hash,
-        anchor=anchor, identity=identity, provenance=provenance,
-        repro_recipe=repro_recipe, notes=notes,
+        phase=phase,
+        target=target,
+        due=due,
+        declaration=declaration,
+        subject=subject,
+        hash_alg=hash_alg,
+        fulfills=fulfills,
+        prev_hash=prev_hash,
+        anchor=anchor,
+        identity=identity,
+        provenance=provenance,
+        repro_recipe=repro_recipe,
+        notes=notes,
     )
     return body.to_body()
 
 
-def build_prereg(target, *, due=None, declaration=None,
-                 subject=None, hash_alg=None, **optional) -> Dict[str, Any]:
-    return _build("prereg", target, due=due, declaration=declaration,
-                  subject=subject, hash_alg=hash_alg, **optional)
+def build_prereg(
+    target, *, due=None, declaration=None, subject=None, hash_alg=None, **optional
+) -> dict[str, Any]:
+    return _build(
+        "prereg",
+        target,
+        due=due,
+        declaration=declaration,
+        subject=subject,
+        hash_alg=hash_alg,
+        **optional,
+    )
 
 
-def build_postreg(target, *, fulfills, due=None, declaration=None,
-                  subject=None, prev_hash=None, hash_alg=None, **optional) -> Dict[str, Any]:
-    return _build("postreg", target, due=due, declaration=declaration,
-                  subject=subject, hash_alg=hash_alg, fulfills=fulfills,
-                  prev_hash=prev_hash, **optional)
+def build_postreg(
+    target,
+    *,
+    fulfills,
+    due=None,
+    declaration=None,
+    subject=None,
+    prev_hash=None,
+    hash_alg=None,
+    **optional,
+) -> dict[str, Any]:
+    return _build(
+        "postreg",
+        target,
+        due=due,
+        declaration=declaration,
+        subject=subject,
+        hash_alg=hash_alg,
+        fulfills=fulfills,
+        prev_hash=prev_hash,
+        **optional,
+    )
 
 
-def ref(body: Dict[str, Any]) -> str:
+def ref(body: dict[str, Any]) -> str:
     """Stable content reference to a manifest body: ``sha-256:<hex>``.
 
     Computed over the canonical bytes of the body (signature-independent), so
@@ -90,16 +136,18 @@ def ref(body: Dict[str, Any]) -> str:
     return "sha-256:" + hashlib.sha256(canonical_bytes(body)).hexdigest()
 
 
-def sign(body: Dict[str, Any], private_key: bytes, public_key: bytes) -> Dict[str, Any]:
+def sign(body: dict[str, Any], private_key: bytes, public_key: bytes) -> dict[str, Any]:
     _check_bedrock(body)
     sig = keys.sign(private_key, signing_input(body))
     signature = Signature(
-        keyid=keys.keyid_for(public_key), pubkey=public_key.hex(), sig=sig.hex(),
+        keyid=keys.keyid_for(public_key),
+        pubkey=public_key.hex(),
+        sig=sig.hex(),
     )
     return Manifest(payload=body, signature=signature).model_dump(mode="json")
 
 
-def _check_bedrock(body: Dict[str, Any]) -> None:
+def _check_bedrock(body: dict[str, Any]) -> None:
     """Dict-level signing gate.
 
     Kept alongside the model so a body assembled by hand (not via ``build_*``)
@@ -107,8 +155,11 @@ def _check_bedrock(body: Dict[str, Any]) -> None:
     silently re-supply the structural defaults, so presence must be checked on
     the dict as given.
     """
-    missing = [f for f in (_BEDROCK_STRUCTURAL + _BEDROCK_SEMANTIC)
-               if f not in body or body[f] in (None, "", [], {})]
+    missing = [
+        f
+        for f in (_BEDROCK_STRUCTURAL + _BEDROCK_SEMANTIC)
+        if f not in body or body[f] in (None, "", [], {})
+    ]
     if missing:
         raise ManifestError(f"manifest body missing mandatory field(s): {', '.join(missing)}")
     if body.get("subject") and not body.get("hash_alg"):
@@ -117,13 +168,13 @@ def _check_bedrock(body: Dict[str, Any]) -> None:
         raise ManifestError("postreg manifest missing mandatory 'fulfills'")
 
 
-def get_body(manifest: Dict[str, Any]) -> Dict[str, Any]:
+def get_body(manifest: dict[str, Any]) -> dict[str, Any]:
     if "payload" not in manifest or "signature" not in manifest:
         raise ManifestError("not an asexec manifest (missing payload/signature)")
     return manifest["payload"]
 
 
-def attach_ceiling(manifest: Dict[str, Any], ceiling: Dict[str, Any]) -> Dict[str, Any]:
+def attach_ceiling(manifest: dict[str, Any], ceiling: dict[str, Any]) -> dict[str, Any]:
     """Attach a ceiling witness at the ENVELOPE level (beside payload/signature).
 
     The ceiling cannot live inside the signed ``payload``: its nonce is
@@ -137,16 +188,16 @@ def attach_ceiling(manifest: Dict[str, Any], ceiling: Dict[str, Any]) -> Dict[st
     return manifest
 
 
-def get_ceiling(manifest: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def get_ceiling(manifest: dict[str, Any]) -> dict[str, Any] | None:
     return manifest.get("ceiling")
 
 
-def save(manifest: Dict[str, Any], path: str) -> None:
+def save(manifest: dict[str, Any], path: str) -> None:
     with open(path, "w") as f:
         json.dump(manifest, f, indent=2)
         f.write("\n")
 
 
-def load(path: str) -> Dict[str, Any]:
+def load(path: str) -> dict[str, Any]:
     with open(path) as f:
         return json.load(f)

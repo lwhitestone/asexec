@@ -14,14 +14,13 @@ from __future__ import annotations
 import hashlib
 import json
 import urllib.request
-from typing import Dict, Optional
 
 from .errors import NetworkError
 
 # --- pinned chain parameters (verify-time constants; never fetched) ---------
 QUICKNET_HASH = "52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971"
 
-CHAINS: Dict[str, dict] = {
+CHAINS: dict[str, dict] = {
     QUICKNET_HASH: {
         "beacon_id": "quicknet",
         "public_key": (
@@ -59,7 +58,7 @@ def round_at_time(ts: int, chain_hash: str = DEFAULT_CHAIN) -> int:
     return (ts - p["genesis_time"]) // p["period"] + 1
 
 
-def fetch_round(round_no: Optional[int] = None, chain_hash: str = DEFAULT_CHAIN) -> dict:
+def fetch_round(round_no: int | None = None, chain_hash: str = DEFAULT_CHAIN) -> dict:
     """Fetch a round (default: latest) from a public drand mirror. SIGN-TIME ONLY."""
     suffix = "latest" if round_no is None else str(round_no)
     last_err = None
@@ -113,11 +112,16 @@ def verify_floor(floor: dict) -> dict:
         return {"status": "unsupported", "floor_type": ftype}
     try:
         chain = floor.get("chain_hash", DEFAULT_CHAIN)
-        ok = verify_round(int(floor["round"]), floor["signature"],
-                          floor.get("randomness"), chain_hash=chain)
+        ok = verify_round(
+            int(floor["round"]), floor["signature"], floor.get("randomness"), chain_hash=chain
+        )
         t = time_of_round(int(floor["round"]), chain)
-        return {"status": "verified" if ok else "invalid", "floor_type": "drand",
-                "round": int(floor["round"]), "created_no_earlier_than": t}
+        return {
+            "status": "verified" if ok else "invalid",
+            "floor_type": "drand",
+            "round": int(floor["round"]),
+            "created_no_earlier_than": t,
+        }
     except Exception as e:
         return {"status": "invalid", "error": str(e)}
 
@@ -125,7 +129,7 @@ def verify_floor(floor: dict) -> dict:
 def verify_round(
     round_no: int,
     signature_hex: str,
-    randomness_hex: Optional[str] = None,
+    randomness_hex: str | None = None,
     chain_hash: str = DEFAULT_CHAIN,
 ) -> bool:
     """Offline BLS verification of a quicknet round.
@@ -143,15 +147,13 @@ def verify_round(
             return False
 
     # Lazy import: BLS math is only needed when actually verifying a round.
-    from py_ecc.optimized_bls12_381 import pairing, G2
     from py_ecc.bls.hash_to_curve import hash_to_G1
     from py_ecc.bls.point_compression import decompress_G1, decompress_G2
+    from py_ecc.optimized_bls12_381 import G2, pairing
 
     pub = bytes.fromhex(params["public_key"])  # 96-byte compressed G2
     try:
-        pk = decompress_G2(
-            (int.from_bytes(pub[:48], "big"), int.from_bytes(pub[48:], "big"))
-        )
+        pk = decompress_G2((int.from_bytes(pub[:48], "big"), int.from_bytes(pub[48:], "big")))
         sig = decompress_G1(int.from_bytes(sig_bytes, "big"))  # 48-byte compressed G1
     except Exception:
         return False

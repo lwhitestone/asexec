@@ -1,5 +1,3 @@
-import os
-
 import pytest
 
 from asexec import hashing, keys, manifest
@@ -17,6 +15,7 @@ def make_commitment(tmp_path):
 
     Returns a dict with paths and the signing keypair. No drand (offline).
     """
+
     def _make(due="2099-01-01T00:00:00Z", n_receipts=1, priv=None, pub=None):
         if priv is None:
             priv, pub = keys.generate()
@@ -26,8 +25,9 @@ def make_commitment(tmp_path):
         target = {"kind": "api", "provider": "anthropic", "model_id": "m", "endpoint": ""}
 
         subj = hashing.build_subject([str(art / "harness")])
-        pre_body = manifest.build_prereg(target, due=due, declaration="all runs in full",
-                                         subject=subj)
+        pre_body = manifest.build_prereg(
+            target, due=due, declaration="all runs in full", subject=subj
+        )
         pre = manifest.sign(pre_body, priv, pub)
         pre_path = tmp_path / "prereg.json"
         manifest.save(pre, str(pre_path))
@@ -39,8 +39,9 @@ def make_commitment(tmp_path):
             tpath = art / f"transcript{i}.txt"
             tpath.write_text(f"run {i}: score=0.{i}\n")
             rsubj = hashing.build_subject([str(tpath), str(art / "harness")])
-            rbody = manifest.build_postreg(target, due=due, fulfills=pre_ref,
-                                           subject=rsubj, prev_hash=prev)
+            rbody = manifest.build_postreg(
+                target, due=due, fulfills=pre_ref, subject=rsubj, prev_hash=prev
+            )
             r = manifest.sign(rbody, priv, pub)
             rp = tmp_path / f"receipt{i}.json"
             manifest.save(r, str(rp))
@@ -48,9 +49,13 @@ def make_commitment(tmp_path):
             prev = manifest.ref(rbody)
 
         return {
-            "tmp": tmp_path, "artifacts": str(art),
-            "prereg": str(pre_path), "prereg_ref": pre_ref,
-            "receipts": receipt_paths, "priv": priv, "pub": pub,
+            "tmp": tmp_path,
+            "artifacts": str(art),
+            "prereg": str(pre_path),
+            "prereg_ref": pre_ref,
+            "receipts": receipt_paths,
+            "priv": priv,
+            "pub": pub,
         }
 
     return _make

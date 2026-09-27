@@ -1,5 +1,6 @@
 """Roughtime ceiling verification, exercised offline by a wire-accurate synthetic
 server (a real live-server capture is a deferred follow-up)."""
+
 import hashlib
 import struct
 
@@ -28,28 +29,38 @@ def _node(left, right):
     return hashlib.sha512(b"\x01" + left + right).digest()
 
 
-def make_server(midpoint_us=1_700_000_000_000_000, radius_us=1_000_000,
-                mint=0, maxt=2_000_000_000_000_000):
+def make_server(
+    midpoint_us=1_700_000_000_000_000, radius_us=1_000_000, mint=0, maxt=2_000_000_000_000_000
+):
     """Return (long_term_pub, sign_response) for a synthetic Roughtime server."""
     lt_priv, lt_pub = keys.generate()
     on_priv, on_pub = keys.generate()
 
     dele = roughtime.build_message({"MINT": _u64(mint), "MAXT": _u64(maxt), "PUBK": on_pub})
-    cert = roughtime.build_message({
-        "DELE": dele,
-        "SIG": keys.sign(lt_priv, roughtime.DELEGATION_CONTEXT + dele),
-    })
+    cert = roughtime.build_message(
+        {
+            "DELE": dele,
+            "SIG": keys.sign(lt_priv, roughtime.DELEGATION_CONTEXT + dele),
+        }
+    )
 
     def sign_response(nonce, index=0, path=b"", root=None):
         if root is None:
             root = _leaf(nonce)
-        srep = roughtime.build_message({"RADI": _u32(radius_us), "MIDP": _u64(midpoint_us),
-                                        "ROOT": root})
+        srep = roughtime.build_message(
+            {"RADI": _u32(radius_us), "MIDP": _u64(midpoint_us), "ROOT": root}
+        )
         sig = keys.sign(on_priv, roughtime.RESPONSE_CONTEXT + srep)
-        return roughtime.build_message({
-            "SIG": sig, "NONC": nonce, "PATH": path, "INDX": _u32(index),
-            "SREP": srep, "CERT": cert,
-        })
+        return roughtime.build_message(
+            {
+                "SIG": sig,
+                "NONC": nonce,
+                "PATH": path,
+                "INDX": _u32(index),
+                "SREP": srep,
+                "CERT": cert,
+            }
+        )
 
     return lt_pub, sign_response
 
@@ -70,10 +81,13 @@ def test_parse_rejects_truncated():
 
 def test_parse_rejects_duplicate_tags():
     # two "SIG" tags: hand-craft a message that bypasses build_message's sort.
-    body = (struct.pack("<I", 2)                  # n = 2
-            + struct.pack("<I", 4)                # offset of value 0
-            + b"SIG\x00" + b"SIG\x00"             # duplicate tags
-            + b"\x00" * 8)                        # two 4-byte values
+    body = (
+        struct.pack("<I", 2)  # n = 2
+        + struct.pack("<I", 4)  # offset of value 0
+        + b"SIG\x00"
+        + b"SIG\x00"  # duplicate tags
+        + b"\x00" * 8
+    )  # two 4-byte values
     with pytest.raises(VerificationError):
         roughtime.parse_message(body)
 
@@ -115,8 +129,9 @@ _INT08H_RESPONSE = (
 def test_real_int08h_capture_verifies_offline():
     # Verifies against the PINNED int08h long-term key with no network.
     pinned = roughtime.SERVERS["int08h-Roughtime"]["pubkey"]
-    info = roughtime.verify_response(bytes.fromhex(_INT08H_RESPONSE),
-                                     bytes.fromhex(_INT08H_NONCE), pinned)
+    info = roughtime.verify_response(
+        bytes.fromhex(_INT08H_RESPONSE), bytes.fromhex(_INT08H_NONCE), pinned
+    )
     # int08h issues a wide-open delegation and a real ~2026 midpoint.
     assert info["midpoint"] > 1_700_000_000
     assert info["radius"] >= 0
@@ -131,8 +146,9 @@ def test_real_int08h_capture_rejects_wrong_nonce():
 def test_real_int08h_capture_rejects_wrong_pin():
     _priv, other_pub = keys.generate()
     with pytest.raises(VerificationError):
-        roughtime.verify_response(bytes.fromhex(_INT08H_RESPONSE),
-                                  bytes.fromhex(_INT08H_NONCE), other_pub)
+        roughtime.verify_response(
+            bytes.fromhex(_INT08H_RESPONSE), bytes.fromhex(_INT08H_NONCE), other_pub
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -180,9 +196,9 @@ def test_tampered_signature_rejected():
 def test_midpoint_outside_validity_window_rejected():
     nonce = hashlib.sha256(b"body").digest()
     # online key only valid far in the future; the attested midpoint predates it.
-    lt_pub, sign_response = make_server(midpoint_us=1_700_000_000_000_000,
-                                        mint=1_900_000_000_000_000,
-                                        maxt=2_000_000_000_000_000)
+    lt_pub, sign_response = make_server(
+        midpoint_us=1_700_000_000_000_000, mint=1_900_000_000_000_000, maxt=2_000_000_000_000_000
+    )
     with pytest.raises(VerificationError):
         roughtime.verify_response(sign_response(nonce), nonce, lt_pub)
 
@@ -202,9 +218,13 @@ def test_wrong_nonce_does_not_root():
 def _ceiling_for(nonce_hex, witness_id, lt_pub, sign_response):
     resp = sign_response(bytes.fromhex(nonce_hex))
     return {
-        "ceiling_type": "roughtime", "witness_id": witness_id,
-        "pubkey": lt_pub.hex(), "nonce": nonce_hex,
-        "midpoint": 1_700_000_000.0, "radius": 1.0, "response": resp.hex(),
+        "ceiling_type": "roughtime",
+        "witness_id": witness_id,
+        "pubkey": lt_pub.hex(),
+        "nonce": nonce_hex,
+        "midpoint": 1_700_000_000.0,
+        "radius": 1.0,
+        "response": resp.hex(),
     }
 
 
@@ -212,8 +232,9 @@ def test_verify_ceiling_ok():
     nonce_hex = hashlib.sha256(b"m").hexdigest()
     lt_pub, sign_response = make_server()
     ceiling = _ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response)
-    res = roughtime.verify_ceiling(ceiling, "sha-256:" + nonce_hex,
-                                   servers={"synthetic": {"pubkey": lt_pub}})
+    res = roughtime.verify_ceiling(
+        ceiling, "sha-256:" + nonce_hex, servers={"synthetic": {"pubkey": lt_pub}}
+    )
     assert res["status"] == "verified"
     assert res["midpoint"] == pytest.approx(1_700_000_000.0)
 
@@ -222,8 +243,9 @@ def test_verify_ceiling_nonce_must_bind():
     nonce_hex = hashlib.sha256(b"m").hexdigest()
     lt_pub, sign_response = make_server()
     ceiling = _ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response)
-    res = roughtime.verify_ceiling(ceiling, "sha-256:" + "aa" * 32,
-                                   servers={"synthetic": {"pubkey": lt_pub}})
+    res = roughtime.verify_ceiling(
+        ceiling, "sha-256:" + "aa" * 32, servers={"synthetic": {"pubkey": lt_pub}}
+    )
     assert res["status"] == "invalid"
     assert "does not bind" in res["error"]
 
@@ -241,8 +263,9 @@ def test_verify_ceiling_pubkey_must_match_pin():
     lt_pub, sign_response = make_server()
     ceiling = _ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response)
     _other_priv, other_pub = keys.generate()
-    res = roughtime.verify_ceiling(ceiling, "sha-256:" + nonce_hex,
-                                   servers={"synthetic": {"pubkey": other_pub}})
+    res = roughtime.verify_ceiling(
+        ceiling, "sha-256:" + nonce_hex, servers={"synthetic": {"pubkey": other_pub}}
+    )
     assert res["status"] == "invalid"
     assert "does not match the pinned key" in res["error"]
 

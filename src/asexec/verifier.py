@@ -58,7 +58,7 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from . import drand, hashing, keys, manifest
 from .canonical import signing_input
@@ -69,8 +69,13 @@ from .errors import VerificationError
 CODE_VERSION = "asexec-verify/1"
 
 # The test catalog, alphabetical (the order names appear in a code).
-TEST_CATALOG: Tuple[str, ...] = (
-    "BDR", "ceiling", "chain", "content", "floor", "keyconsist",
+TEST_CATALOG: tuple[str, ...] = (
+    "BDR",
+    "ceiling",
+    "chain",
+    "content",
+    "floor",
+    "keyconsist",
 )
 
 # BDR (bedrock) is the mandatory minimum: a run that does not check it is not a
@@ -104,7 +109,7 @@ NON_CLAIMS = [
 ]
 
 
-def parse_tests(spec: str) -> List[str]:
+def parse_tests(spec: str) -> list[str]:
     """Parse a ``--tests`` string into a validated, de-duplicated list.
 
     Raises ``VerificationError`` on an unknown test or if ``BDR`` is absent
@@ -116,10 +121,12 @@ def parse_tests(spec: str) -> List[str]:
     unknown = [t for t in names if t not in TEST_CATALOG]
     if unknown:
         raise VerificationError(
-            f"unknown test(s): {', '.join(unknown)}; available: {', '.join(TEST_CATALOG)}")
+            f"unknown test(s): {', '.join(unknown)}; available: {', '.join(TEST_CATALOG)}"
+        )
     if REQUIRED_TEST not in names:
         raise VerificationError(
-            f"'{REQUIRED_TEST}' must be included in --tests (the mandatory minimum)")
+            f"'{REQUIRED_TEST}' must be included in --tests (the mandatory minimum)"
+        )
     # preserve catalog order, de-dup.
     return [t for t in TEST_CATALOG if t in names]
 
@@ -131,9 +138,9 @@ def _parse_iso(ts: str) -> float:
     return datetime.datetime.fromisoformat(s).timestamp()
 
 
-def verify_signature(mani: Dict[str, Any]) -> Dict[str, Any]:
+def verify_signature(mani: dict[str, Any]) -> dict[str, Any]:
     """The bedrock check for a single manifest: signature + keyid."""
-    out: Dict[str, Any] = {"signature_ok": False, "keyid_ok": False, "errors": []}
+    out: dict[str, Any] = {"signature_ok": False, "keyid_ok": False, "errors": []}
     try:
         body = manifest.get_body(mani)
         sigblock = mani["signature"]
@@ -149,7 +156,7 @@ def verify_signature(mani: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def verify_floor(body: Dict[str, Any]) -> Dict[str, Any]:
+def verify_floor(body: dict[str, Any]) -> dict[str, Any]:
     """Verify the drand freshness floor at ``body.anchor.floor`` (if present)."""
     floor = (body.get("anchor") or {}).get("floor")
     if not floor:
@@ -157,7 +164,7 @@ def verify_floor(body: Dict[str, Any]) -> Dict[str, Any]:
     return drand.verify_floor(floor)
 
 
-def verify_ceiling(mani: Dict[str, Any]) -> Dict[str, Any]:
+def verify_ceiling(mani: dict[str, Any]) -> dict[str, Any]:
     """Verify the envelope-level ceiling witness (if present).
 
     Two conditions: (1) the witness signature verifies against a pinned key,
@@ -179,7 +186,7 @@ def verify_ceiling(mani: Dict[str, Any]) -> Dict[str, Any]:
     return res
 
 
-def verify_content(body: Dict[str, Any], artifacts_dir: Optional[str]) -> Dict[str, Any]:
+def verify_content(body: dict[str, Any], artifacts_dir: str | None) -> dict[str, Any]:
     if not artifacts_dir:
         return {"status": "skipped", "reason": "no artifacts provided"}
     if not body.get("subject"):
@@ -198,19 +205,20 @@ def verify_content(body: Dict[str, Any], artifacts_dir: Optional[str]) -> Dict[s
         actual = hashing.digest_path(path, alg)
         ok = actual == expected
         all_ok = all_ok and ok
-        entries.append({"name": name, "ok": ok,
-                        **({} if ok else {"expected": expected, "actual": actual})})
+        entries.append(
+            {"name": name, "ok": ok, **({} if ok else {"expected": expected, "actual": actual})}
+        )
     return {"status": "ok" if all_ok else "mismatch", "entries": entries}
 
 
-def verify_paths(paths: List[str], tests: List[str],
-                 artifacts_dir: Optional[str] = None,
-                 now: Optional[float] = None) -> Dict[str, Any]:
+def verify_paths(
+    paths: list[str], tests: list[str], artifacts_dir: str | None = None, now: float | None = None
+) -> dict[str, Any]:
     """Load, verify, group, evaluate the requested tests, and build the code."""
     now = time.time() if now is None else now
     files = _expand(paths)
 
-    preregs: Dict[str, Any] = {}   # ref -> record
+    preregs: dict[str, Any] = {}  # ref -> record
     receipts = []
     manifests_report = []
     ceiling_trust = []
@@ -228,15 +236,26 @@ def verify_paths(paths: List[str], tests: List[str],
                 f"{p}: ceiling witnessed by {ceiling.get('witness_id')} at "
                 f"{ceiling.get('midpoint')} (±{ceiling.get('radius')}s) - you are "
                 f"trusting {ceiling.get('witness_id')} to be honest about time "
-                f"(signature-witness trust class, distinct from the floor).")
-        rec = {"path": p, "phase": body.get("phase"), "ref": sig.get("ref"),
-               "keyid": sig.get("keyid"), "signature": sig, "floor": floor,
-               "ceiling": ceiling, "content": content}
+                f"(signature-witness trust class, distinct from the floor)."
+            )
+        rec = {
+            "path": p,
+            "phase": body.get("phase"),
+            "ref": sig.get("ref"),
+            "keyid": sig.get("keyid"),
+            "signature": sig,
+            "floor": floor,
+            "ceiling": ceiling,
+            "content": content,
+        }
         manifests_report.append(rec)
         if body.get("phase") == "prereg" and sig.get("ref"):
-            preregs[sig["ref"]] = {"ref": sig["ref"], "keyid": sig.get("keyid"),
-                                   "due": body.get("due"),
-                                   "receipts": []}
+            preregs[sig["ref"]] = {
+                "ref": sig["ref"],
+                "keyid": sig.get("keyid"),
+                "due": body.get("due"),
+                "receipts": [],
+            }
         elif body.get("phase") == "postreg":
             receipts.append((sig.get("ref"), body, sig))
 
@@ -244,8 +263,9 @@ def verify_paths(paths: List[str], tests: List[str],
     for rref, body, sig in receipts:
         target = body.get("fulfills")
         if target in preregs:
-            preregs[target]["receipts"].append({"ref": rref, "prev_hash": body.get("prev_hash"),
-                                                 "keyid": sig.get("keyid")})
+            preregs[target]["receipts"].append(
+                {"ref": rref, "prev_hash": body.get("prev_hash"), "keyid": sig.get("keyid")}
+            )
         else:
             notarization_only.append({"ref": rref, "fulfills": target, "keyid": sig.get("keyid")})
 
@@ -254,8 +274,15 @@ def verify_paths(paths: List[str], tests: List[str],
         state = _commitment_state(pr, now)
         chain_ok, chain_note = _check_chain(pr["receipts"])
         key_consistent = all(r["keyid"] == pr["keyid"] for r in pr["receipts"])
-        commitments.append({**pr, "state": state, "chain_ok": chain_ok,
-                            "chain_note": chain_note, "key_consistent": key_consistent})
+        commitments.append(
+            {
+                **pr,
+                "state": state,
+                "chain_ok": chain_ok,
+                "chain_note": chain_note,
+                "key_consistent": key_consistent,
+            }
+        )
 
     results = _evaluate(tests, manifests_report, commitments, artifacts_dir)
     code = _build_code(tests, results)
@@ -275,7 +302,7 @@ def verify_paths(paths: List[str], tests: List[str],
     }
 
 
-def _tally(units: List[bool], nowhere_reason: str, fail_noun: str) -> Dict[str, Any]:
+def _tally(units: list[bool], nowhere_reason: str, fail_noun: str) -> dict[str, Any]:
     """Turn a list of per-unit pass booleans into a test result.
 
     PASS iff there is at least one applicable unit and all of them pass;
@@ -288,53 +315,75 @@ def _tally(units: List[bool], nowhere_reason: str, fail_noun: str) -> Dict[str, 
     n_pass = sum(1 for u in units if u)
     if n_pass == n:
         return {"result": "PASS", "applicable": n, "reason": f"{n}/{n} {fail_noun} ok"}
-    return {"result": "FAIL", "applicable": n,
-            "reason": f"{n - n_pass}/{n} {fail_noun} failed"}
+    return {"result": "FAIL", "applicable": n, "reason": f"{n - n_pass}/{n} {fail_noun} failed"}
 
 
-def _evaluate(tests, manifests, commitments, artifacts_dir) -> Dict[str, Dict[str, Any]]:
-    res: Dict[str, Dict[str, Any]] = {}
+def _evaluate(tests, manifests, commitments, artifacts_dir) -> dict[str, dict[str, Any]]:
+    res: dict[str, dict[str, Any]] = {}
     with_receipts = [c for c in commitments if c["receipts"]]
 
     if "BDR" in tests:
-        units = [bool(m["signature"].get("signature_ok") and m["signature"].get("keyid_ok"))
-                 for m in manifests]
+        units = [
+            bool(m["signature"].get("signature_ok") and m["signature"].get("keyid_ok"))
+            for m in manifests
+        ]
         res["BDR"] = _tally(units, "no manifests to verify", "manifest(s)")
 
     if "floor" in tests:
-        units = [m["floor"]["status"] == "verified"
-                 for m in manifests if m["floor"]["status"] != "absent"]
-        res["floor"] = _tally(units, "requested but no manifest carries an anchor.floor", "floor(s)")
+        units = [
+            m["floor"]["status"] == "verified"
+            for m in manifests
+            if m["floor"]["status"] != "absent"
+        ]
+        res["floor"] = _tally(
+            units, "requested but no manifest carries an anchor.floor", "floor(s)"
+        )
 
     if "ceiling" in tests:
-        units = [m["ceiling"]["status"] == "verified"
-                 for m in manifests if m["ceiling"]["status"] != "absent"]
-        res["ceiling"] = _tally(units, "requested but no manifest carries a ceiling witness", "ceiling(s)")
+        units = [
+            m["ceiling"]["status"] == "verified"
+            for m in manifests
+            if m["ceiling"]["status"] != "absent"
+        ]
+        res["ceiling"] = _tally(
+            units, "requested but no manifest carries a ceiling witness", "ceiling(s)"
+        )
 
     if "content" in tests:
-        units = [m["content"]["status"] == "ok"
-                 for m in manifests if m["content"]["status"] not in ("skipped",)]
-        nowhere = ("requested but no content could be checked "
-                   "(need --artifacts and a manifest with a subject)")
+        units = [
+            m["content"]["status"] == "ok"
+            for m in manifests
+            if m["content"]["status"] not in ("skipped",)
+        ]
+        nowhere = (
+            "requested but no content could be checked "
+            "(need --artifacts and a manifest with a subject)"
+        )
         res["content"] = _tally(units, nowhere, "subject(s)")
 
     if "chain" in tests:
         units = [c["chain_ok"] for c in with_receipts]
-        res["chain"] = _tally(units, "requested but no commitment has receipts to chain-check", "chain(s)")
+        res["chain"] = _tally(
+            units, "requested but no commitment has receipts to chain-check", "chain(s)"
+        )
 
     if "keyconsist" in tests:
         units = [c["key_consistent"] for c in with_receipts]
-        res["keyconsist"] = _tally(units, "requested but no commitment has receipts to key-check", "commitment(s)")
+        res["keyconsist"] = _tally(
+            units,
+            "requested but no commitment has receipts to key-check",
+            "commitment(s)",
+        )
 
     return res
 
 
-def _build_code(tests: List[str], results: Dict[str, Dict[str, Any]]) -> str:
+def _build_code(tests: list[str], results: dict[str, dict[str, Any]]) -> str:
     tokens = [f"{name}={results[name]['result']}" for name in sorted(tests)]
     return CODE_VERSION + " " + " ".join(tokens)
 
 
-def _commitment_state(pr: Dict[str, Any], now: float) -> str:
+def _commitment_state(pr: dict[str, Any], now: float) -> str:
     if pr["receipts"]:
         return "fulfilled"
     due = pr.get("due")
@@ -346,7 +395,7 @@ def _commitment_state(pr: Dict[str, Any], now: float) -> str:
         return "open"
 
 
-def _check_chain(receipts: List[Dict[str, Any]]):
+def _check_chain(receipts: list[dict[str, Any]]):
     """A prev_hash chain: exactly one root (prev_hash null), each other points
     to a present receipt, no cycles/forks."""
     if not receipts:
@@ -361,7 +410,7 @@ def _check_chain(receipts: List[Dict[str, Any]]):
     return True, "chain intact"
 
 
-def _expand(paths: List[str]) -> List[str]:
+def _expand(paths: list[str]) -> list[str]:
     out = []
     for p in paths:
         if os.path.isdir(p):

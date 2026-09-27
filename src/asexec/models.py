@@ -19,7 +19,7 @@ optional (a commitment with no deadline simply stays ``open`` forever).
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Union
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
@@ -28,7 +28,7 @@ from . import PREDICATE_TYPE, SCHEMA_VERSION
 # A field the caller may express either as a plain string or as structured JSON.
 # "take what is provided and compile it" - more disclosure buys more trust, but
 # nothing beyond ``target`` is required.
-Freeform = Union[str, Dict[str, Any]]
+Freeform = Union[str, dict[str, Any]]
 
 PHASES = ("prereg", "postreg")
 
@@ -39,7 +39,7 @@ class SubjectItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str
-    digest: Dict[str, str]
+    digest: dict[str, str]
 
 
 class Floor(BaseModel):
@@ -49,16 +49,16 @@ class Floor(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     floor_type: str
-    chain_hash: Optional[str] = None
-    round: Optional[int] = None
-    signature: Optional[str] = None
-    randomness: Optional[str] = None
+    chain_hash: str | None = None
+    round: int | None = None
+    signature: str | None = None
+    randomness: str | None = None
 
 
 class Anchor(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    floor: Optional[Floor] = None
+    floor: Floor | None = None
 
 
 class ManifestBody(BaseModel):
@@ -79,23 +79,23 @@ class ManifestBody(BaseModel):
     target: Freeform
 
     # the commitment's optional shape
-    due: Optional[str] = None
-    declaration: Optional[Freeform] = None
+    due: str | None = None
+    declaration: Freeform | None = None
 
     # optional content claim (subject requires its algorithm)
-    subject: Optional[List[SubjectItem]] = None
-    hash_alg: Optional[str] = None
+    subject: list[SubjectItem] | None = None
+    hash_alg: str | None = None
 
     # postreg linkage
-    fulfills: Optional[str] = None
-    prev_hash: Optional[str] = None
+    fulfills: str | None = None
+    prev_hash: str | None = None
 
     # optional context
-    anchor: Optional[Anchor] = None
-    identity: Optional[List[Any]] = None
-    provenance: Optional[str] = None
-    repro_recipe: Optional[Dict[str, Any]] = None
-    notes: Optional[Freeform] = None
+    anchor: Anchor | None = None
+    identity: list[Any] | None = None
+    provenance: str | None = None
+    repro_recipe: dict[str, Any] | None = None
+    notes: Freeform | None = None
 
     @field_validator("phase")
     @classmethod
@@ -105,7 +105,7 @@ class ManifestBody(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def _bedrock(self) -> "ManifestBody":
+    def _bedrock(self) -> ManifestBody:
         # semantic bedrock: target is the only mandatory claim (due is optional).
         if self.target in (None, "", {}, []):
             raise ValueError("manifest body missing mandatory 'target'")
@@ -117,7 +117,7 @@ class ManifestBody(BaseModel):
             raise ValueError("postreg manifest missing mandatory 'fulfills'")
         return self
 
-    def to_body(self) -> Dict[str, Any]:
+    def to_body(self) -> dict[str, Any]:
         """Return the plain dict that gets canonicalized and signed."""
         return self.model_dump(mode="json", exclude_none=True)
 
@@ -138,5 +138,5 @@ class Manifest(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     payloadType: str = "application/vnd.asexec+json"
-    payload: Dict[str, Any]
+    payload: dict[str, Any]
     signature: Signature

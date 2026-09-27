@@ -62,7 +62,6 @@ from __future__ import annotations
 import hashlib
 import socket
 import struct
-from typing import Dict, List, Optional
 
 from . import keys
 from .errors import NetworkError, VerificationError
@@ -78,33 +77,37 @@ from .errors import NetworkError, VerificationError
 # ALPHA CAVEAT: pinned for prototype expediency; the wire format has not yet been
 # reconciled against a *live* capture from these servers (the tracked follow-up),
 # so a real fetch→verify round trip may fail safe until that lands.
-SERVERS: Dict[str, Dict[str, object]] = {
+SERVERS: dict[str, dict[str, object]] = {
     "Cloudflare-Roughtime-2": {
-        "host": "roughtime.cloudflare.com", "port": 2003, "variant": "IETF-Roughtime",
-        "pubkey": bytes.fromhex(
-            "d060fb737c8ff3111ce19976cdeb8dd9294bbc3555a1c8ec3d22fcfd197fef38"),
+        "host": "roughtime.cloudflare.com",
+        "port": 2003,
+        "variant": "IETF-Roughtime",
+        "pubkey": bytes.fromhex("d060fb737c8ff3111ce19976cdeb8dd9294bbc3555a1c8ec3d22fcfd197fef38"),
     },
     "int08h-Roughtime": {
-        "host": "roughtime.int08h.com", "port": 2002, "variant": "IETF-Roughtime",
-        "pubkey": bytes.fromhex(
-            "016e6e0284d24c37c6e4d7d8d5b4e1d3c1949ceaa545bf875616c9dce0c9bec1"),
+        "host": "roughtime.int08h.com",
+        "port": 2002,
+        "variant": "IETF-Roughtime",
+        "pubkey": bytes.fromhex("016e6e0284d24c37c6e4d7d8d5b4e1d3c1949ceaa545bf875616c9dce0c9bec1"),
     },
     "roughtime.se": {
-        "host": "roughtime.se", "port": 2002, "variant": "IETF-Roughtime",
-        "pubkey": bytes.fromhex(
-            "4b70337d92790a349d909db564919bc6a7583ff4a813c7d7298d3e6a272c7a12"),
+        "host": "roughtime.se",
+        "port": 2002,
+        "variant": "IETF-Roughtime",
+        "pubkey": bytes.fromhex("4b70337d92790a349d909db564919bc6a7583ff4a813c7d7298d3e6a272c7a12"),
     },
     "time.txryan.com": {
-        "host": "time.txryan.com", "port": 2002, "variant": "IETF-Roughtime",
-        "pubkey": bytes.fromhex(
-            "881563c60ff58fbcb5fa44144c161d4da6f10a9a5eb14ff4ec3e0f303264d960"),
+        "host": "time.txryan.com",
+        "port": 2002,
+        "variant": "IETF-Roughtime",
+        "pubkey": bytes.fromhex("881563c60ff58fbcb5fa44144c161d4da6f10a9a5eb14ff4ec3e0f303264d960"),
     },
 }
 
 DELEGATION_CONTEXT = b"RoughTime v1 delegation signature--\x00"
 RESPONSE_CONTEXT = b"RoughTime v1 response signature\x00"
 
-NONCE_LEN = 32          # our nonce = sha-256(body): 32 bytes
+NONCE_LEN = 32  # our nonce = sha-256(body): 32 bytes
 _TREE_LEAF = b"\x00"
 _TREE_NODE = b"\x01"
 _REQUEST_MIN_LEN = 1024  # amplification defense (padding)
@@ -124,7 +127,7 @@ def _tag_key(tag: str) -> int:
     return int.from_bytes(_tag_bytes(tag), "little")
 
 
-def build_message(fields: Dict[str, bytes]) -> bytes:
+def build_message(fields: dict[str, bytes]) -> bytes:
     """Serialize a tag→value map to a Roughtime message (tags ascending)."""
     items = sorted(fields.items(), key=lambda kv: _tag_key(kv[0]))
     n = len(items)
@@ -143,7 +146,7 @@ def build_message(fields: Dict[str, bytes]) -> bytes:
     return out
 
 
-def parse_message(data: bytes) -> Dict[str, bytes]:
+def parse_message(data: bytes) -> dict[str, bytes]:
     """Parse a Roughtime message into a tag→value map. Strict: raises on malformed."""
     if len(data) < 4:
         raise VerificationError("roughtime message too short")
@@ -161,7 +164,7 @@ def parse_message(data: bytes) -> Dict[str, bytes]:
         pos += 4
     tags = []
     for _ in range(n):
-        tags.append(data[pos:pos + 4])
+        tags.append(data[pos : pos + 4])
         pos += 4
     values_start = pos
     bounds = [0] + offsets + [len(data) - values_start]
@@ -177,7 +180,7 @@ def parse_message(data: bytes) -> Dict[str, bytes]:
     keys = [int.from_bytes(t, "little") for t in tags]
     if any(keys[i] >= keys[i + 1] for i in range(len(keys) - 1)):
         raise VerificationError("roughtime message: tags not strictly ascending")
-    fields: Dict[str, bytes] = {}
+    fields: dict[str, bytes] = {}
     for i, tag in enumerate(tags):
         start = values_start + bounds[i]
         end = values_start + bounds[i + 1]
@@ -197,7 +200,7 @@ def _sha512(*parts: bytes) -> bytes:
     return h.digest()
 
 
-def _uint(fields: Dict[str, bytes], tag: str, size: int) -> int:
+def _uint(fields: dict[str, bytes], tag: str, size: int) -> int:
     """Read a fixed-width little-endian unsigned int, enforcing its exact length.
 
     A wrong-length field is a rejection, not a silently-reinterpreted value: a
@@ -216,7 +219,7 @@ def merkle_root(nonce: bytes, path: bytes, index: int) -> bytes:
         raise VerificationError("roughtime PATH not a multiple of 64 bytes")
     node = _sha512(_TREE_LEAF, nonce)
     for i in range(0, len(path), 64):
-        sibling = path[i:i + 64]
+        sibling = path[i : i + 64]
         if index & 1:
             node = _sha512(_TREE_NODE, sibling, node)
         else:
@@ -228,7 +231,7 @@ def merkle_root(nonce: bytes, path: bytes, index: int) -> bytes:
 # --------------------------------------------------------------------------- #
 # verification
 # --------------------------------------------------------------------------- #
-def verify_response(response: bytes, nonce: bytes, long_term_pubkey: bytes) -> Dict[str, float]:
+def verify_response(response: bytes, nonce: bytes, long_term_pubkey: bytes) -> dict[str, float]:
     """Verify a raw Roughtime response against a nonce and a PINNED long-term key.
 
     Returns ``{"midpoint": <unix seconds>, "radius": <seconds>}`` on success;
@@ -278,8 +281,11 @@ def verify_response(response: bytes, nonce: bytes, long_term_pubkey: bytes) -> D
     return {"midpoint": midp / 1e6, "radius": radi / 1e6}
 
 
-def verify_ceiling(ceiling: Dict[str, object], expected_nonce: str,
-                   servers: Optional[Dict[str, Dict[str, object]]] = None) -> Dict[str, object]:
+def verify_ceiling(
+    ceiling: dict[str, object],
+    expected_nonce: str,
+    servers: dict[str, dict[str, object]] | None = None,
+) -> dict[str, object]:
     """Verify an envelope ``ceiling`` record and its binding to ``expected_nonce``.
 
     ``expected_nonce`` is the manifest's ``ref`` (``sha-256:<hex>``); the ceiling
@@ -288,10 +294,12 @@ def verify_ceiling(ceiling: Dict[str, object], expected_nonce: str,
     from the record.
     """
     servers = SERVERS if servers is None else servers
-    out: Dict[str, object] = {"status": "invalid",
-                              "witness_id": ceiling.get("witness_id"),
-                              "midpoint": ceiling.get("midpoint"),
-                              "radius": ceiling.get("radius")}
+    out: dict[str, object] = {
+        "status": "invalid",
+        "witness_id": ceiling.get("witness_id"),
+        "midpoint": ceiling.get("midpoint"),
+        "radius": ceiling.get("radius"),
+    }
     if ceiling.get("ceiling_type") != "roughtime":
         out["status"] = "unsupported"
         out["error"] = f"unknown ceiling_type {ceiling.get('ceiling_type')!r}"
@@ -307,8 +315,10 @@ def verify_ceiling(ceiling: Dict[str, object], expected_nonce: str,
     pinned = entry.get("pubkey") if entry else None
     if not isinstance(pinned, (bytes, bytearray)):
         out["status"] = "unpinned"
-        out["error"] = (f"no pinned long-term key for witness {witness_id!r}; "
-                        "cannot verify against a trust anchor")
+        out["error"] = (
+            f"no pinned long-term key for witness {witness_id!r}; "
+            "cannot verify against a trust anchor"
+        )
         return out
     # If the record advertises a long-term pubkey, it must match the pinned one.
     adv = ceiling.get("pubkey")
@@ -347,8 +357,9 @@ def build_request(nonce: bytes, version: int = 1) -> bytes:
     return msg
 
 
-def fetch_ceiling(nonce_ref: str, servers: Optional[Dict[str, Dict[str, object]]] = None,
-                  timeout: float = 5.0) -> Dict[str, object]:
+def fetch_ceiling(
+    nonce_ref: str, servers: dict[str, dict[str, object]] | None = None, timeout: float = 5.0
+) -> dict[str, object]:
     """Fetch a ceiling witness for ``nonce_ref`` (``sha-256:<hex>``). SIGN-TIME, NETWORK.
 
     ``servers`` is the unified ``SERVERS`` map (``witness_id -> {host, port,
@@ -361,7 +372,7 @@ def fetch_ceiling(nonce_ref: str, servers: Optional[Dict[str, Dict[str, object]]
         raise NetworkError("no Roughtime servers configured to fetch a ceiling from")
     nonce = bytes.fromhex(nonce_ref.split(":", 1)[-1])
     request = build_request(nonce)
-    last_err: Optional[Exception] = None
+    last_err: Exception | None = None
     for witness_id, entry in servers.items():
         host, port, pubkey = entry["host"], entry["port"], entry["pubkey"]
         try:
@@ -392,5 +403,5 @@ def _strip_framing(packet: bytes) -> bytes:
     """Strip the optional ``ROUGHTIM`` + length UDP framing, if present."""
     if packet[:8] == b"ROUGHTIM":
         (length,) = struct.unpack_from("<I", packet, 8)
-        return packet[12:12 + length]
+        return packet[12 : 12 + length]
     return packet

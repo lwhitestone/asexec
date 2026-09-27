@@ -1,10 +1,13 @@
 """Offline drand quicknet verification, using a baked real round (no network)."""
+
 from asexec import drand
 
 # Real quicknet round 1000 (fetched once; verification is offline).
 ROUND = 1000
-SIG = ("b44679b9a59af2ec876b1a6b1ad52ea9b1615fc3982b19576350f93447cb1125"
-       "e342b73a8dd2bacbe47e4b6b63ed5e39")
+SIG = (
+    "b44679b9a59af2ec876b1a6b1ad52ea9b1615fc3982b19576350f93447cb1125"
+    "e342b73a8dd2bacbe47e4b6b63ed5e39"
+)
 RAND = "fe290beca10872ef2fb164d2aa4442de4566183ec51c56ff3cd603d930e54fdd"
 
 

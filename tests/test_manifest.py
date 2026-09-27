@@ -1,7 +1,8 @@
 """Manifest build/sign/ref + bedrock enforcement (asexec schema)."""
+
 import pytest
 
-from asexec import keys, manifest, SCHEMA_VERSION, PREDICATE_TYPE
+from asexec import PREDICATE_TYPE, SCHEMA_VERSION, keys, manifest
 from asexec.canonical import signing_input
 from asexec.errors import ManifestError
 
@@ -78,8 +79,12 @@ def test_subject_requires_hash_alg():
 def test_missing_semantic_bedrock_rejected():
     priv, pub = keys.generate()
     # no target (the only semantic bedrock field)
-    body = {"schema_version": SCHEMA_VERSION, "predicateType": PREDICATE_TYPE,
-            "phase": "prereg", "due": DUE}
+    body = {
+        "schema_version": SCHEMA_VERSION,
+        "predicateType": PREDICATE_TYPE,
+        "phase": "prereg",
+        "due": DUE,
+    }
     with pytest.raises(ManifestError):
         manifest.sign(body, priv, pub)
 
@@ -102,8 +107,13 @@ def test_postreg_requires_fulfills():
 
 def test_floor_lands_in_anchor_and_ref_stable_across_ceiling():
     priv, pub = keys.generate()
-    floor = {"floor_type": "drand", "chain_hash": "ab", "round": 1,
-             "signature": "cd", "randomness": "ef"}
+    floor = {
+        "floor_type": "drand",
+        "chain_hash": "ab",
+        "round": 1,
+        "signature": "cd",
+        "randomness": "ef",
+    }
     body = manifest.build_prereg(_target(), due=DUE, subject=_subj(), floor=floor)
     assert body["anchor"]["floor"]["floor_type"] == "drand"
     m = manifest.sign(body, priv, pub)

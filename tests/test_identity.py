@@ -1,4 +1,5 @@
 """Identity hook: .well-known build + binding check (network mocked)."""
+
 from asexec import identity, keys
 
 

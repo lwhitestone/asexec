@@ -1,12 +1,13 @@
 """The verifier: states, tamper detection, content, chains, and the canonical
 verify CODE — all offline."""
+
 import json
 
 import pytest
 
-from asexec import keys, manifest, verifier
+from asexec import keys, manifest
 from asexec.errors import VerificationError
-from asexec.verifier import verify_paths, parse_tests
+from asexec.verifier import parse_tests, verify_paths
 
 
 # --------------------------------------------------------------------------- #
@@ -36,11 +37,9 @@ def test_parse_tests_is_catalog_ordered_and_deduped():
 # --------------------------------------------------------------------------- #
 def test_code_is_alphabetical_and_byte_identical(make_commitment):
     c = make_commitment(n_receipts=1)
-    r1 = verify_paths([c["prereg"]] + c["receipts"], ["BDR", "chain"],
-                      artifacts_dir=c["artifacts"])
+    r1 = verify_paths([c["prereg"]] + c["receipts"], ["BDR", "chain"], artifacts_dir=c["artifacts"])
     # request the SAME tests in a different order -> identical code
-    r2 = verify_paths([c["prereg"]] + c["receipts"], ["chain", "BDR"],
-                      artifacts_dir=c["artifacts"])
+    r2 = verify_paths([c["prereg"]] + c["receipts"], ["chain", "BDR"], artifacts_dir=c["artifacts"])
     assert r1["code"] == r2["code"]
     assert r1["code"] == "asexec-verify/1 BDR=PASS chain=PASS"
 
@@ -55,8 +54,7 @@ def test_BDR_only_is_a_complete_statement(make_commitment):
 def test_requested_but_absent_is_fail_not_omission(make_commitment):
     # no floor was embedded (offline fixtures), so `floor` applies nowhere -> FAIL.
     c = make_commitment(n_receipts=1)
-    r = verify_paths([c["prereg"]] + c["receipts"], ["BDR", "floor"],
-                     artifacts_dir=c["artifacts"])
+    r = verify_paths([c["prereg"]] + c["receipts"], ["BDR", "floor"], artifacts_dir=c["artifacts"])
     assert r["results"]["floor"]["result"] == "FAIL"
     assert r["results"]["floor"]["applicable"] == 0
     assert r["code"] == "asexec-verify/1 BDR=PASS floor=FAIL"
@@ -75,9 +73,11 @@ def test_content_without_artifacts_is_fail(make_commitment):
 # --------------------------------------------------------------------------- #
 def test_fulfilled(make_commitment):
     c = make_commitment(n_receipts=1)
-    rep = verify_paths([c["prereg"]] + c["receipts"],
-                       ["BDR", "content", "chain", "keyconsist"],
-                       artifacts_dir=c["artifacts"])
+    rep = verify_paths(
+        [c["prereg"]] + c["receipts"],
+        ["BDR", "content", "chain", "keyconsist"],
+        artifacts_dir=c["artifacts"],
+    )
     assert rep["ok"] is True
     assert rep["commitments"][0]["state"] == "fulfilled"
     assert rep["code"] == "asexec-verify/1 BDR=PASS chain=PASS content=PASS keyconsist=PASS"
@@ -119,17 +119,20 @@ def test_tampered_receipt_fails_BDR(make_commitment):
 def test_content_mismatch_detected(make_commitment):
     c = make_commitment(n_receipts=1)
     import os
+
     open(os.path.join(c["artifacts"], "harness", "eval.py"), "w").write("TAMPERED\n")
-    rep = verify_paths([c["prereg"]] + c["receipts"], ["BDR", "content"],
-                       artifacts_dir=c["artifacts"])
+    rep = verify_paths(
+        [c["prereg"]] + c["receipts"], ["BDR", "content"], artifacts_dir=c["artifacts"]
+    )
     assert rep["results"]["content"]["result"] == "FAIL"
     assert any(m["content"]["status"] == "mismatch" for m in rep["manifests"])
 
 
 def test_chain_gap_detected(make_commitment):
     c = make_commitment(n_receipts=2)
-    rep = verify_paths([c["prereg"], c["receipts"][1]], ["BDR", "chain"],
-                       artifacts_dir=c["artifacts"])
+    rep = verify_paths(
+        [c["prereg"], c["receipts"][1]], ["BDR", "chain"], artifacts_dir=c["artifacts"]
+    )
     assert rep["commitments"][0]["chain_ok"] is False
     assert rep["results"]["chain"]["result"] == "FAIL"
 
@@ -137,8 +140,7 @@ def test_chain_gap_detected(make_commitment):
 def test_foreign_key_still_verifies_offline(make_commitment):
     priv, pub = keys.generate()
     c = make_commitment(n_receipts=1, priv=priv, pub=pub)
-    rep = verify_paths([c["prereg"]] + c["receipts"], ["BDR"],
-                       artifacts_dir=c["artifacts"])
+    rep = verify_paths([c["prereg"]] + c["receipts"], ["BDR"], artifacts_dir=c["artifacts"])
     assert rep["ok"] is True
     assert rep["manifests"][0]["keyid"] == keys.keyid_for(pub)
 
@@ -148,7 +150,8 @@ def test_receipts_from_wrong_key_flagged(make_commitment):
     other_priv, other_pub = keys.generate()
     body = manifest.get_body(manifest.load(c["receipts"][0]))
     manifest.save(manifest.sign(body, other_priv, other_pub), c["receipts"][0])
-    rep = verify_paths([c["prereg"]] + c["receipts"], ["BDR", "keyconsist"],
-                       artifacts_dir=c["artifacts"])
+    rep = verify_paths(
+        [c["prereg"]] + c["receipts"], ["BDR", "keyconsist"], artifacts_dir=c["artifacts"]
+    )
     assert rep["commitments"][0]["key_consistent"] is False
     assert rep["results"]["keyconsist"]["result"] == "FAIL"

@@ -1,4 +1,5 @@
 """Canonical/PAE, hashing, and keys."""
+
 import json
 
 import pytest
@@ -78,6 +79,7 @@ def test_key_save_load_roundtrip_and_perms(tmp_path):
 
     # Skip 0600 enforcement on Windows (it's a Unix-only guarantee)
     import os
+
     if os.name != "nt":
         assert os.stat(kp).st_mode & 0o777 == 0o600
 
@@ -86,4 +88,3 @@ def test_key_save_load_roundtrip_and_perms(tmp_path):
     assert pub2 == pub
     assert keys.keyid_for(pub2) == kid
     assert json.loads((tmp_path / "k.key.pub").read_text())["keyid"] == kid
- 

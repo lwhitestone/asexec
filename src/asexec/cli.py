@@ -14,7 +14,7 @@ import os
 import sys
 import uuid
 from datetime import datetime
-from typing import Any, Callable, List, Optional, TypeVar, Union
+from typing import Callable, TypeVar
 
 from . import __version__, drand, hashing, identity, keys, manifest, verifier
 from .errors import VerificationError
@@ -27,18 +27,18 @@ T = TypeVar("T")
 # --------------------------------------------------------------------------- #
 # input helpers
 # --------------------------------------------------------------------------- #
-def _load_json(path: str) -> Union[str, dict]:
+def _load_json(path: str) -> str | dict:
     """Load JSON from the given path."""
     try:
         with open(path) as f:
             return json.load(f)
     except json.JSONDecodeError as e:
-        raise SystemExit(f"error: {path} must contain valid JSON: {e}")
+        raise SystemExit(f"error: {path} must contain valid JSON: {e}") from e
 
 
 def _get_arg_or_file(
     args, arg_name: str, file_arg_name: str, load_file: Callable[[str], T]
-) -> Optional[Union[str, T]]:
+) -> str | T | None:
     """Load a value from either ``--<arg>`` or ``--<file-arg>``, but not both."""
     value = getattr(args, arg_name, None)
     file_path = getattr(args, file_arg_name, None)
@@ -55,50 +55,48 @@ def _get_arg_or_file(
         except FileNotFoundError:
             raise SystemExit(
                 f"error: --{file_arg_name.replace('_', '-')} not found: {file_path}"
-            )
+            ) from None
     return None
 
 
-def _get_target(args) -> Optional[Union[str, dict]]:
+def _get_target(args) -> str | dict | None:
     """Retrieve the target value (from arg xor file), if any."""
     return _get_arg_or_file(args, "target", "target_file", _load_json)
 
 
-def _get_declaration(args) -> Optional[Union[str, dict]]:
+def _get_declaration(args) -> str | dict | None:
     """Retrieve the declaration value (from arg xor file), if any."""
     return _get_arg_or_file(args, "declaration", "declaration_file", _load_json)
 
 
-def _get_notes(args) -> Optional[Union[str, dict]]:
+def _get_notes(args) -> str | dict | None:
     """Retrieve the notes value (from arg xor file), if any."""
     return _get_arg_or_file(args, "notes", "notes_file", _load_json)
 
 
-def _get_due(args) -> Optional[str]:
+def _get_due(args) -> str | None:
     """Validate the provided ``--due`` ISO-8601 deadline; return it verbatim."""
     if not args.due:
         return None
     try:
         datetime.fromisoformat(args.due.replace("Z", "+00:00"))
     except ValueError:
-        raise SystemExit(f"error: --due is not a valid ISO-8601 timestamp: {args.due}")
+        raise SystemExit(f"error: --due is not a valid ISO-8601 timestamp: {args.due}") from None
     return args.due
 
 
-def _get_floor(args) -> Optional[dict]:
+def _get_floor(args) -> dict | None:
     """Fetch a drand freshness floor (anchor.floor) at sign time, or None."""
     if not args.floor:
         return None
     try:
         return drand.fetch_floor()
     except Exception as e:
-        sys.stderr.write(
-            f"warning: drand fetch failed ({e}); continuing without freshness floor\n"
-        )
+        sys.stderr.write(f"warning: drand fetch failed ({e}); continuing without freshness floor\n")
         return None
 
 
-def _build_subject(paths: Optional[List[str]], hash_alg: str) -> Optional[list]:
+def _build_subject(paths: list[str] | None, hash_alg: str) -> list | None:
     """Construct subject data (a list of filenames/dirnames and their associated
     digest hashes) given source paths and a hash algorithm."""
     return hashing.build_subject(paths, hash_alg) if paths else None
@@ -153,9 +151,7 @@ def cmd_prereg(args) -> int:
     """Write a signed pre-registration, signalling the intended execution."""
     target = _get_target(args)
     if target is None:
-        raise SystemExit(
-            "error: give --target or --target-file (the only mandatory claim)"
-        )
+        raise SystemExit("error: give --target or --target-file (the only mandatory claim)")
     priv, pub = keys.load_signing_key(args.key)
     subject = _build_subject(args.subject, args.hash_alg)
     body = manifest.build_prereg(
@@ -191,16 +187,12 @@ def cmd_postreg(args) -> int:
     target = _get_target(args)
     if target is None:
         if prereg_body is None:
-            raise SystemExit(
-                "error: no --target and --fulfills is not a readable prereg"
-            )
+            raise SystemExit("error: no --target and --fulfills is not a readable prereg")
         target = prereg_body["target"]
 
     due = _get_due(args) or (prereg_body or {}).get("due")
     declaration = _get_declaration(args) or (prereg_body or {}).get("declaration")
-    hash_alg = (
-        args.hash_alg or (prereg_body or {}).get("hash_alg") or hashing.DEFAULT_ALG
-    )
+    hash_alg = args.hash_alg or (prereg_body or {}).get("hash_alg") or hashing.DEFAULT_ALG
 
     subject = _build_subject(args.subject, hash_alg)
     body = manifest.build_postreg(
@@ -234,7 +226,7 @@ def cmd_verify(args) -> int:
     try:
         tests = verifier.parse_tests(args.tests)
     except VerificationError as e:
-        raise SystemExit(f"error: {e}")
+        raise SystemExit(f"error: {e}") from e
 
     report = verifier.verify_paths(args.paths, tests, artifacts_dir=args.artifacts)
 
@@ -268,9 +260,7 @@ def cmd_verify(args) -> int:
             print(f"    {cs} content hashes {c['status']}")
             for e in c.get("entries", []):
                 if not e["ok"]:
-                    print(
-                        f"        {NO} {e['name']}: {e.get('reason', 'digest mismatch')}"
-                    )
+                    print(f"        {NO} {e['name']}: {e.get('reason', 'digest mismatch')}")
 
     print("\n=== commitments ===")
     if not report["commitments"]:
@@ -283,13 +273,9 @@ def cmd_verify(args) -> int:
             + ("" if c["chain_ok"] else f"  {NO} {c['chain_note']}")
         )
         if not c["key_consistent"]:
-            print(
-                f"    {NO} postregs signed by a different key than the pre-registration"
-            )
+            print(f"    {NO} postregs signed by a different key than the pre-registration")
     if report["notarization_only"]:
-        print(
-            "\n=== notarization-only (postregs with no matching pre-registration) ==="
-        )
+        print("\n=== notarization-only (postregs with no matching pre-registration) ===")
         for n in report["notarization_only"]:
             print(f"  {n['ref']}  (fulfills {n.get('fulfills')})")
 
@@ -324,7 +310,7 @@ def cmd_identity(args) -> int:
         doc = identity.build_wellknown([pair], domain=args.domain)
         identity.write_wellknown(doc, args.out)
         print(f"{OK} wrote {args.out}")
-        print(f"  publish at: https://<your-domain>/.well-known/asexec.json")
+        print("  publish at: https://<your-domain>/.well-known/asexec.json")
         print(f"  keyid     : {pair['keyid']}")
         return 0
     if args.identity_cmd == "match":
@@ -374,17 +360,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     # asexec keygen
     kg = sub.add_parser("keygen", help="generate an ed25519 keypair (no CA)")
-    kg.add_argument(
-        "--out", default=None, help="secret key file (default: asexec-<uuid>.key)"
-    )
+    kg.add_argument("--out", default=None, help="secret key file (default: asexec-<uuid>.key)")
     kg.set_defaults(func=cmd_keygen)
 
     # asexec prereg
     pr = sub.add_parser("prereg", help="sign a pre-registration before a run")
     pr.add_argument("--key", required=True, help="key that signs the prereg")
-    pr.add_argument(
-        "--target", help="plain-text target details (what you commit to run)"
-    )
+    pr.add_argument("--target", help="plain-text target details (what you commit to run)")
     pr.add_argument("--target-file", help="structured JSON target details")
     pr.add_argument(
         "--due",
@@ -409,9 +391,7 @@ def build_parser() -> argparse.ArgumentParser:
     pr.set_defaults(func=cmd_prereg)
 
     # asexec postreg
-    po = sub.add_parser(
-        "postreg", help="sign a post-registration (receipt) after a run"
-    )
+    po = sub.add_parser("postreg", help="sign a post-registration (receipt) after a run")
     po.add_argument("--key", required=True)
     po.add_argument(
         "--fulfills",
@@ -420,21 +400,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     po.add_argument("--target", help="override target (default: inherit from prereg)")
     po.add_argument("--target-file")
-    po.add_argument(
-        "--due", help="override disclosure deadline (default: inherit from prereg)"
-    )
+    po.add_argument("--due", help="override disclosure deadline (default: inherit from prereg)")
     po.add_argument("--declaration")
     po.add_argument("--declaration-file")
-    po.add_argument(
-        "--subject", nargs="+", help="path(s) to outputs/transcript/harness to hash"
-    )
+    po.add_argument("--subject", nargs="+", help="path(s) to outputs/transcript/harness to hash")
     po.add_argument("--hash-alg", default=None, choices=hashing.available_algorithms())
-    po.add_argument(
-        "--prev", help="prior postreg file (or ref) in this commitment's chain"
-    )
-    po.add_argument(
-        "--provenance", choices=["asserted", "reproducible"], default="asserted"
-    )
+    po.add_argument("--prev", help="prior postreg file (or ref) in this commitment's chain")
+    po.add_argument("--provenance", choices=["asserted", "reproducible"], default="asserted")
     po.add_argument(
         "--repro-recipe",
         help="JSON: {seed, decode, runtime} if provenance=reproducible",
@@ -446,9 +418,7 @@ def build_parser() -> argparse.ArgumentParser:
     po.set_defaults(func=cmd_postreg)
 
     # asexec verify
-    vy = sub.add_parser(
-        "verify", help="verify manifests offline; produce a canonical verify code"
-    )
+    vy = sub.add_parser("verify", help="verify manifests offline; produce a canonical verify code")
     vy.add_argument("paths", nargs="+", help="manifest file(s) or a directory of them")
     vy.add_argument(
         "--tests",
@@ -456,15 +426,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="comma-separated tests to run (MUST include 'BDR'). "
         f"available: {', '.join(verifier.TEST_CATALOG)}",
     )
-    vy.add_argument(
-        "--artifacts", help="directory of original artifacts, to check content hashes"
-    )
+    vy.add_argument("--artifacts", help="directory of original artifacts, to check content hashes")
     vy.set_defaults(func=cmd_verify)
 
     # asexec identity
-    idp = sub.add_parser(
-        "identity", help="key<->domain binding via .well-known (no CA)"
-    )
+    idp = sub.add_parser("identity", help="key<->domain binding via .well-known (no CA)")
     isub = idp.add_subparsers(dest="identity_cmd", required=True)
     ie = isub.add_parser("emit", help="write a .well-known/asexec.json for your key")
     ie.add_argument("--key", required=True)
@@ -472,8 +438,8 @@ def build_parser() -> argparse.ArgumentParser:
     ie.add_argument("--out", default="asexec.json")
     ie.set_defaults(func=cmd_identity)
     iv = isub.add_parser(
-        "match",
-        help="check a key matches that which is asserted by a domain (network)")
+        "match", help="check a key matches that which is asserted by a domain (network)"
+    )
     iv.add_argument("--domain", required=True)
     iv.add_argument("--keyid")
     iv.add_argument("--pubkey")
@@ -483,6 +449,6 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     return args.func(args)

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import os
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable
 
 from .errors import HashAlgError
 
@@ -27,7 +27,7 @@ DEFAULT_ALG = "sha-256"
 
 # name -> zero-arg factory returning a fresh hashlib-like object with
 # .update(bytes) and .hexdigest().
-_ALGORITHMS: Dict[str, Callable[[], Any]] = {
+_ALGORITHMS: dict[str, Callable[[], Any]] = {
     "sha-256": hashlib.sha256,
 }
 
@@ -39,7 +39,7 @@ except Exception:  # pragma: no cover
     pass
 
 
-def available_algorithms() -> List[str]:
+def available_algorithms() -> list[str]:
     return sorted(_ALGORITHMS)
 
 
@@ -50,7 +50,7 @@ def _new(alg: str):
         raise HashAlgError(
             f"unknown or unavailable hash algorithm {alg!r}; "
             f"available: {', '.join(available_algorithms())}"
-        )
+        ) from None
 
 
 def hash_bytes(data: bytes, alg: str = DEFAULT_ALG) -> str:
@@ -93,7 +93,7 @@ def digest_path(path: str, alg: str = DEFAULT_ALG) -> str:
     return hash_file(path, alg)
 
 
-def build_subject(paths: List[str], alg: str = DEFAULT_ALG) -> List[Dict[str, Any]]:
+def build_subject(paths: list[str], alg: str = DEFAULT_ALG) -> list[dict[str, Any]]:
     """Build the manifest ``subject`` array from a list of paths.
 
     Each entry: ``{"name": <display>, "digest": {alg: hexhash}}``. Directory

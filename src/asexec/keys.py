@@ -11,7 +11,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from typing import Tuple
 
 import nacl.signing
 
@@ -25,7 +24,7 @@ def keyid_for(public_key: bytes) -> str:
     return "sha-256:" + hashlib.sha256(public_key).hexdigest()
 
 
-def generate() -> Tuple[bytes, bytes]:
+def generate() -> tuple[bytes, bytes]:
     """Return (private_key_32b, public_key_32b)."""
     sk = nacl.signing.SigningKey.generate()
     return bytes(sk), bytes(sk.verify_key)
@@ -70,7 +69,7 @@ def save(private_key: bytes, path: str) -> str:
     return kid
 
 
-def load_signing_key(path: str) -> Tuple[bytes, bytes]:
+def load_signing_key(path: str) -> tuple[bytes, bytes]:
     """Load a secret key file, returning (private_key, public_key)."""
     with open(path) as f:
         data = json.load(f)
