@@ -44,6 +44,7 @@ TAG="v$VERSION"
 
 INIT_FILE="src/asexec/__init__.py"
 PYPROJECT_FILE="pyproject.toml"
+LOCK_FILE="uv.lock"
 CHECK_SCRIPT="scripts/check.sh"
 REMOTE="origin"
 CLEANUP_NEEDED=false
@@ -60,7 +61,7 @@ fi
 
 cleanup() {
     if [[ "$CLEANUP_NEEDED" == true ]]; then
-        git restore -- "$INIT_FILE" "$PYPROJECT_FILE"
+        git restore -- "$INIT_FILE" "$PYPROJECT_FILE" "$LOCK_FILE"
     fi
 }
 
@@ -199,7 +200,8 @@ echo
 echo "Version changes:"
 git diff -- "$INIT_FILE" "$PYPROJECT_FILE"
 
-# Run lint + tests unless explicitly skipped.
+# Run lint + tests unless explicitly skipped. This may also update uv.lock
+# (e.g. via `uv sync`/`uv run` picking up the new project version).
 if [[ "$SKIP_CHECK" == true ]]; then
     echo
     echo "WARNING: Checks skipped (--no-check)."
@@ -213,11 +215,17 @@ echo
 echo "Checking Git diff..."
 git diff --check
 
-# Create the release commit.
+# Create the release commit. Include uv.lock only if checks touched it.
 echo
 echo "Creating release commit..."
 
 git add "$INIT_FILE" "$PYPROJECT_FILE"
+
+if [[ -n "$(git status --porcelain -- "$LOCK_FILE")" ]]; then
+    echo "  (including updated $LOCK_FILE)"
+    git add "$LOCK_FILE"
+fi
+
 git commit -m "Release $TAG"
 
 # The release commit is now permanent; failures after this point leave it intact.
