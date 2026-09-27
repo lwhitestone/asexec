@@ -14,7 +14,8 @@ import os
 import sys
 import uuid
 from datetime import datetime
-from typing import Callable, TypeVar
+from collections.abc import Callable
+from typing import TypeVar
 
 from . import __version__, drand, hashing, identity, keys, manifest, verifier
 from .errors import VerificationError

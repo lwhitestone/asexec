@@ -28,7 +28,7 @@ from . import PREDICATE_TYPE, SCHEMA_VERSION
 # A field the caller may express either as a plain string or as structured JSON.
 # "take what is provided and compile it" - more disclosure buys more trust, but
 # nothing beyond ``target`` is required.
-Freeform = Union[str, dict[str, Any]]
+Freeform = str | dict[str, Any]
 
 PHASES = ("prereg", "postreg")
 
