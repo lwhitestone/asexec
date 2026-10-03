@@ -25,9 +25,11 @@ in the form of `asexec verify` providing a code regarding the checks applied.
 **`asexec` can prove:**
 - A manifest (pre-registration or post-registration) was not altered after signing.
 - A post-registration references a specific prior pre-registration, and a sequence wasn't
-  silently truncated/reordered (a `prev_hash` chain).
+  silently truncated/reordered (a `prev_hash` chain). *(Partially enforced in 0.3.x — see
+  [Known issues](#known-issues-03x-alpha).)*
 - A declared disclosure deadline (`due`) did not expire prior to post-registration (rendered
-  as an explicit state `fulfilled`/`open`/`elapsed-no-receipt`/`notarization-only`).
+  as an explicit state `fulfilled`/`open`/`elapsed-no-receipt`/`notarization-only`). *(Not
+  yet enforced in 0.3.x — see [Known issues](#known-issues-03x-alpha).)*
 - A manifest was created no earlier than a public moment (floor "freshness" check, offered by
   `drand`).
 - A manifest was created no later than time T (ceiling "witness" check, offered by `Roughtime`;
@@ -190,7 +192,7 @@ ruff check .
 Releases are created with:
 
 ```bash
-./scripts/release.sh [--skip-tests] X.Y.Z
+./scripts/release.sh [--no-check] X.Y.Z
 ```
 
 Version numbers are kept in sync between:
@@ -227,6 +229,39 @@ explicitly not scheduled (hosted transparency log, identity binding/CA).
 > without a migration path — manifests signed by an older build may stop verifying against a
 > newer one. (0.2.0 rebalanced the schema in a breaking way by design.) Stability begins at
 > `1.0.0`, which is neither defined nor planned yet.
+
+## Known issues (0.3.x alpha)
+
+The following were confirmed against 0.3.11 and are scheduled for the 0.3.13 soundness patch
+(format-level fixes in 0.4.0). See [`ROADMAP.md`](./ROADMAP.md). Until then, treat
+`asexec verify` output with these caveats:
+
+**Commitment state and chain**
+- A post-registration signed by *any* key - or with an *invalid* signature - causes its
+  pre-registration to render `fulfilled`. Always request `keyconsist` and require `BDR=PASS`
+  before trusting a `fulfilled` state.
+- `chain` does not reject a forked `prev_hash` chain (two receipts pointing at the same
+  predecessor), and dropping the *last* receipt(s) of a chain is undetectable.
+- Timeliness is not checked: a post-registration created after `due` still renders
+  `fulfilled`.
+- A `due` without a timezone is interpreted in the verifier's local timezone, and an
+  unparseable `due` silently renders `open`.
+
+**Input handling**
+- Duplicate JSON keys in a manifest are accepted (last value wins), so a file can display a
+  different value than the one that was verified.
+- `BDR` checks the signature only; any signed JSON object passes, whether or not it is a
+  well-formed asexec manifest.
+- Malformed input (e.g. invalid JSON) crashes `verify` instead of producing `FAIL`.
+- `content` resolves subject names containing `../` or absolute paths outside `--artifacts`.
+- Directory hashing (v1) is ambiguous on POSIX: a filename containing a newline can make two
+  different trees hash identically. Symlinks are skipped silently.
+
+**Signing-side**
+- `keygen --out` overwrites an existing key file without warning.
+- If a `--floor`/`--ceiling` fetch fails, the manifest is still signed (with a warning) without
+  the requested anchor.
+- A mistyped `--fulfills` path is stored verbatim as the reference instead of erroring.
 
 ## License
 

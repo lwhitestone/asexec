@@ -1,238 +1,241 @@
 # Roadmap
 
 > [!NOTE]
-> This file is AI-generated and is meant as a rough context-setter.
+> This file is AI-assisted and is meant as a rough context-setter.
 > Treat AI output with due skepticism.
 
-
-**Ordering logic:** cheap-and-sharp gaps first; items that form one coherent
-release ship together; completeness/adoption-adjacent work sits behind core
-correctness; anything needing outside cooperation or heavy new infra is pushed
-to the back since it's lowest-control.
+**Ordering logic:** make the current claims true first; then pin down the
+invariants and test them; then make every format-breaking change in one
+release; then shrink the dependency surface; then freeze the spec. Anything
+that changes signed bytes or verify-code semantics lands *before* the spec
+freeze, so the format people adopt is the format we can stand behind.
+Distribution (PyPI) is cut early to claim the name, with honest caveats.
 
 ## Versioning
 
-- **Releases** use `0.MINOR.PATCH`, pre-1.0 alpha. A `MINOR` bump is a
-  meaningful format or verifier-output change; a `PATCH` is additive/small.
-- **Some identifiers are baked into signed bytes.** `SCHEMA_VERSION`
-  (`asexec`), the predicate type (`.../manifest`), and the PAE prefix
-  (`asexec-PAE/v1`) are part of the signing input, so changing any of them
-  changes what verifies — a deliberate format break, never incidental. (The
-  `asexec-PAE/v1` prefix versions the signing *construction* itself; it is not
-  a roadmap version and stays fixed unless the construction changes.) These are
-  plain format identifiers, not a parallel release-numbering scheme.
-- **`1.0.0` is deliberately unassigned.** No trigger is defined yet — it is not
-  tied to dogfooding, team usage, or any other indicator. Leave it open until
-  there's a concrete reason to fix it.
-- **No backward-compatibility guarantee before `1.0.0`.** While the project is
-  pre-1.0 alpha, any release may change the manifest schema, the signed-byte
-  format, the verifier output, or the CLI surface without a migration path —
-  old manifests may stop verifying against a newer build. (0.2.0's schema
-  rebalance is the first example: no back-compat, by design.) A stability
-  commitment only begins at `1.0.0`, which is itself neither defined nor
-  planned yet.
+- **Releases** use `0.MINOR.PATCH`, pre-1.0 alpha.
+  - `MINOR`: a change to the manifest format, the signed bytes, or the
+    documented meaning of a verify test.
+  - `PATCH`: additive or corrective. A fix that brings the implementation in
+    line with *already documented* semantics (e.g. `chain` rejecting forks,
+    which its docstring always claimed) is a `PATCH`, called out in the
+    release notes.
+- **Identifiers baked into signed bytes.** `SCHEMA_VERSION`, `PREDICATE_TYPE`,
+  and the PAE prefix (`asexec-PAE/v1`) are part of the signing input; changing
+  any of them is a deliberate format break, never incidental.
+- **The verify-code grammar is versioned separately** (`asexec-verify/N`). The
+  promise that "a code means exactly one thing, permanently" holds only if this
+  rule holds: **if the documented meaning of an existing test name changes, the
+  grammar version bumps.** Adding a new test name does not require a bump.
+- **No backward-compatibility guarantee before `1.0.0`.** Any pre-1.0 release
+  may change the schema, signed-byte format, verifier output, or CLI without a
+  migration path. `1.0.0` is deliberately unassigned; no trigger is defined.
 
 ## Version map
 
-| Version | Status | Theme | Backlog items |
+| Version | Phase | Theme | Format break? |
 |---|---|---|---|
-| **0.1.0** | shipped (alpha) | Core primitive: keygen · preregister · seal · verify · identity; offline verifier; drand freshness | — |
-| **0.2.0** | shipped (alpha) | Schema rebalance + freshness/ceiling anchors + verifier redesign | #1–#6 |
-| **0.3.0** | shipped (alpha) | Term/type/schema realignment: prereg/postreg · free-form `target` · `due`/`declaration` · drand opt-in · `BDR` code token · Pydantic-typed construction | — |
-| **0.3.1** | shipped (alpha) | AI-assisted-prototype handoff — provenance reset; AI assistance considered on a case-by-case basis from here on | — |
-| **0.4.0** | planned | Completeness: per-key public index convention | #10 |
-| **0.5.0** | planned | Re-execution / determinism mode | #12 |
-| *unversioned* | opportunistic | Federated cosigner witnesses · multi-party co-signing · regulatory cross-reference field | #15, #13, #14 |
-| *unversioned* | process (not a release) | Dogfooding · land design docs · team/customer usage | #7, #8, #9 |
-| *separate repo* | not core `asexec` | Verification website | #11 |
-| — | explicitly not scheduled | Third-party witness services · hosted transparency log · identity binding / CA | — |
+| 0.1.0 – 0.3.11 | — | shipped (see *History*) | — |
+| **0.3.12** | Distribution | First PyPI release: tag-triggered trusted publishing; README *Known issues* | no |
+| **0.3.13** | 0 — Soundness | Fix the confirmed soundness bugs; correct README overclaims | no (patch fixes to documented semantics) |
+| *(no release needed)* | 1 — Invariants | Invariant catalog, test audit, golden vectors, property/mutation testing, CI matrix | no |
+| **0.4.0** | 2 — Verify surface | Auditor-facing verify tests + the manifest fields they need; all format fixes batched | **yes** |
+| **0.4.x** | 3 — Dependencies | Drop pydantic and blake3; vendor-or-pin BLS; supply-chain hardening | no (golden vectors must not move) |
+| **0.5.0** | 4 — Spec freeze | `SPEC.md` normative, golden vectors normative, hardened release pipeline | only corrections found while writing the spec |
+| *unversioned* | Later | Per-key index · re-execution mode · cosigners · multi-party · regulatory field | as scheduled |
 
 ---
 
-## 0.2.0 — schema rebalance, freshness anchors, verifier redesign  *(shipped)*
+## 0.3.12 — First PyPI release
 
-Items #1, #3–#6 are one coherent release and ship together: #1 defines the
-field taxonomy, #3–#5 populate it, and #6 is the verifier that reads all of it.
-The mandatory-set change and the new verifier output are what make this a
-`MINOR` bump. (#2 was dropped — see below.)
+The `asexec` name is unclaimed on PyPI while the README already says
+`pip install asexec`. Claim it with a real (alpha) release, not a placeholder.
 
-1. **Schema rebalance: bedrock vs. recommended-optional vs. free-form**
-   - Confirm/enforce only `disclosure_window` and target/`model_identity` as
-     mandatory (bedrock) — verifiability of the central
-     commitment→fulfillment claim breaks without these.
-   - Everything else (drand floor, ceiling witness, sequence/supersedes,
-     free-text) becomes fully optional, individually.
-   - Publish a documented "recommended bundle" (not enforced) consisting of:
-     drand floor + ceiling witness.
+- Tag-triggered publish workflow (`.github/workflows/publish.yml`) using PyPI
+  Trusted Publishing (OIDC, no long-lived tokens): TestPyPI first, then PyPI
+  behind a protected environment. PEP 740 attestations on by default.
+- README *Known issues* section listing the confirmed Phase 0 findings, so the
+  PyPI page carries the caveats.
+- Version numbers on PyPI can never be reused (even after yank/delete), so the
+  workflow is proven on TestPyPI before the first real upload.
 
-2. ~~**Q1-equivalent field** (`has_run_already`)~~ — **REMOVED INDEFINITELY
-   (2026-07-22).** A self-declaration is not a verifiable claim, so it doesn't
-   belong in the 0.2.0 verifier model, whose contract is that *every entry in
-   the canonical code is something the tool actually verifies*. A presence/enum
-   check would only test our own input validation, and a structured field
-   adjacent to the cryptographic anchors would imply it was checked when it
-   can't be (an overclaim). The capability survives as free-form `notes`, which
-   correctly files it as unverifiable context. Not mirroring AsPredicted Q1 is
-   deliberate: AsPredicted is a human-read form; asexec is a verifier.
+## 0.3.13 — Phase 0: Soundness patch
 
-3. **Drand floor** — reference a drand round at/before manifest creation time in
-   `preregister`; proves creation **at or after** that round. Ships as part of
-   the recommended bundle, not bedrock.
+Point fixes, each written test-first (a failing test reproducing the bug, then
+the fix). No redesign; anything requiring a format change waits for 0.4.0.
 
-4. **Ceiling witness (Roughtime)** — an *external witness* proving creation
-   **no later than** time T. NOTE: a "drand ceiling" is unsound — embedding a
-   drand round only ever proves *no earlier than* (a floor); drand carries no
-   user data, so it can't witness `hash(M)`. A ceiling needs an artifact that
-   (1) provably existed by T and (2) commits to `hash(M)`. 0.2.0 uses
-   **Roughtime**: a server signs `(nonce=hash(M), midpoint T, radius)` under a
-   long-lived, pinnable key → standalone, offline-verifiable like a drand round;
-   instant (no OTS-style confirmation wait); free; no account. The verifier
-   surfaces the trust class explicitly (signature-witness = "trust these signers
-   about time," a different class than the floor). Full analysis:
-   [`crystallize/02-brainstorm.md`](./crystallize/02-brainstorm.md) "0.2.0
-   addendum — the ceiling witness". Floor and ceiling stay **distinct fields**.
+| Finding | Fix |
+|---|---|
+| A forked `prev_hash` chain passes `chain` | Require a single linear chain (each receipt has ≤1 successor) |
+| A postreg by **any** key marks a commitment `fulfilled` | A postreg counts toward fulfillment only if validly signed by the prereg's key; others are rendered separately |
+| A postreg with an **invalid** signature counts toward `fulfilled` | Same as above |
+| README claims a `due` timeliness check that does not exist | Correct the README now; the real check (`timely`) ships in 0.4.0 |
+| README claims tail truncation is detectable | Correct the README; close-out manifests (`final`) ship in 0.4.0 |
+| Duplicate JSON keys are silently accepted (last wins) | Reject on load (`object_pairs_hook`); manifest is malformed → `BDR=FAIL` |
+| Malformed input crashes `verify` (e.g. `JSONDecodeError`) | Malformed manifests are per-file failures, never a crash |
+| `content` follows `../` / absolute subject names out of `--artifacts` | Confine resolution to the artifacts directory; escape → mismatch |
+| Timezone-less `due` is read in the verifier's local TZ | Require an explicit offset/`Z` at sign time; flag naive values at verify time |
+| Unparseable `due` silently renders `open` | Render an explicit `invalid-due` state |
+| `keygen` overwrites an existing key file | `O_EXCL`; refuse unless `--force` |
+| `--floor` / `--ceiling` fetch failure only warns and signs anyway | Fail by default; opt-in `--best-effort` |
+| `--fulfills <typo>` is silently stored as a literal ref | Accept only an existing file or a well-formed `sha-256:<64 hex>` ref |
+| Unknown `hash_alg` (e.g. blake3 not installed) crashes `verify` | Content entry fails with "algorithm unavailable" |
 
-5. **Anchor field made extensible, not hardcoded to one mechanism** —
-   `anchor.floor` and `anchor.ceiling` are separate, each carrying a `*_type`
-   (floor: `drand | none`; ceiling: witness-typed `roughtime | ots | cosign |
-   none`), so OTS (PoW) and cosigners (#15) slot into the same ceiling shape
-   later. drand (floor) and Roughtime (ceiling) ship as the documented defaults;
-   nothing in the schema privileges them structurally.
-   - **Floor and ceiling generalize along *disjoint* axes — do not merge them.**
-     A floor source is a public randomness **beacon** (a value fixed at T,
-     independent of `M`, hence *embeddable*): drand, NIST beacon, Bitcoin
-     block-hash, ETH RANDAO. A ceiling source is a **witness** that ingested
-     `hash(M)` and attested a time (hence *attach-after-only*): Roughtime, OTS,
-     cosigners. More floor `floor_type`s = "more beacons" (a separate, low-value
-     axis; drand quicknet is already free + offline-verifiable). More ceiling
-     `ceiling_type`s = #15 (federated cosigner **witnesses**). A cosigner cannot
-     be a floor (its attestation is *about* `M`), and a beacon cannot be a
-     ceiling (it never sees `M`) — conflating them repeats the unsound
-     "drand ceiling" category error (#4).
+Also: refresh stale docstrings/comments (`__init__.py`, the Roughtime
+`SERVERS` alpha caveat).
 
-6. **Verifier redesign: point-by-point tests → canonical plaintext code output**
-   - Output is a canonical code naming exactly which tests ran, each `PASS`/`FAIL`
-     — **never a percentage or tier.** Tests not in the code were not run — never
-     implied as failed. Only *verifiable* claims earn an entry — no
-     self-declarations (see #2, removed).
-   - **Why the code, not a score — forward compatibility (the strongest
-     property):** because the code *names* which tests ran, adding a test in a
-     later version can never silently change the meaning of an earlier code. A
-     code means exactly one thing, permanently, regardless of what tests exist
-     when someone reads it later. A percentage/tier is meaningless without the
-     denominator *at the version that produced it* (an old "87%" needs a
-     version-lookup table to interpret). The code is self-describing; a score
-     never is. This dissolves the dashboarding/lemons problem.
-   - **The code is NOT a certificate.** It is a summary of a computation, not a
-     credential. Real verification = *run the tool against the manifests +
-     artifacts and get this code* — reproducible by anyone with the files.
-     Publishing just the code (typed in a README, a tweet) is a claim with the
-     evidentiary weight of "trust me, it passed" — zero. The tool prints a fixed
-     disclaimer alongside every code: *"this code is only meaningful if
-     reproduced — do not treat a quoted code as proof."*
-   - **Canonical serialization (spec'd in the format doc, not left to
-     convention):** `asexec-verify/1 ` + `name=RESULT` tokens (`RESULT ∈
-     {PASS,FAIL}`), **names sorted alphabetically**, single-space delimited, per
-     test. So the same result is byte-identical everywhere (`bedrock=PASS
-     floor=PASS`, never `floor=PASS bedrock=PASS`). Preserves "distinct
-     verifications → distinct codes, forever."
-   - **Test set is explicit and required (no implicit default):** `verify`
-     requires a `--tests` list; **`bedrock` must be in it or `verify` errors.**
-     `bedrock` is the mandatory minimum (sig + keyid); everything else is opt-in
-     on top. Requesting only `bedrock` yields `bedrock=PASS` — a complete,
-     honest statement of exactly what was checked, implying nothing about what
-     wasn't. A requested test that applies nowhere (e.g. `ceiling` with no
-     ceilings present) is `FAIL` (requested-but-absent), never a silent omission.
+## Phase 1 — Invariant catalog and test audit
 
-## 0.3.0 — term/type/schema realignment  *(shipped)*
+The test audit and the code audit are one workstream: decide the invariants,
+then make the test suite exactly that set.
 
-A breaking format + CLI + verifier-output change that realigns the vocabulary
-and hardens the types. It adds **no new verifiable claims** — the trust model is
-unchanged; this is a naming / shape / validation pass. It is a `MINOR` bump
-because it changes the signed-byte schema and the verify code.
+- **`INVARIANTS.md`**: numbered invariants (I-1…I-n), each mapped to the
+  test(s) that enforce it. Examples: verify never raises on any input; any
+  byte change to a signed body → `BDR=FAIL`; fulfillment requires a valid
+  same-key postreg; a requested test that applies nowhere is `FAIL`; canonical
+  bytes and directory digests are identical across OSes.
+- **Audit**: every existing test maps to an invariant or is deleted/merged;
+  every invariant without a test gets one.
+- **Golden vectors**: a fixed key + fixed bodies with committed hex for
+  canonical bytes, `ref`, signature, and directory digest. Guards the
+  signed-byte format against accidental drift (and proves Phase 3 changed
+  nothing). Becomes the seed of the spec's test vectors.
+- **Property tests / fuzzing** (`hypothesis`): canonicalization, the Roughtime
+  message parser, `verify_paths` over arbitrary input.
+- **Mutation testing** (`mutmut`) over `verifier`, `canonical`, `hashing`,
+  `manifest`: a surviving mutant is either an untested invariant or dead code.
+- **CLI tests**: exit codes, fail-loud paths, argument validation (`cli.py`
+  currently has only the CI smoke run).
+- **CI**: add Windows + macOS runners (path/dir-hash determinism) and Python
+  3.13/3.14; branch-coverage gate; a job without optional extras.
 
-- **Commands + phases renamed:** `preregister`→`prereg`, `seal`→`postreg`;
-  manifest `phase` values `preregistration`/`receipt`→`prereg`/`postreg`.
-- **Commitment fields realigned:** structured `target_identity` (weights/api
-  kinds) → a **free-form `target`** (plain text or JSON) — the *only* semantic
-  bedrock; `disclosure_window{closes,declares}` split into an **optional**
-  top-level `due` deadline + an optional `declaration`. A commitment with no
-  `due` renders `open` forever (never `elapsed-no-receipt`).
-- **drand floor is opt-in** (`--drand`), no longer default-on.
-- **Verify code bedrock token `bedrock`→`BDR`** (`asexec-verify/1 BDR=PASS …`);
-  the grammar and forward-compat properties are unchanged.
-- **Pydantic-typed construction** (`models.py`): the manifest body/envelope are
-  validated on construction; signing still occurs over the canonical bytes of a
-  plain dict (`model_dump` first), so the PAE signing input is unchanged.
-- **Scope trim:** dropped the `--commit` git convenience and the `--now` verify
-  hook. Ceiling/Roughtime, `prev_hash` chaining, content/subject hashing, and
-  provenance/`repro_recipe` all stay wired.
-- **No back-compat** with 0.2.0 manifests, by design (pre-1.0).
+## 0.4.0 — Phase 2: Verify surface for auditors and governance
 
-## 0.3.1 — AI-assisted-prototype handoff  *(next release)*
+Work backwards from what third-party auditors and eval-runner governance need
+to check, then add the manifest fields that make it checkable. All
+format-breaking changes are batched here.
 
-Marks the transition from AI-assisted prototyping to hand-curated maintenance.
-The git history and contributor provenance are reset to a single authored
-baseline; AI assistance is considered on a case-by-case basis from here on. No
-format, schema, or verifier-output change — a `PATCH` bump that records the
-provenance handoff, not new capability.
+**New verify tests** (ranked):
 
-## 0.4.0 — per-key public index convention
+1. `signer` — `--signer <keyid>` / `--trusted-keys <file>`: manifests are signed
+   by a key the *verifier* chose to trust. Today `BDR` proves only internal
+   consistency, never *who* signed.
+2. `continuity` — postregs keep the prereg's `target`, and every prereg subject
+   reappears in the postreg with the identical digest ("you ran what you
+   pre-registered").
+3. `order` — prereg ceiling < postreg floor: the only *cryptographic* proof of
+   "pre". Buildable from existing anchors; add a CLI shortcut to attach both.
+4. `timely` — postreg ceiling (midpoint + radius) ≤ prereg `due`.
+5. `frame` — bodies conform to this version's schema (known `phase`,
+   `predicateType`, ref formats, TZ-aware `due`); signed-but-unrecognized
+   fields are rendered as *unverified content*, never silently ignored.
+6. `complete` — a close-out postreg (`final: true`) and optional
+   `expected_runs` at prereg make tail truncation detectable (also resolves the
+   PRD's runs-vs-window open question).
 
-10. **Per-key public index convention** (`.well-known/asexec-index.json` or
-    similar) — addresses the completeness/selective-non-registration gap (the
-    highest-leverage remaining hole per the market-for-lemons argument).
-    Convention-only, no hosting required.
+**Output / trust surface**
 
-## 0.5.0 — re-execution / determinism mode
+- `--json`: a stable, machine-readable report for CI gates.
+- Trust roots visible: print the pinned drand/Roughtime set (or its hash);
+  `--trust-roots <file>` to let the reader choose which witnesses to trust.
 
-12. **Re-execution/determinism mode** — needs to degrade gracefully for
-    legitimately non-deterministic evals or it will cry wolf. Wait for real
-    transcripts from dogfooding (#7) to calibrate against.
+**Format changes**
 
-## Opportunistic (unversioned until scheduled)
+- `PREDICATE_TYPE` → a URL the project controls (e.g. the repo's `SPEC.md`
+  anchor), replacing `https://asexec.dev/manifest`.
+- Directory hash v2: unambiguous encoding (length-prefixed, or git-tree
+  compatible) — v1 joins `hash  path` lines with `\n`, which a POSIX filename
+  can contain, and sorts by hash rather than path.
+- Canonicalization: adopt RFC 8785 (JCS) or restrict the value domain (no
+  floats/NaN); `json.dumps` behaviour is not a spec.
+- Subject `name` carries a relative path (not a basename) plus optional
+  `role: input | output`, so `continuity` can match inputs.
+- `final`, `expected_runs` (for `complete`).
+- Decide at implementation time whether any of this changes the documented
+  meaning of an existing test name; if so, bump to `asexec-verify/2`.
 
-These are real features that would land as a `MINOR`/`PATCH` bump when a
-concrete need appears; not on a timeline.
+Recommended before finalizing the 0.4.0 format: **dogfood** a few real evals
+through the full cycle (messy harnesses, non-determinism, disclosure-window
+UX). Real transcripts should inform subject roles and the close-out flow.
 
-15. **Federated cosigner witnesses (ceiling generalization)** — generalize the
-    0.2.0 ceiling slot (#4) from Roughtime to a `cosign` `witness_type`: a
-    generic `{witness_id, pubkey, signed_time, signature}` that the evaluator
-    collects *k-of-n* from parties the **reader** independently trusts (an
-    auditor, a journal-equivalent, peer labs). Same `anchor.ceiling` shape, many
-    producers; the reader prices the trust (no CA, pseudonymous). Subsumes
-    Roughtime (a Roughtime server is one cosigner) and dovetails with the
-    web-of-trust item. Needs willing witnesses, so it waits for demand. See
-    [`crystallize/02-brainstorm.md`](./crystallize/02-brainstorm.md) Fork B.
-    Scope: this is a **ceiling/witness** generalization only. Generalizing the
-    *floor* (more beacons: NIST/Bitcoin-hash/RANDAO) is a distinct axis — see #5
-    — and must not be folded in here (beacon ≠ witness).
+## 0.4.x — Phase 3: Dependency reduction
 
-13. **Multi-party co-signing** (optional second signer at pre-registration) —
-    cheap to spec, low urgency until requested.
+Runtime today is 13 packages; `py_ecc` alone roots 10 (`eth-utils`,
+`eth-typing`, `eth-hash`, `cytoolz`, `toolz`, and `pydantic` again via
+`eth-utils`).
 
-14. **Structured regulatory cross-reference field** (e.g., SB-53/RAISE-Act
-    filing ID) — adoption hook more than technical gap; add opportunistically if
-    a real compliance use case appears.
+- **Drop pydantic**: it gates construction only, and `model_dump` sits on the
+  path to signed bytes (a dependency-driven byte-drift risk). Replace with
+  hand-written validation. Golden vectors must be unchanged.
+- **BLS (`py_ecc`)**: spike vendoring the minimal verify subset (G1/G2
+  decompression *with subgroup checks*, `hash_to_G1`, pairing), tested against
+  official drand vectors. If the subset is too large to own, keep `py_ecc`
+  exact-pinned with a hash-locked install.
+- **Drop the `blake3` extra**: hash-algorithm agility is surface without
+  current demand.
+- **Keep `pynacl`.** Target end state: `pynacl` → `cffi` → `pycparser`.
+- **CI supply chain**: pin all GitHub Actions by commit SHA; least-privilege
+  `permissions:` on every workflow.
 
-## Process milestones (not tied to a release)
+## 0.5.0 — Phase 4: Spec freeze
 
-These gate the release work but are not themselves versioned artifacts.
+- `SPEC.md` becomes normative: canonical bytes, PAE, `ref`, directory hash,
+  manifest schema, verify-test semantics, code grammar — consolidating what
+  is currently spread across docstrings — with the golden vectors as its
+  conformance suite, so a third party can reimplement the verifier.
+- Release pipeline hardening: reproducible builds (`SOURCE_DATE_EPOCH`),
+  build-provenance attestations, `py.typed`, complete classifiers.
+- Optional dogfood: sign each release's artifact hashes with `asexec postreg`.
 
-7. **Dogfooding: run your own evals through the full cycle**, using the
-   rebalanced schema (0.2.0) and new verifier output. Gates everything after it
-   — surfaces rough edges no design discussion catches (messy harnesses,
-   non-determinism, disclosure-window UX, whether the recommended bundle is
-   actually usable in practice).
+## Later (unversioned until scheduled)
 
-8. **Team/customer-facing usage** — first test of the social-contract thesis
-   under real, if modest, stakes. Depends on dogfooding (#7) going reasonably
-   smoothly.
+- **Per-key public index** (`.well-known/asexec-index.json`) — addresses
+  selective *non*-registration, the largest remaining completeness gap.
+  Convention only, no hosting.
+- **Offline identity check** (`verify --wellknown <archived.json>`) and
+  **`--as-of`** for reproducible state rendering.
+- **Re-execution / determinism mode** — must degrade gracefully for
+  legitimately non-deterministic evals; calibrate on dogfooding transcripts.
+- **Federated cosigner witnesses** — generalize the ceiling to a k-of-n
+  `cosign` witness type the reader chooses to trust. Waits for willing
+  witnesses.
+- **Multi-party co-signing** at prereg; **structured regulatory
+  cross-reference** field — add when a concrete need appears.
+- **Process (not releases):** team/customer usage after dogfooding; a
+  verification website as a *separate* repo, buildable by anyone from the
+  spec alone.
 
-## Separate deliverable (not core `asexec`)
+**Explicitly not scheduled:** hosted transparency log, third-party witness
+*services* run by this project, identity binding / CA.
 
-10. **Verification website** — explicitly *not* core `asexec`; its own
-    repo/deliverable with its own versioning. Lowers the barrier for
-    non-technical reviewers. Designed so anyone could build a competing instance
-    from the open manifest + code spec alone — not owned long-term by the core
-    project.
+---
+
+## Standing design decisions
+
+Kept here so they are not re-litigated:
+
+- **The verify code is named, not scored.** It lists which tests ran, each
+  `PASS`/`FAIL`, sorted alphabetically — never a percentage or tier — so a
+  code is self-describing and forward-compatible. It is a summary of a
+  computation, not a certificate: real verification is reproducing it.
+- **Explicit test appetite.** `--tests` is required and must include `BDR`. A
+  requested test that applies nowhere is `FAIL`, never a silent omission.
+- **Only verifiable claims earn a test.** Self-declarations (e.g. the removed
+  `has_run_already` field) belong in free-form `notes`, never beside the
+  cryptographic anchors where they would imply they were checked.
+- **Floor and ceiling generalize along disjoint axes.** A floor is a public
+  beacon (fixed at T, independent of the manifest, embeddable): drand, NIST,
+  block hashes. A ceiling is a witness that ingested `ref(payload)` (attached
+  after signing, at the envelope): Roughtime, OTS, cosigners. A beacon cannot
+  be a ceiling and a witness cannot be a floor.
+- **Fail loud.** Ambiguous or unfulfilled states are rendered explicitly
+  rather than collapsed into a pass/fail that overclaims.
+
+## History
+
+| Version | Theme |
+|---|---|
+| 0.1.0 | Core primitive: keygen · preregister · seal · verify · identity; offline verifier; drand freshness |
+| 0.2.0 | Schema rebalance (bedrock vs. optional); drand floor + Roughtime ceiling as distinct anchors; canonical verify code |
+| 0.3.0 | Vocabulary/type realignment: `prereg`/`postreg`, free-form `target`, optional `due`/`declaration`, opt-in floor, `BDR` token, Pydantic-typed construction |
+| 0.3.1 – 0.3.11 | Provenance handoff to hand-curated maintenance; docs polish; ruff, uv, pytest, CI, release scripts; Python ≥ 3.11 |
