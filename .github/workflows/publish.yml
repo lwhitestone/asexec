@@ -147,7 +147,7 @@ jobs:
             exit 1
           fi
           asexec keygen --out ci.key
-          asexec prereg --key ci.key --subject src --due 2099-01-01T00:00:00Z \
+          asexec prereg --key ci.key --subject ci.key.pub --due 2099-01-01T00:00:00Z \
             --target "model m via provider p" --out pre.json
           asexec verify pre.json --tests BDR
 
