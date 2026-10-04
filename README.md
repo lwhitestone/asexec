@@ -171,35 +171,15 @@ OpenTimestamps, in-toto/DSSE, drand/League of Entropy.
 
 ## Development and Releases
 
-### Ruff
+Local setup, checks, CI, and the tag-triggered release pipeline (TestPyPI, then PyPI after
+manual approval) are documented in [`docs/DEVELOPMENT.md`](./docs/DEVELOPMENT.md).
 
-Ruff (https://docs.astral.sh/ruff/) is used for Python linting and formatting.
-
-Run the formatter with:
-
-```bash
-ruff format .
-```
-
-Check for lint issues with:
+Quick start:
 
 ```bash
-ruff check .
+scripts/dev-setup.sh   # one-time setup
+scripts/check.sh       # lint + format check + tests
 ```
-
-### Releases
-
-Releases are created with:
-
-```bash
-./scripts/release.sh [--no-check] X.Y.Z
-```
-
-Version numbers are kept in sync between:
-
-- "src/asexec/__init__.py"
-- "pyproject.toml"
-- Git release tags ("vX.Y.Z")
 
 ## Author
 
@@ -232,7 +212,7 @@ explicitly not scheduled (hosted transparency log, identity binding/CA).
 
 ## Known issues (0.3.x alpha)
 
-The following were confirmed against 0.3.11 and are scheduled for the 0.3.13 soundness patch
+The following were confirmed against 0.3.11 and are scheduled for the 0.3.14 soundness patch
 (format-level fixes in 0.4.0). See [`ROADMAP.md`](./ROADMAP.md). Until then, treat
 `asexec verify` output with these caveats:
 

@@ -10,7 +10,7 @@
 #   scripts/release.sh --no-check 0.3.4
 #
 # What it does:
-#   1. Verifies the working tree is clean and on a real branch
+#   1. Verifies the working tree is clean and on the main branch
 #   2. Verifies src/asexec/__init__.py and pyproject.toml agree on the
 #      current version, and that VERSION is new
 #   3. Verifies tag vVERSION doesn't already exist locally or on origin
@@ -19,9 +19,12 @@
 #   6. Commits ("Release vVERSION"), creates an annotated tag, and pushes
 #      both to origin
 #
-# This script only tags and pushes — it does not build or publish a
-# package. If anything fails before the release commit, the version file
-# edits are automatically reverted.
+# Pushing the tag triggers .github/workflows/publish.yml (CI → TestPyPI →
+# smoke test → manual approval → PyPI → GitHub Release). The workflow
+# rejects tags that are not on main, so this script refuses to run on any
+# other branch. The script itself still does not build or upload anything.
+# If anything fails before the release commit, the version file edits are
+# automatically reverted.
 
 set -euo pipefail
 
@@ -86,6 +89,12 @@ BRANCH="$(git branch --show-current)"
 
 if [[ -z "$BRANCH" ]]; then
     echo "Error: HEAD is detached."
+    exit 1
+fi
+
+if [[ "$BRANCH" != "main" ]]; then
+    echo "Error: releases must be cut from main (currently on '$BRANCH')."
+    echo "The publish workflow rejects tags that are not on main."
     exit 1
 fi
 
@@ -290,3 +299,13 @@ echo "  Branch:  $BRANCH"
 if [[ "$SKIP_CHECK" == true ]]; then
     echo "  Checks:  SKIPPED"
 fi
+
+# Derive the Actions URL from the remote (SSH or HTTPS form).
+REMOTE_URL="$(git remote get-url "$REMOTE")"
+REPO_PATH="$(
+    sed -E 's#^(git@[^:]+:|ssh://git@[^/]+/|https?://[^/]+/)##; s#\.git$##' <<<"$REMOTE_URL"
+)"
+echo
+echo "Publish workflow:"
+echo "  https://github.com/$REPO_PATH/actions/workflows/publish.yml"
+echo "The pypi environment will wait for approval after the TestPyPI smoke test."
