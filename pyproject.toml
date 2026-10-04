@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "asexec"
-version = "0.3.12"
+version = "0.3.13"
 description = "Pre-registration & notarization primitive for AI evaluations — commit-then-reveal receipts so silence becomes evidence"
 readme = "README.md"
 requires-python = ">=3.11"
