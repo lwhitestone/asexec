@@ -1,0 +1,185 @@
+name: Publish
+
+on:
+  push:
+    tags: ['v[0-9]*.[0-9]*.[0-9]*']
+
+permissions: {}
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+
+  verify-release:
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - name: Verify versions, tag and branch
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          ver="${tag#v}"
+          py_ver="$(sed -nE 's/^version = "([^"]+)"/\1/p' pyproject.toml)"
+          init_ver="$(sed -nE 's/^__version__ = "([^"]+)"/\1/p' src/asexec/__init__.py)"
+          if [[ "$ver" != "$py_ver" || "$ver" != "$init_ver" ]]; then
+            echo "::error::version mismatch: tag=$ver pyproject=$py_ver __init__=$init_ver"
+            exit 1
+          fi
+          # actions/checkout may fetch the tag as a lightweight ref; re-fetch the
+          # real tag object so we can check its type.
+          git fetch --force origin "refs/tags/${tag}:refs/tags/${tag}"
+          if [[ "$(git cat-file -t "refs/tags/${tag}")" != "tag" ]]; then
+            echo "::error::${tag} is not an annotated tag"
+            exit 1
+          fi
+          git fetch origin main
+          if ! git merge-base --is-ancestor "${tag}^{commit}" origin/main; then
+            echo "::error::${tag} is not an ancestor of origin/main"
+            exit 1
+          fi
+
+      - name: Download dist
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dist
+          path: dist
+
+      - name: Verify dist contents and record checksums
+        run: |
+          set -euo pipefail
+          ver="${GITHUB_REF_NAME#v}"
+          shopt -s nullglob
+          wheels=(dist/asexec-"${ver}"-*.whl)
+          sdists=(dist/asexec-"${ver}".tar.gz)
+          total="$(find dist -mindepth 1 | wc -l)"
+          if [[ ${#wheels[@]} -ne 1 || ${#sdists[@]} -ne 1 || "$total" -ne 2 ]]; then
+            echo "::error::dist must contain exactly one wheel and one sdist for ${ver}"
+            ls -la dist
+            exit 1
+          fi
+          {
+            echo "### dist checksums (sha256) for ${GITHUB_REF_NAME}"
+            echo
+            echo '```'
+            (cd dist && sha256sum -- *)
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish-testpypi:
+    needs: verify-release
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write
+    steps:
+      - name: Download dist
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dist
+          path: dist
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  smoke-testpypi:
+    needs: [ci, publish-testpypi]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ${{ fromJSON(needs.ci.outputs.python-versions) }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install locked dependencies (real PyPI, hashes required)
+        run: |
+          uv venv --python "${{ matrix.python-version }}" "$RUNNER_TEMP/venv"
+          uv export --no-dev --no-emit-project --format requirements-txt \
+            -o "$RUNNER_TEMP/requirements.txt"
+          uv pip install --python "$RUNNER_TEMP/venv/bin/python" \
+            --require-hashes -r "$RUNNER_TEMP/requirements.txt"
+
+      - name: Install asexec from TestPyPI (no dependency resolution)
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          for attempt in $(seq 1 30); do
+            if uv pip install --python "$RUNNER_TEMP/venv/bin/python" --no-deps \
+                --default-index https://test.pypi.org/simple/ "asexec==${ver}"; then
+              exit 0
+            fi
+            echo "asexec==${ver} not yet available on TestPyPI (attempt ${attempt}/30); retrying in 10s"
+            sleep 10
+          done
+          echo "::error::asexec==${ver} did not appear on TestPyPI within ~5 minutes"
+          exit 1
+
+      - name: CLI smoke
+        run: |
+          set -euo pipefail
+          export PATH="$RUNNER_TEMP/venv/bin:$PATH"
+          cd "$RUNNER_TEMP"
+          expected="${GITHUB_REF_NAME#v}"
+          out="$(asexec --version)"
+          echo "$out"
+          if [[ "$out" != *"$expected"* ]]; then
+            echo "::error::asexec --version printed '$out', expected $expected"
+            exit 1
+          fi
+          asexec keygen --out ci.key
+          asexec prereg --key ci.key --subject src --due 2099-01-01T00:00:00Z \
+            --target "model m via provider p" --out pre.json
+          asexec verify pre.json --tests BDR
+
+  publish-pypi:
+    needs: smoke-testpypi
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - name: Download dist
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dist
+          path: dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+
+  github-release:
+    needs: publish-pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download dist
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dist
+          path: dist
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes

@@ -36,8 +36,8 @@ Distribution (PyPI) is cut early to claim the name, with honest caveats.
 | Version | Phase | Theme | Format break? |
 |---|---|---|---|
 | 0.1.0 – 0.3.11 | — | shipped (see *History*) | — |
-| **0.3.12** | Distribution | First PyPI release: tag-triggered trusted publishing; README *Known issues* | no |
-| **0.3.13** | 0 — Soundness | Fix the confirmed soundness bugs; correct README overclaims | no (patch fixes to documented semantics) |
+| **0.3.13** | Distribution | First PyPI release: tag-triggered trusted publishing; README *Known issues* | no |
+| **0.3.14** | 0 — Soundness | Fix the confirmed soundness bugs; correct README overclaims | no (patch fixes to documented semantics) |
 | *(no release needed)* | 1 — Invariants | Invariant catalog, test audit, golden vectors, property/mutation testing, CI matrix | no |
 | **0.4.0** | 2 — Verify surface | Auditor-facing verify tests + the manifest fields they need; all format fixes batched | **yes** |
 | **0.4.x** | 3 — Dependencies | Drop pydantic and blake3; vendor-or-pin BLS; supply-chain hardening | no (golden vectors must not move) |
@@ -46,7 +46,7 @@ Distribution (PyPI) is cut early to claim the name, with honest caveats.
 
 ---
 
-## 0.3.12 — First PyPI release
+## 0.3.13 — First PyPI release
 
 The `asexec` name is unclaimed on PyPI while the README already says
 `pip install asexec`. Claim it with a real (alpha) release, not a placeholder.
@@ -59,7 +59,7 @@ The `asexec` name is unclaimed on PyPI while the README already says
 - Version numbers on PyPI can never be reused (even after yank/delete), so the
   workflow is proven on TestPyPI before the first real upload.
 
-## 0.3.13 — Phase 0: Soundness patch
+## 0.3.14 — Phase 0: Soundness patch
 
 Point fixes, each written test-first (a failing test reproducing the bug, then
 the fix). No redesign; anything requiring a format change waits for 0.4.0.
