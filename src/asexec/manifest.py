@@ -198,6 +198,26 @@ def save(manifest: dict[str, Any], path: str) -> None:
         f.write("\n")
 
 
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """``object_pairs_hook``: a repeated key is ambiguous (parsers disagree on
+    which wins), so a file that contains one is malformed."""
+    out: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in out:
+            raise ManifestError(f"duplicate JSON key {key!r}")
+        out[key] = value
+    return out
+
+
 def load(path: str) -> dict[str, Any]:
-    with open(path) as f:
-        return json.load(f)
+    """Load a manifest file.
+
+    Raises ``ManifestError`` for anything that is not a JSON object with unique
+    keys; ``OSError`` / ``UnicodeDecodeError`` / ``json.JSONDecodeError`` may
+    also propagate (callers that must not crash catch them).
+    """
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f, object_pairs_hook=_reject_duplicate_keys)
+    if not isinstance(data, dict):
+        raise ManifestError("manifest must be a JSON object")
+    return data

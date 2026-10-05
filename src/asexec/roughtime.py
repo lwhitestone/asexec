@@ -74,9 +74,10 @@ from .errors import NetworkError, VerificationError
 #
 # Provenance: the official Roughtime ecosystem list
 # (https://raw.githubusercontent.com/cloudflare/roughtime/master/ecosystem.json).
-# ALPHA CAVEAT: pinned for prototype expediency; the wire format has not yet been
-# reconciled against a *live* capture from these servers (the tracked follow-up),
-# so a real fetch→verify round trip may fail safe until that lands.
+# STATUS: the wire format is reconciled against a live ``int08h-Roughtime`` capture
+# (an offline test fixture). The other servers' keys are pinned from the ecosystem
+# list but were not reachable during capture, so their interop is expected, not
+# proven; a variant mismatch fails safe (the fetch or verify fails, never a false pass).
 SERVERS: dict[str, dict[str, object]] = {
     "Cloudflare-Roughtime-2": {
         "host": "roughtime.cloudflare.com",

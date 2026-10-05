@@ -1,4 +1,4 @@
-"""The verifier. A canonical verify code. Trust comes from reproducability.
+"""The verifier. A canonical verify code. Trust comes from reproducibility.
 
 Everything the verifier does verifies offline against pinned constants; nothing
 here touches the network.
@@ -30,10 +30,13 @@ Tests (the catalog - only verifiable claims, no self-declarations)
   - ``ceiling``    : a ceiling witness (Roughtime) signature verifies against a
                      pinned key AND its nonce == ref(payload). Applies to
                      manifests that carry a ceiling.
-  - ``chain``      : prev_hash chain integrity (one root, no gaps). Applies to
+  - ``chain``      : prev_hash chain integrity (one root, no gaps, no forks: a
+                     single linear chain). Applies to
                      commitments that have receipts.
-  - ``content``    : subject digests recomputed from --artifacts match. Applies
-                     where artifacts are provided and a subject is present.
+  - ``content``    : subject digests recomputed from --artifacts match. Subject
+                     names must resolve inside --artifacts (an escape is a
+                     mismatch). Applies where artifacts are provided and a
+                     subject is present.
   - ``floor``      : the drand freshness floor BLS-verifies. Applies to
                      manifests that carry an anchor.floor.
   - ``keyconsist`` : receipts share the pre-registration's key. Applies to
@@ -47,15 +50,21 @@ States (per commitment = a prereg + the postregs that fulfil it)
 ----------------------------------------------------------------
 Rendered in the human report above the code; the verifier RENDERS these, it
 never adjudicates intent or whether a commitment was "good enough":
-  - fulfilled          : >=1 valid postreg references this prereg
+  - fulfilled          : >=1 postreg references this prereg AND is validly
+                         signed by the prereg's own key. Postregs that reference
+                         it but fail either condition are listed separately
+                         (``rejected_receipts``) and never count.
   - open               : 0 postregs and the ``due`` deadline has not elapsed
                          (or no ``due`` was declared - an open-ended commitment)
   - elapsed-no-receipt : 0 postregs and the ``due`` deadline has elapsed
+  - invalid-due        : 0 postregs and ``due`` is present but is not a parseable
+                         ISO-8601 timestamp (never silently rendered ``open``)
   - notarization-only  : a postreg with no matching prereg provided
 """
 
 from __future__ import annotations
 
+import datetime
 import os
 import time
 from typing import Any
@@ -131,11 +140,23 @@ def parse_tests(spec: str) -> list[str]:
     return [t for t in TEST_CATALOG if t in names]
 
 
-def _parse_iso(ts: str) -> float:
-    s = ts.replace("Z", "+00:00")
-    import datetime
+def _parse_due(due: Any) -> tuple[float | None, bool]:
+    """Parse a ``due`` value to ``(epoch_seconds, naive)``.
 
-    return datetime.datetime.fromisoformat(s).timestamp()
+    A timezone-less value is read as UTC so the result never depends on the
+    verifier's local timezone; ``naive`` flags it. ``(None, False)`` if ``due``
+    is not a parseable ISO-8601 string.
+    """
+    if not isinstance(due, str):
+        return None, False
+    try:
+        dt = datetime.datetime.fromisoformat(due.replace("Z", "+00:00"))
+    except ValueError:
+        return None, False
+    naive = dt.tzinfo is None
+    if naive:
+        dt = dt.replace(tzinfo=datetime.UTC)
+    return dt.timestamp(), naive
 
 
 def verify_signature(mani: dict[str, Any]) -> dict[str, Any]:
@@ -158,10 +179,16 @@ def verify_signature(mani: dict[str, Any]) -> dict[str, Any]:
 
 def verify_floor(body: dict[str, Any]) -> dict[str, Any]:
     """Verify the drand freshness floor at ``body.anchor.floor`` (if present)."""
-    floor = (body.get("anchor") or {}).get("floor")
+    anchor = body.get("anchor")
+    floor = anchor.get("floor") if isinstance(anchor, dict) else anchor
     if not floor:
         return {"status": "absent"}
-    return drand.verify_floor(floor)
+    if not isinstance(floor, dict):
+        return {"status": "invalid", "error": "malformed anchor.floor"}
+    try:
+        return drand.verify_floor(floor)
+    except Exception as e:  # a signed-but-malformed floor must fail, not crash
+        return {"status": "invalid", "error": f"malformed anchor.floor: {e}"}
 
 
 def verify_ceiling(mani: dict[str, Any]) -> dict[str, Any]:
@@ -182,33 +209,59 @@ def verify_ceiling(mani: dict[str, Any]) -> dict[str, Any]:
         return {"status": "invalid", "error": f"malformed manifest: {e}"}
     from . import roughtime
 
-    res = roughtime.verify_ceiling(ceiling, expected_nonce)
-    return res
+    try:
+        return roughtime.verify_ceiling(ceiling, expected_nonce)
+    except Exception as e:  # an unsigned, attacker-shaped envelope field must not crash verify
+        return {"status": "invalid", "error": f"malformed ceiling: {e}"}
+
+
+def _resolve_inside(artifacts_dir: str, name: str) -> str | None:
+    """Resolve a subject ``name`` under ``artifacts_dir``; None if it escapes
+    (``..``, an absolute name, or a symlink pointing outside)."""
+    root = os.path.realpath(artifacts_dir)
+    path = os.path.realpath(os.path.join(root, name.rstrip("/")))
+    if path != root and not path.startswith(root + os.sep):
+        return None
+    return path
+
+
+def _verify_subject_item(item: Any, alg: Any, artifacts_dir: str) -> dict[str, Any]:
+    try:
+        name = item["name"]
+        expected = item.get("digest", {}).get(alg)
+        if not isinstance(name, str) or not isinstance(expected, str):
+            return {"name": str(name), "ok": False, "reason": "malformed subject entry"}
+    except Exception:
+        return {"name": str(item)[:80], "ok": False, "reason": "malformed subject entry"}
+    if not isinstance(alg, str) or alg not in hashing.available_algorithms():
+        return {"name": name, "ok": False, "reason": f"algorithm unavailable: {alg!r}"}
+    path = _resolve_inside(artifacts_dir, name)
+    if path is None:
+        return {"name": name, "ok": False, "reason": "path resolves outside --artifacts"}
+    if not os.path.exists(path):
+        return {"name": name, "ok": False, "reason": "artifact not found"}
+    try:
+        actual = hashing.digest_path(path, alg)
+    except OSError as e:
+        return {"name": name, "ok": False, "reason": f"artifact unreadable: {e.strerror or e}"}
+    ok = actual == expected
+    return {"name": name, "ok": ok, **({} if ok else {"expected": expected, "actual": actual})}
 
 
 def verify_content(body: dict[str, Any], artifacts_dir: str | None) -> dict[str, Any]:
     if not artifacts_dir:
         return {"status": "skipped", "reason": "no artifacts provided"}
-    if not body.get("subject"):
+    subject = body.get("subject")
+    if not subject:
         return {"status": "skipped", "reason": "manifest has no subject"}
+    if not isinstance(subject, list):
+        return {
+            "status": "mismatch",
+            "entries": [{"name": "(subject)", "ok": False, "reason": "malformed subject"}],
+        }
     alg = body.get("hash_alg", hashing.DEFAULT_ALG)
-    entries = []
-    all_ok = True
-    for item in body.get("subject", []):
-        name = item["name"]
-        expected = item.get("digest", {}).get(alg)
-        path = os.path.join(artifacts_dir, name.rstrip("/"))
-        if not os.path.exists(path):
-            entries.append({"name": name, "ok": False, "reason": "artifact not found"})
-            all_ok = False
-            continue
-        actual = hashing.digest_path(path, alg)
-        ok = actual == expected
-        all_ok = all_ok and ok
-        entries.append(
-            {"name": name, "ok": ok, **({} if ok else {"expected": expected, "actual": actual})}
-        )
-    return {"status": "ok" if all_ok else "mismatch", "entries": entries}
+    entries = [_verify_subject_item(item, alg, artifacts_dir) for item in subject]
+    return {"status": "ok" if all(e["ok"] for e in entries) else "mismatch", "entries": entries}
 
 
 def verify_paths(
@@ -224,9 +277,15 @@ def verify_paths(
     ceiling_trust = []
 
     for p in files:
-        mani = manifest.load(p)
-        sig = verify_signature(mani)
-        body = mani.get("payload", {})
+        try:
+            mani = manifest.load(p)
+            sig = verify_signature(mani)
+        except Exception as e:  # unreadable / not JSON / duplicate keys / not an object
+            mani = {}
+            sig = {"signature_ok": False, "keyid_ok": False, "errors": [f"malformed: {e}"]}
+        body = mani.get("payload")
+        if not isinstance(body, dict):
+            body = {}
         clean = sig.get("errors") == []
         floor = verify_floor(body) if clean else {"status": "absent"}
         ceiling = verify_ceiling(mani) if clean else {"status": "absent"}
@@ -255,6 +314,7 @@ def verify_paths(
                 "keyid": sig.get("keyid"),
                 "due": body.get("due"),
                 "receipts": [],
+                "rejected_receipts": [],
             }
         elif body.get("phase") == "postreg":
             receipts.append((sig.get("ref"), body, sig))
@@ -262,22 +322,30 @@ def verify_paths(
     notarization_only = []
     for rref, body, sig in receipts:
         target = body.get("fulfills")
-        if target in preregs:
-            preregs[target]["receipts"].append(
-                {"ref": rref, "prev_hash": body.get("prev_hash"), "keyid": sig.get("keyid")}
-            )
+        if isinstance(target, str) and target in preregs:
+            pr = preregs[target]
+            entry = {"ref": rref, "prev_hash": body.get("prev_hash"), "keyid": sig.get("keyid")}
+            reason = _get_postreg_rejection_reason(sig, pr)
+            if reason:
+                pr["rejected_receipts"].append({**entry, "reason": reason})
+            else:
+                pr["receipts"].append(entry)
         else:
             notarization_only.append({"ref": rref, "fulfills": target, "keyid": sig.get("keyid")})
 
     commitments = []
     for pr in preregs.values():
         state = _commitment_state(pr, now)
+        _, due_naive = _parse_due(pr.get("due"))
         chain_ok, chain_note = _check_chain(pr["receipts"])
-        key_consistent = all(r["keyid"] == pr["keyid"] for r in pr["receipts"])
+        key_consistent = not any(
+            r["reason"].startswith("signed by a different key") for r in pr["rejected_receipts"]
+        )
         commitments.append(
             {
                 **pr,
                 "state": state,
+                "due_naive": due_naive,
                 "chain_ok": chain_ok,
                 "chain_note": chain_note,
                 "key_consistent": key_consistent,
@@ -321,6 +389,7 @@ def _tally(units: list[bool], nowhere_reason: str, fail_noun: str) -> dict[str, 
 def _evaluate(tests, manifests, commitments, artifacts_dir) -> dict[str, dict[str, Any]]:
     res: dict[str, dict[str, Any]] = {}
     with_receipts = [c for c in commitments if c["receipts"]]
+    referenced = [c for c in commitments if c["receipts"] or c["rejected_receipts"]]
 
     if "BDR" in tests:
         units = [
@@ -368,7 +437,7 @@ def _evaluate(tests, manifests, commitments, artifacts_dir) -> dict[str, dict[st
         )
 
     if "keyconsist" in tests:
-        units = [c["key_consistent"] for c in with_receipts]
+        units = [c["key_consistent"] for c in referenced]
         res["keyconsist"] = _tally(
             units,
             "requested but no commitment has receipts to key-check",
@@ -383,30 +452,47 @@ def _build_code(tests: list[str], results: dict[str, dict[str, Any]]) -> str:
     return CODE_VERSION + " " + " ".join(tokens)
 
 
+def _get_postreg_rejection_reason(sig: dict[str, Any], prereg: dict[str, Any]) -> str | None:
+    """Why a postreg that references ``prereg`` does not count toward fulfilling
+    it, or None if it counts: validly signed by the prereg's own key."""
+    if sig.get("errors") or not (sig.get("signature_ok") and sig.get("keyid_ok")):
+        return "invalid signature"
+    if sig.get("keyid") != prereg["keyid"]:
+        return "signed by a different key than the pre-registration"
+    return None
+
+
 def _commitment_state(pr: dict[str, Any], now: float) -> str:
     if pr["receipts"]:
         return "fulfilled"
     due = pr.get("due")
     if not due:
         return "open"  # no deadline declared -> cannot elapse
-    try:
-        return "elapsed-no-receipt" if now >= _parse_iso(due) else "open"
-    except Exception:
-        return "open"
+    due_ts, _naive = _parse_due(due)
+    if due_ts is None:
+        return "invalid-due"
+    return "elapsed-no-receipt" if now >= due_ts else "open"
 
 
 def _check_chain(receipts: list[dict[str, Any]]):
     """A prev_hash chain: exactly one root (prev_hash null), each other points
-    to a present receipt, no cycles/forks."""
+    to a present receipt, and no receipt has more than one successor (a single
+    linear chain: no forks, no cycles)."""
     if not receipts:
         return True, "no receipts"
     refs = {r["ref"] for r in receipts}
     roots = [r for r in receipts if not r["prev_hash"]]
     if len(roots) != 1:
         return False, f"expected exactly one chain root, found {len(roots)}"
+    successors: dict[Any, int] = {}
     for r in receipts:
-        if r["prev_hash"] and r["prev_hash"] not in refs:
+        prev = r["prev_hash"]
+        if prev and prev not in refs:
             return False, "a receipt's prev_hash points to a missing receipt (gap)"
+        if prev:
+            successors[prev] = successors.get(prev, 0) + 1
+    if any(n > 1 for n in successors.values()):
+        return False, "a receipt has more than one successor (fork)"
     return True, "chain intact"
 
 

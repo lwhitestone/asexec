@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import uuid
 from collections.abc import Callable
@@ -20,6 +21,7 @@ from typing import TypeVar
 from . import __version__, drand, hashing, identity, keys, manifest, verifier
 from .errors import VerificationError
 
+REF_RE = re.compile(r"sha-256:[0-9a-f]{64}")
 OK = "✓"
 NO = "✗"
 T = TypeVar("T")
@@ -76,13 +78,22 @@ def _get_notes(args) -> str | dict | None:
 
 
 def _get_due(args) -> str | None:
-    """Validate the provided ``--due`` ISO-8601 deadline; return it verbatim."""
+    """Validate the provided ``--due`` ISO-8601 deadline; return it verbatim.
+
+    An explicit UTC offset (or ``Z``) is required: a timezone-less deadline
+    would mean different instants to verifiers in different timezones.
+    """
     if not args.due:
         return None
     try:
-        datetime.fromisoformat(args.due.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(args.due.replace("Z", "+00:00"))
     except ValueError:
         raise SystemExit(f"error: --due is not a valid ISO-8601 timestamp: {args.due}") from None
+    if parsed.tzinfo is None:
+        raise SystemExit(
+            f"error: --due needs an explicit UTC offset or 'Z' "
+            f"(e.g. 2026-08-30T00:00:00Z or 2026-08-30T00:00:00+02:00): {args.due}"
+        )
     return args.due
 
 
@@ -93,6 +104,11 @@ def _get_floor(args) -> dict | None:
     try:
         return drand.fetch_floor()
     except Exception as e:
+        if not args.best_effort:
+            raise SystemExit(
+                f"error: drand fetch failed ({e}); nothing was signed. "
+                "Retry, or pass --best-effort to sign without the freshness floor."
+            ) from e
         sys.stderr.write(f"warning: drand fetch failed ({e}); continuing without freshness floor\n")
         return None
 
@@ -103,17 +119,32 @@ def _build_subject(paths: list[str] | None, hash_alg: str) -> list | None:
     return hashing.build_subject(paths, hash_alg) if paths else None
 
 
-def _resolve_ref(value: str) -> str:
-    """A --fulfills/--prev value may be a manifest file path or a literal ref."""
+def _load_manifest_body(path: str, flag: str) -> dict:
+    """Load a manifest file named by ``flag``, turning any failure into a clean error."""
+    try:
+        return manifest.get_body(manifest.load(path))
+    except Exception as e:
+        raise SystemExit(f"error: {flag} {path} is not a readable manifest: {e}") from e
+
+
+def _resolve_ref(value: str, flag: str) -> str:
+    """A --fulfills/--prev value is an existing manifest file or a well-formed
+    ``sha-256:<64 lowercase hex>`` ref; anything else (e.g. a typo'd path) is an error."""
     if os.path.isfile(value):
-        return manifest.ref(manifest.get_body(manifest.load(value)))
-    return value
+        return manifest.ref(_load_manifest_body(value, flag))
+    if REF_RE.fullmatch(value):
+        return value
+    raise SystemExit(
+        f"error: {flag} {value!r} is neither an existing manifest file nor a "
+        "sha-256:<64 hex> reference"
+    )
 
 
-def _attach_ceiling(mani: dict, body: dict, want_ceiling: bool) -> None:
+def _attach_ceiling(mani: dict, body: dict, want_ceiling: bool, best_effort: bool) -> None:
     """Optionally fetch a Roughtime ceiling witness and attach it (sign-time,
     network). The nonce is the body ref, so this must run *after* signing; it
-    does not perturb ref."""
+    does not perturb ref. A failed fetch aborts (nothing is written) unless
+    ``best_effort``."""
     if not want_ceiling:
         return
     from . import roughtime
@@ -122,6 +153,11 @@ def _attach_ceiling(mani: dict, body: dict, want_ceiling: bool) -> None:
     try:
         ceiling = roughtime.fetch_ceiling(nonce)
     except Exception as e:
+        if not best_effort:
+            raise SystemExit(
+                f"error: ceiling witness fetch failed ({e}); nothing was written. "
+                "Retry, or pass --best-effort to sign without a ceiling."
+            ) from e
         sys.stderr.write(
             f"warning: ceiling witness fetch failed ({e}); continuing without a ceiling\n"
         )
@@ -140,7 +176,13 @@ def cmd_keygen(args) -> int:
     """Generate a cryptographic key for signing pre- and post-registrations."""
     out = args.out or f"asexec-{uuid.uuid4()}.key"
     priv, _pub = keys.generate()
-    kid = keys.save(priv, out)
+    try:
+        kid = keys.save(priv, out, force=args.force)
+    except FileExistsError as e:
+        raise SystemExit(
+            f"error: {e.filename} already exists; refusing to overwrite a key "
+            "(pass --force to replace it - the old key is lost)"
+        ) from None
     print(f"{OK} generated ed25519 key")
     print(f"  secret : {out} (keep private; mode 0600)")
     print(f"  public : {out}.pub")
@@ -165,7 +207,7 @@ def cmd_prereg(args) -> int:
         notes=_get_notes(args),
     )
     mani = manifest.sign(body, priv, pub)
-    _attach_ceiling(mani, body, args.ceiling)
+    _attach_ceiling(mani, body, args.ceiling, args.best_effort)
     manifest.save(mani, args.out)
     print(f"{OK} pre-registration written: {args.out}")
     print(f"  ref : {manifest.ref(body)}")
@@ -179,9 +221,11 @@ def cmd_postreg(args) -> int:
     a pre-registration as promised."""
     priv, pub = keys.load_signing_key(args.key)
 
+    fulfills = _resolve_ref(args.fulfills, "--fulfills")
+    prev_hash = _resolve_ref(args.prev, "--prev") if args.prev else None
     prereg_body = None
     if os.path.isfile(args.fulfills):
-        prereg_body = manifest.get_body(manifest.load(args.fulfills))
+        prereg_body = _load_manifest_body(args.fulfills, "--fulfills")
 
     # target / due / declaration / hash_alg inherit from the fulfilled prereg
     # unless overridden on this postreg.
@@ -198,19 +242,19 @@ def cmd_postreg(args) -> int:
     subject = _build_subject(args.subject, hash_alg)
     body = manifest.build_postreg(
         target,
-        fulfills=_resolve_ref(args.fulfills),
+        fulfills=fulfills,
         due=due,
         declaration=declaration,
         subject=subject,
         hash_alg=hash_alg,
-        prev_hash=_resolve_ref(args.prev) if args.prev else None,
+        prev_hash=prev_hash,
         floor=_get_floor(args),
         notes=_get_notes(args),
         provenance=args.provenance,
         repro_recipe=json.loads(args.repro_recipe) if args.repro_recipe else None,
     )
     mani = manifest.sign(body, priv, pub)
-    _attach_ceiling(mani, body, args.ceiling)
+    _attach_ceiling(mani, body, args.ceiling, args.best_effort)
     manifest.save(mani, args.out)
     print(f"{OK} post-registration written: {args.out}")
     print(f"  ref      : {manifest.ref(body)}")
@@ -236,6 +280,8 @@ def cmd_verify(args) -> int:
         sig = m["signature"]
         s = OK if (sig.get("signature_ok") and sig.get("keyid_ok")) else NO
         print(f"{s} {m['path']}  [{m.get('phase')}]  keyid={m.get('keyid')}")
+        for err in sig.get("errors", []):
+            print(f"    {NO} {err}")
         fl = m["floor"]
         if fl["status"] != "absent":
             fs = OK if fl["status"] == "verified" else NO
@@ -269,12 +315,16 @@ def cmd_verify(args) -> int:
     for c in report["commitments"]:
         print(f"  [{c['state'].upper()}] prereg {c['ref']}")
         print(f"    due          : {c.get('due') or '(none declared)'}")
+        if c["due_naive"]:
+            print(f"    {NO} due has no timezone; read as UTC (re-sign with an explicit offset)")
+        if c["state"] == "invalid-due":
+            print(f"    {NO} due is not a parseable ISO-8601 timestamp")
         print(
             f"    postregs     : {len(c['receipts'])}"
             + ("" if c["chain_ok"] else f"  {NO} {c['chain_note']}")
         )
-        if not c["key_consistent"]:
-            print(f"    {NO} postregs signed by a different key than the pre-registration")
+        for r in c["rejected_receipts"]:
+            print(f"    {NO} postreg {r['ref']} does NOT count toward fulfillment: {r['reason']}")
     if report["notarization_only"]:
         print("\n=== notarization-only (postregs with no matching pre-registration) ===")
         for n in report["notarization_only"]:
@@ -339,12 +389,19 @@ def _add_anchor_flags(p):
     p.add_argument(
         "--floor",
         action="store_true",
-        help="attach a drand freshness floor (proves created no earlier than T; network)",
+        help="attach a drand freshness floor (proves created no earlier than T; network). "
+        "Fails if the fetch fails, unless --best-effort",
     )
     p.add_argument(
         "--ceiling",
         action="store_true",
-        help="attach a Roughtime ceiling witness (proves created no later than T; network)",
+        help="attach a Roughtime ceiling witness (proves created no later than T; network). "
+        "Fails if the fetch fails, unless --best-effort",
+    )
+    p.add_argument(
+        "--best-effort",
+        action="store_true",
+        help="if a --floor/--ceiling fetch fails, warn and sign without it instead of failing",
     )
 
 
@@ -362,6 +419,9 @@ def build_parser() -> argparse.ArgumentParser:
     # asexec keygen
     kg = sub.add_parser("keygen", help="generate an ed25519 keypair (no CA)")
     kg.add_argument("--out", default=None, help="secret key file (default: asexec-<uuid>.key)")
+    kg.add_argument(
+        "--force", action="store_true", help="overwrite an existing key file (the old key is lost)"
+    )
     kg.set_defaults(func=cmd_keygen)
 
     # asexec prereg
@@ -371,7 +431,8 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--target-file", help="structured JSON target details")
     pr.add_argument(
         "--due",
-        help="disclosure deadline, ISO-8601 (optional; e.g. 2026-08-30T00:00:00Z)",
+        help="disclosure deadline, ISO-8601 with an explicit offset or Z "
+        "(optional; e.g. 2026-08-30T00:00:00Z)",
     )
     pr.add_argument("--declaration", help="plain-language commitment text")
     pr.add_argument("--declaration-file", help="structured JSON declaration")
@@ -397,16 +458,23 @@ def build_parser() -> argparse.ArgumentParser:
     po.add_argument(
         "--fulfills",
         required=True,
-        help="pre-registration file (or literal ref) this fulfils",
+        help="pre-registration file, or a literal sha-256:<64 hex> ref, this fulfils",
     )
     po.add_argument("--target", help="override target (default: inherit from prereg)")
     po.add_argument("--target-file")
-    po.add_argument("--due", help="override disclosure deadline (default: inherit from prereg)")
+    po.add_argument(
+        "--due",
+        help="override disclosure deadline, ISO-8601 with an explicit offset or Z "
+        "(default: inherit from prereg)",
+    )
     po.add_argument("--declaration")
     po.add_argument("--declaration-file")
     po.add_argument("--subject", nargs="+", help="path(s) to outputs/transcript/harness to hash")
     po.add_argument("--hash-alg", default=None, choices=hashing.available_algorithms())
-    po.add_argument("--prev", help="prior postreg file (or ref) in this commitment's chain")
+    po.add_argument(
+        "--prev",
+        help="prior postreg file (or sha-256:<64 hex> ref) in this commitment's chain",
+    )
     po.add_argument("--provenance", choices=["asserted", "reproducible"], default="asserted")
     po.add_argument(
         "--repro-recipe",
