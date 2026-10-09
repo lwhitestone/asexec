@@ -12,6 +12,14 @@
 # Run this once per clone (or after pulling dependency changes). It does
 # NOT run lint or tests — use scripts/check.sh for that.
 
+# Termux/Android has no prebuilt wheels, so uv builds these from source.
+# - PyNaCl: bundled libsodium doesn't compile; use Termux's package.
+# - Ruff: fat LTO runs out of memory; disable it.
+if [ -n "${TERMUX_VERSION:-}" ]; then
+  export SODIUM_INSTALL=system
+  export CARGO_PROFILE_RELEASE_LTO=off
+fi
+
 set -euo pipefail
 
 if ! command -v uv >/dev/null 2>&1; then
