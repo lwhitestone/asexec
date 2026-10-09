@@ -8,6 +8,7 @@ which every identity-binding scheme references.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -30,9 +31,10 @@ def generate() -> tuple[bytes, bytes]:
     return bytes(sk), bytes(sk.verify_key)
 
 
-def save(private_key: bytes, path: str) -> str:
+def save(private_key: bytes, path: str, *, force: bool = False) -> str:
     """Write the secret key file (0600 on Unix) and a sibling ``<path>.pub``.
 
+    Refuses to overwrite either file (``FileExistsError``) unless ``force``.
     Returns the keyid.
     """
     pub = bytes(nacl.signing.SigningKey(private_key).verify_key)
@@ -45,7 +47,11 @@ def save(private_key: bytes, path: str) -> str:
         "public_key": pub.hex(),
     }
 
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    # O_EXCL makes "does not exist" and "create" one atomic step. Check the .pub
+    # first so a refusal never leaves a half-written pair.
+    flags = os.O_WRONLY | os.O_CREAT | (os.O_TRUNC if force else os.O_EXCL)
+    if not force and os.path.lexists(path + ".pub"):
+        raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), path + ".pub")
     fd = os.open(path, flags, 0o600)
     with os.fdopen(fd, "w") as f:
         json.dump(secret, f, indent=2)
