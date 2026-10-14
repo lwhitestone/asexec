@@ -48,8 +48,10 @@ def test_ref_is_signature_independent():
 def test_sign_then_verify_matches():
     priv, pub = keys.generate()
     body = manifest.build_prereg(_target(), due=DUE, subject=_subj())
-    m = manifest.sign(body, priv, pub)
-    assert keys.verify(pub, signing_input(m["payload"]), bytes.fromhex(m["signature"]["sig"]))
+    signed = manifest.sign(body, priv, pub)
+    assert keys.verify(
+        pub, signing_input(signed["payload"]), bytes.fromhex(signed["signature"]["sig"])
+    )
 
 
 def test_subject_optional_at_prereg():
@@ -57,8 +59,8 @@ def test_subject_optional_at_prereg():
     priv, pub = keys.generate()
     body = manifest.build_prereg(_target(), due=DUE)
     assert "subject" not in body and "hash_alg" not in body
-    m = manifest.sign(body, priv, pub)  # bedrock without subject is fine
-    assert m["payload"]["phase"] == "prereg"
+    signed = manifest.sign(body, priv, pub)  # bedrock without subject is fine
+    assert signed["payload"]["phase"] == "prereg"
 
 
 def test_due_optional_at_prereg():
@@ -116,9 +118,9 @@ def test_floor_lands_in_anchor_and_ref_stable_across_ceiling():
     }
     body = manifest.build_prereg(_target(), due=DUE, subject=_subj(), floor=floor)
     assert body["anchor"]["floor"]["floor_type"] == "drand"
-    m = manifest.sign(body, priv, pub)
-    ref_before = manifest.ref(manifest.get_body(m))
+    signed = manifest.sign(body, priv, pub)
+    ref_before = manifest.ref(manifest.get_body(signed))
     # attaching a ceiling at the envelope must not perturb the body ref
-    manifest.attach_ceiling(m, {"ceiling_type": "roughtime", "nonce": ref_before})
-    assert manifest.ref(manifest.get_body(m)) == ref_before
-    assert manifest.get_ceiling(m)["nonce"] == ref_before
+    manifest.attach_ceiling(signed, {"ceiling_type": "roughtime", "nonce": ref_before})
+    assert manifest.ref(manifest.get_body(signed)) == ref_before
+    assert manifest.get_ceiling(signed)["nonce"] == ref_before

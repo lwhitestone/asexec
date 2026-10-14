@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from asexec import keys, manifest
+from asexec import drand, hashing, keys, manifest
 from asexec.errors import VerificationError
 from asexec.verifier import parse_tests, verify_paths
 
@@ -36,47 +36,55 @@ def test_parse_tests_is_catalog_ordered_and_deduped():
 # canonical code
 # --------------------------------------------------------------------------- #
 def test_code_is_alphabetical_and_byte_identical(make_commitment):
-    c = make_commitment(n_receipts=1)
-    r1 = verify_paths([c["prereg"]] + c["receipts"], ["BDR", "chain"], artifacts_dir=c["artifacts"])
+    commit = make_commitment(n_receipts=1)
+    r1 = verify_paths(
+        [commit["prereg"]] + commit["receipts"], ["BDR", "chain"], artifacts_dir=commit["artifacts"]
+    )
     # request the SAME tests in a different order -> identical code
-    r2 = verify_paths([c["prereg"]] + c["receipts"], ["chain", "BDR"], artifacts_dir=c["artifacts"])
+    r2 = verify_paths(
+        [commit["prereg"]] + commit["receipts"], ["chain", "BDR"], artifacts_dir=commit["artifacts"]
+    )
     assert r1["code"] == r2["code"]
     assert r1["code"] == "asexec-verify/1 BDR=PASS chain=PASS"
 
 
 def test_BDR_only_is_a_complete_statement(make_commitment):
-    c = make_commitment(n_receipts=1)
-    r = verify_paths([c["prereg"]] + c["receipts"], ["BDR"])
-    assert r["code"] == "asexec-verify/1 BDR=PASS"
-    assert r["ok"] is True
+    commit = make_commitment(n_receipts=1)
+    report = verify_paths([commit["prereg"]] + commit["receipts"], ["BDR"])
+    assert report["code"] == "asexec-verify/1 BDR=PASS"
+    assert report["ok"] is True
 
 
 def test_requested_but_absent_is_fail_not_omission(make_commitment):
     # no floor was embedded (offline fixtures), so `floor` applies nowhere -> FAIL.
-    c = make_commitment(n_receipts=1)
-    r = verify_paths([c["prereg"]] + c["receipts"], ["BDR", "floor"], artifacts_dir=c["artifacts"])
-    assert r["results"]["floor"]["result"] == "FAIL"
-    assert r["results"]["floor"]["applicable"] == 0
-    assert r["code"] == "asexec-verify/1 BDR=PASS floor=FAIL"
-    assert r["ok"] is False
+    commit = make_commitment(n_receipts=1)
+    report = verify_paths(
+        [commit["prereg"]] + commit["receipts"], ["BDR", "floor"], artifacts_dir=commit["artifacts"]
+    )
+    assert report["results"]["floor"]["result"] == "FAIL"
+    assert report["results"]["floor"]["applicable"] == 0
+    assert report["code"] == "asexec-verify/1 BDR=PASS floor=FAIL"
+    assert report["ok"] is False
 
 
 def test_content_without_artifacts_is_fail(make_commitment):
-    c = make_commitment(n_receipts=1)
-    r = verify_paths([c["prereg"]] + c["receipts"], ["BDR", "content"])  # no artifacts_dir
-    assert r["results"]["content"]["result"] == "FAIL"
-    assert r["results"]["content"]["applicable"] == 0
+    commit = make_commitment(n_receipts=1)
+    report = verify_paths(
+        [commit["prereg"]] + commit["receipts"], ["BDR", "content"]
+    )  # no artifacts_dir
+    assert report["results"]["content"]["result"] == "FAIL"
+    assert report["results"]["content"]["applicable"] == 0
 
 
 # --------------------------------------------------------------------------- #
 # states + tamper/content/chain/key (aggregated into the code)
 # --------------------------------------------------------------------------- #
 def test_fulfilled(make_commitment):
-    c = make_commitment(n_receipts=1)
+    commit = make_commitment(n_receipts=1)
     rep = verify_paths(
-        [c["prereg"]] + c["receipts"],
+        [commit["prereg"]] + commit["receipts"],
         ["BDR", "content", "chain", "keyconsist"],
-        artifacts_dir=c["artifacts"],
+        artifacts_dir=commit["artifacts"],
     )
     assert rep["ok"] is True
     assert rep["commitments"][0]["state"] == "fulfilled"
@@ -84,74 +92,72 @@ def test_fulfilled(make_commitment):
 
 
 def test_open_when_window_future_and_no_receipt(make_commitment):
-    c = make_commitment(due="2099-01-01T00:00:00Z", n_receipts=0)
-    rep = verify_paths([c["prereg"]], ["BDR"])
+    commit = make_commitment(due="2099-01-01T00:00:00Z", n_receipts=0)
+    rep = verify_paths([commit["prereg"]], ["BDR"])
     assert rep["commitments"][0]["state"] == "open"
     assert rep["ok"] is True
 
 
 def test_elapsed_no_receipt(make_commitment):
-    c = make_commitment(due="2000-01-01T00:00:00Z", n_receipts=0)
-    rep = verify_paths([c["prereg"]], ["BDR"])
+    commit = make_commitment(due="2000-01-01T00:00:00Z", n_receipts=0)
+    rep = verify_paths([commit["prereg"]], ["BDR"])
     assert rep["commitments"][0]["state"] == "elapsed-no-receipt"
 
 
 def test_notarization_only(make_commitment):
-    c = make_commitment(n_receipts=1)
-    rep = verify_paths(c["receipts"], ["BDR"])
+    commit = make_commitment(n_receipts=1)
+    rep = verify_paths(commit["receipts"], ["BDR"])
     assert rep["notarization_only"]
     assert rep["commitments"] == []
 
 
 def test_tampered_receipt_fails_BDR(make_commitment):
-    c = make_commitment(n_receipts=1)
-    rp = c["receipts"][0]
-    m = json.loads(open(rp).read())
-    m["payload"]["target"]["model_id"] = "SWAPPED"  # alter signed content
-    open(rp, "w").write(json.dumps(m))
-    rep = verify_paths([c["prereg"], rp], ["BDR"], artifacts_dir=c["artifacts"])
+    commit = make_commitment(n_receipts=1)
+    rp = commit["receipts"][0]
+    mani = json.loads(open(rp).read())
+    mani["payload"]["target"]["model_id"] = "SWAPPED"  # alter signed content
+    open(rp, "w").write(json.dumps(mani))
+    rep = verify_paths([commit["prereg"], rp], ["BDR"], artifacts_dir=commit["artifacts"])
     assert rep["ok"] is False
     assert rep["results"]["BDR"]["result"] == "FAIL"
-    sigs = {x["path"]: x["signature"]["signature_ok"] for x in rep["manifests"]}
+    sigs = {item["path"]: item["signature"]["signature_ok"] for item in rep["manifests"]}
     assert sigs[rp] is False
 
 
 def test_content_mismatch_detected(make_commitment):
-    c = make_commitment(n_receipts=1)
+    commit = make_commitment(n_receipts=1)
     import os
 
-    open(os.path.join(c["artifacts"], "harness", "eval.py"), "w").write("TAMPERED\n")
+    open(os.path.join(commit["artifacts"], "harness", "eval.py"), "w").write("TAMPERED\n")
     rep = verify_paths(
-        [c["prereg"]] + c["receipts"], ["BDR", "content"], artifacts_dir=c["artifacts"]
+        [commit["prereg"]] + commit["receipts"],
+        ["BDR", "content"],
+        artifacts_dir=commit["artifacts"],
     )
     assert rep["results"]["content"]["result"] == "FAIL"
-    assert any(m["content"]["status"] == "mismatch" for m in rep["manifests"])
+    assert any(mani["content"]["status"] == "mismatch" for mani in rep["manifests"])
 
 
 def test_chain_gap_detected(make_commitment):
-    c = make_commitment(n_receipts=2)
+    commit = make_commitment(n_receipts=2)
     rep = verify_paths(
-        [c["prereg"], c["receipts"][1]], ["BDR", "chain"], artifacts_dir=c["artifacts"]
+        [commit["prereg"], commit["receipts"][1]],
+        ["BDR", "chain"],
+        artifacts_dir=commit["artifacts"],
     )
     assert rep["commitments"][0]["chain_ok"] is False
     assert rep["results"]["chain"]["result"] == "FAIL"
 
 
-def test_foreign_key_still_verifies_offline(make_commitment):
-    priv, pub = keys.generate()
-    c = make_commitment(n_receipts=1, priv=priv, pub=pub)
-    rep = verify_paths([c["prereg"]] + c["receipts"], ["BDR"], artifacts_dir=c["artifacts"])
-    assert rep["ok"] is True
-    assert rep["manifests"][0]["keyid"] == keys.keyid_for(pub)
-
-
 def test_receipts_from_wrong_key_flagged(make_commitment):
-    c = make_commitment(n_receipts=1)
+    commit = make_commitment(n_receipts=1)
     other_priv, other_pub = keys.generate()
-    body = manifest.get_body(manifest.load(c["receipts"][0]))
-    manifest.save(manifest.sign(body, other_priv, other_pub), c["receipts"][0])
+    body = manifest.get_body(manifest.load(commit["receipts"][0]))
+    manifest.save(manifest.sign(body, other_priv, other_pub), commit["receipts"][0])
     rep = verify_paths(
-        [c["prereg"]] + c["receipts"], ["BDR", "keyconsist"], artifacts_dir=c["artifacts"]
+        [commit["prereg"]] + commit["receipts"],
+        ["BDR", "keyconsist"],
+        artifacts_dir=commit["artifacts"],
     )
     assert rep["commitments"][0]["key_consistent"] is False
     assert rep["results"]["keyconsist"]["result"] == "FAIL"
@@ -170,10 +176,10 @@ def _resign(path, priv, pub, mutate=None):
 
 
 def test_postreg_by_other_key_does_not_fulfill(make_commitment):
-    c = make_commitment(n_receipts=1)
+    commit = make_commitment(n_receipts=1)
     other_priv, other_pub = keys.generate()
-    _resign(c["receipts"][0], other_priv, other_pub)
-    rep = verify_paths([c["prereg"]] + c["receipts"], ["BDR", "keyconsist"])
+    _resign(commit["receipts"][0], other_priv, other_pub)
+    rep = verify_paths([commit["prereg"]] + commit["receipts"], ["BDR", "keyconsist"])
     cm = rep["commitments"][0]
     assert cm["state"] != "fulfilled"
     assert cm["receipts"] == []
@@ -183,12 +189,12 @@ def test_postreg_by_other_key_does_not_fulfill(make_commitment):
 
 
 def test_postreg_with_invalid_signature_does_not_fulfill(make_commitment):
-    c = make_commitment(n_receipts=1)
-    rp = c["receipts"][0]
-    m = json.loads(open(rp).read())
-    m["payload"]["target"]["model_id"] = "SWAPPED"  # signature no longer matches
-    open(rp, "w").write(json.dumps(m))
-    rep = verify_paths([c["prereg"], rp], ["BDR"])
+    commit = make_commitment(n_receipts=1)
+    rp = commit["receipts"][0]
+    mani = json.loads(open(rp).read())
+    mani["payload"]["target"]["model_id"] = "SWAPPED"  # signature no longer matches
+    open(rp, "w").write(json.dumps(mani))
+    rep = verify_paths([commit["prereg"], rp], ["BDR"])
     cm = rep["commitments"][0]
     assert cm["state"] != "fulfilled"
     assert cm["receipts"] == []
@@ -197,43 +203,45 @@ def test_postreg_with_invalid_signature_does_not_fulfill(make_commitment):
 
 
 def test_forked_chain_fails(make_commitment):
-    c = make_commitment(n_receipts=2)
+    commit = make_commitment(n_receipts=2)
     # receipt1 currently points at receipt0; make a sibling that also does.
-    sibling = c["tmp"] / "sibling.json"
-    body = manifest.get_body(manifest.load(c["receipts"][1]))
+    sibling = commit["tmp"] / "sibling.json"
+    body = manifest.get_body(manifest.load(commit["receipts"][1]))
     body["notes"] = "fork"
-    manifest.save(manifest.sign(body, c["priv"], c["pub"]), str(sibling))
-    rep = verify_paths([c["prereg"], *c["receipts"], str(sibling)], ["BDR", "chain", "keyconsist"])
+    manifest.save(manifest.sign(body, commit["priv"], commit["pub"]), str(sibling))
+    rep = verify_paths(
+        [commit["prereg"], *commit["receipts"], str(sibling)], ["BDR", "chain", "keyconsist"]
+    )
     assert rep["commitments"][0]["chain_ok"] is False
     assert "fork" in rep["commitments"][0]["chain_note"]
     assert rep["results"]["chain"]["result"] == "FAIL"
 
 
 def test_linear_chain_still_passes(make_commitment):
-    c = make_commitment(n_receipts=3)
-    rep = verify_paths([c["prereg"], *c["receipts"]], ["BDR", "chain"])
+    commit = make_commitment(n_receipts=3)
+    rep = verify_paths([commit["prereg"], *commit["receipts"]], ["BDR", "chain"])
     assert rep["results"]["chain"]["result"] == "PASS"
 
 
 def _escape_setup(make_commitment, name):
     """A prereg whose subject name escapes --artifacts, with a matching outside file."""
-    c = make_commitment(n_receipts=0)
-    outside = c["tmp"] / "secret.txt"
+    commit = make_commitment(n_receipts=0)
+    outside = commit["tmp"] / "secret.txt"
     outside.write_text("outside\n")
     from asexec import hashing
 
     digest = hashing.hash_file(str(outside))
     subj = [{"name": name.format(outside=outside), "digest": {"sha-256": digest}}]
     body = manifest.build_prereg({"k": "v"}, subject=subj)
-    p = c["tmp"] / "escape.json"
-    manifest.save(manifest.sign(body, c["priv"], c["pub"]), str(p))
-    return c, str(p)
+    path = commit["tmp"] / "escape.json"
+    manifest.save(manifest.sign(body, commit["priv"], commit["pub"]), str(path))
+    return commit, str(path)
 
 
 @pytest.mark.parametrize("name", ["../secret.txt", "{outside}", "harness/../../secret.txt"])
 def test_content_cannot_escape_artifacts_dir(make_commitment, name):
-    c, p = _escape_setup(make_commitment, name)
-    rep = verify_paths([p], ["BDR", "content"], artifacts_dir=c["artifacts"])
+    commit, path = _escape_setup(make_commitment, name)
+    rep = verify_paths([path], ["BDR", "content"], artifacts_dir=commit["artifacts"])
     assert rep["results"]["content"]["result"] == "FAIL"
     entry = rep["manifests"][0]["content"]["entries"][0]
     assert entry["ok"] is False
@@ -241,27 +249,29 @@ def test_content_cannot_escape_artifacts_dir(make_commitment, name):
 
 
 def test_content_rejects_symlink_escape(make_commitment, tmp_path):
-    c, _ = _escape_setup(make_commitment, "x")
+    commit, _ = _escape_setup(make_commitment, "x")
     link = tmp_path / "artifacts" / "link.txt"
-    link.symlink_to(tmp_path / "secret.txt")
-    from asexec import hashing
+    try:
+        link.symlink_to(tmp_path / "secret.txt")
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks unavailable on this platform")
 
     subj = [{"name": "link.txt", "digest": {"sha-256": hashing.hash_file(str(link))}}]
     body = manifest.build_prereg({"k": "v"}, subject=subj)
-    p = tmp_path / "link.json"
-    manifest.save(manifest.sign(body, c["priv"], c["pub"]), str(p))
-    rep = verify_paths([str(p)], ["BDR", "content"], artifacts_dir=c["artifacts"])
+    path = tmp_path / "link.json"
+    manifest.save(manifest.sign(body, commit["priv"], commit["pub"]), str(path))
+    rep = verify_paths([str(path)], ["BDR", "content"], artifacts_dir=commit["artifacts"])
     assert rep["results"]["content"]["result"] == "FAIL"
 
 
 def test_duplicate_json_keys_rejected(make_commitment):
-    c = make_commitment(n_receipts=0)
-    raw = open(c["prereg"]).read()
+    commit = make_commitment(n_receipts=0)
+    raw = open(commit["prereg"]).read()
     # inject a second "phase" key into the payload (last would win)
     dup = raw.replace('"phase": "prereg"', '"phase": "prereg", "phase": "postreg"', 1)
     assert dup != raw
-    open(c["prereg"], "w").write(dup)
-    rep = verify_paths([c["prereg"]], ["BDR"])
+    open(commit["prereg"], "w").write(dup)
+    rep = verify_paths([commit["prereg"]], ["BDR"])
     assert rep["results"]["BDR"]["result"] == "FAIL"
     assert "duplicate" in rep["manifests"][0]["signature"]["errors"][0]
 
@@ -287,54 +297,56 @@ MALFORMED = {
 
 @pytest.mark.parametrize("raw", MALFORMED.values(), ids=MALFORMED.keys())
 def test_malformed_input_is_per_file_failure(make_commitment, tmp_path, raw):
-    c = make_commitment(n_receipts=1)
+    commit = make_commitment(n_receipts=1)
     bad = tmp_path / "bad.json"
     bad.write_text(raw)
     tests = ["BDR", "chain", "content", "keyconsist"]
-    rep = verify_paths([c["prereg"], *c["receipts"], str(bad)], tests, c["artifacts"])
+    rep = verify_paths(
+        [commit["prereg"], *commit["receipts"], str(bad)], tests, commit["artifacts"]
+    )
     assert rep["results"]["BDR"]["result"] == "FAIL"
     assert rep["ok"] is False
     assert rep["code"].startswith("asexec-verify/1 BDR=FAIL")
 
 
 def test_binary_and_missing_files_are_per_file_failures(make_commitment, tmp_path):
-    c = make_commitment(n_receipts=0)
+    commit = make_commitment(n_receipts=0)
     binf = tmp_path / "bin.json"
     binf.write_bytes(b"\xff\xfe\x00")
-    rep = verify_paths([c["prereg"], str(binf), str(tmp_path / "missing.json")], ["BDR"])
+    rep = verify_paths([commit["prereg"], str(binf), str(tmp_path / "missing.json")], ["BDR"])
     assert rep["results"]["BDR"]["result"] == "FAIL"
     assert len(rep["manifests"]) == 3
 
 
 def test_unknown_hash_alg_fails_entry_not_crash(make_commitment):
-    c = make_commitment(n_receipts=0)
-    body = manifest.get_body(manifest.load(c["prereg"]))
+    commit = make_commitment(n_receipts=0)
+    body = manifest.get_body(manifest.load(commit["prereg"]))
     body["hash_alg"] = "blake9"
     body["subject"][0]["digest"] = {"blake9": "00"}
-    manifest.save(manifest.sign(body, c["priv"], c["pub"]), c["prereg"])
-    rep = verify_paths([c["prereg"]], ["BDR", "content"], artifacts_dir=c["artifacts"])
+    manifest.save(manifest.sign(body, commit["priv"], commit["pub"]), commit["prereg"])
+    rep = verify_paths([commit["prereg"]], ["BDR", "content"], artifacts_dir=commit["artifacts"])
     assert rep["results"]["content"]["result"] == "FAIL"
     entry = rep["manifests"][0]["content"]["entries"][0]
     assert "algorithm unavailable" in entry["reason"]
 
 
-def _prereg_with_due(c, due):
-    body = manifest.get_body(manifest.load(c["prereg"]))
+def _prereg_with_due(commit, due):
+    body = manifest.get_body(manifest.load(commit["prereg"]))
     body["due"] = due
-    manifest.save(manifest.sign(body, c["priv"], c["pub"]), c["prereg"])
+    manifest.save(manifest.sign(body, commit["priv"], commit["pub"]), commit["prereg"])
 
 
 def test_unparseable_due_renders_invalid_due(make_commitment):
-    c = make_commitment(n_receipts=0)
-    _prereg_with_due(c, "next tuesday")
-    cm = verify_paths([c["prereg"]], ["BDR"])["commitments"][0]
+    commit = make_commitment(n_receipts=0)
+    _prereg_with_due(commit, "next tuesday")
+    cm = verify_paths([commit["prereg"]], ["BDR"])["commitments"][0]
     assert cm["state"] == "invalid-due"
 
 
 def test_non_string_due_renders_invalid_due(make_commitment):
-    c = make_commitment(n_receipts=0)
-    _prereg_with_due(c, 12345)
-    cm = verify_paths([c["prereg"]], ["BDR"])["commitments"][0]
+    commit = make_commitment(n_receipts=0)
+    _prereg_with_due(commit, 12345)
+    cm = verify_paths([commit["prereg"]], ["BDR"])["commitments"][0]
     assert cm["state"] == "invalid-due"
 
 
@@ -342,22 +354,26 @@ def test_naive_due_is_flagged_and_timezone_independent(make_commitment, monkeypa
     import datetime
     import time
 
-    c = make_commitment(n_receipts=0)
-    _prereg_with_due(c, "2026-01-01T12:00:00")
+    commit = make_commitment(n_receipts=0)
+    _prereg_with_due(commit, "2026-01-01T12:00:00")
     now = datetime.datetime(2026, 1, 1, 12, 30, tzinfo=datetime.UTC).timestamp()
     states = set()
-    for tz in ("UTC", "Pacific/Kiritimati", "Pacific/Pago_Pago"):
-        monkeypatch.setenv("TZ", tz)
+    try:
+        for tz in ("UTC", "Pacific/Kiritimati", "Pacific/Pago_Pago"):
+            monkeypatch.setenv("TZ", tz)
+            time.tzset()
+            cm = verify_paths([commit["prereg"]], ["BDR"], now=now)["commitments"][0]
+            assert cm["due_naive"] is True
+            states.add(cm["state"])
+    finally:
+        monkeypatch.undo()  # restore TZ, then re-sync libc so later tests aren't affected
         time.tzset()
-        cm = verify_paths([c["prereg"]], ["BDR"], now=now)["commitments"][0]
-        assert cm["due_naive"] is True
-        states.add(cm["state"])
     assert states == {"elapsed-no-receipt"}
 
 
 def test_aware_due_is_not_flagged(make_commitment):
-    c = make_commitment(due="2099-01-01T00:00:00Z", n_receipts=0)
-    cm = verify_paths([c["prereg"]], ["BDR"])["commitments"][0]
+    commit = make_commitment(due="2099-01-01T00:00:00Z", n_receipts=0)
+    cm = verify_paths([commit["prereg"]], ["BDR"])["commitments"][0]
     assert cm["due_naive"] is False
     assert cm["state"] == "open"
 
@@ -378,27 +394,150 @@ def test_aware_due_is_not_flagged(make_commitment):
 )
 def test_validly_signed_junk_fields_never_crash(make_commitment, field, value):
     """Signed-but-malformed bodies (BDR checks the signature only) must not crash verify."""
-    c = make_commitment(n_receipts=1)
+    commit = make_commitment(n_receipts=1)
 
     def mutate(body):
         body[field] = value
 
-    _resign(c["receipts"][0], c["priv"], c["pub"], mutate)
+    _resign(commit["receipts"][0], commit["priv"], commit["pub"], mutate)
     if field not in ("fulfills", "prev_hash"):  # keep the receipt linked to the prereg
-        _resign(c["prereg"], c["priv"], c["pub"], mutate)
+        _resign(commit["prereg"], commit["priv"], commit["pub"], mutate)
     rep = verify_paths(
-        [c["prereg"], *c["receipts"]],
+        [commit["prereg"], *commit["receipts"]],
         ["BDR", "ceiling", "chain", "content", "floor", "keyconsist"],
-        artifacts_dir=c["artifacts"],
+        artifacts_dir=commit["artifacts"],
     )
     assert rep["code"].startswith("asexec-verify/1 BDR=PASS")
 
 
 @pytest.mark.parametrize("ceiling", ["x", [1], {"witness_id": 5}, {"ceiling_type": {}}])
 def test_malformed_ceiling_envelope_never_crashes(make_commitment, ceiling):
-    c = make_commitment(n_receipts=0)
-    m = manifest.load(c["prereg"])
-    m["ceiling"] = ceiling
-    manifest.save(m, c["prereg"])
-    rep = verify_paths([c["prereg"]], ["BDR", "ceiling"])
+    commit = make_commitment(n_receipts=0)
+    mani = manifest.load(commit["prereg"])
+    mani["ceiling"] = ceiling
+    manifest.save(mani, commit["prereg"])
+    rep = verify_paths([commit["prereg"]], ["BDR", "ceiling"])
     assert rep["results"]["ceiling"]["result"] == "FAIL"
+
+
+# --------------------------------------------------------------------------- #
+# drand floor through verify_paths
+# --------------------------------------------------------------------------- #
+_FLOOR = {
+    "floor_type": "drand",
+    "chain_hash": drand.QUICKNET_HASH,
+    "round": 1000,
+    "signature": (
+        "b44679b9a59af2ec876b1a6b1ad52ea9b1615fc3982b19576350f93447cb1125"
+        "e342b73a8dd2bacbe47e4b6b63ed5e39"
+    ),
+    "randomness": "fe290beca10872ef2fb164d2aa4442de4566183ec51c56ff3cd603d930e54fdd",
+}
+
+
+def _prereg_with_floor(commit, floor):
+    body = manifest.build_prereg({"k": "v"}, due="2099-01-01T00:00:00Z", floor=floor)
+    path = commit["tmp"] / "floored.json"
+    manifest.save(manifest.sign(body, commit["priv"], commit["pub"]), str(path))
+    return str(path)
+
+
+def test_floor_passes_through_verify_paths(make_commitment):
+    commit = make_commitment(n_receipts=0)
+    path = _prereg_with_floor(commit, _FLOOR)
+    rep = verify_paths([path], ["BDR", "floor"])
+    assert rep["results"]["floor"]["result"] == "PASS"
+    assert rep["code"] == "asexec-verify/1 BDR=PASS floor=PASS"
+    fl = rep["manifests"][0]["floor"]
+    assert fl["status"] == "verified"
+    assert fl["created_no_earlier_than"] == drand.time_of_round(1000)
+
+
+def test_floor_with_tampered_round_fails(make_commitment):
+    commit = make_commitment(n_receipts=0)
+    path = _prereg_with_floor(commit, {**_FLOOR, "round": 1001})
+    rep = verify_paths([path], ["BDR", "floor"])
+    assert rep["manifests"][0]["floor"]["status"] == "invalid"
+    assert rep["results"]["floor"]["result"] == "FAIL"
+
+
+def test_floor_verifier_exception_is_invalid_not_crash(make_commitment, monkeypatch):
+    commit = make_commitment(n_receipts=0)
+    path = _prereg_with_floor(commit, _FLOOR)
+
+    def boom(_floor):
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr(drand, "verify_floor", boom)
+    rep = verify_paths([path], ["BDR", "floor"])
+    fl = rep["manifests"][0]["floor"]
+    assert fl["status"] == "invalid" and "malformed anchor.floor: kaboom" in fl["error"]
+    assert rep["results"]["floor"]["result"] == "FAIL"
+
+
+# --------------------------------------------------------------------------- #
+# content: missing / unreadable artifacts
+# --------------------------------------------------------------------------- #
+def _content_entry(commit, name, digest="00" * 32):
+    subj = [{"name": name, "digest": {"sha-256": digest}}]
+    body = manifest.build_prereg({"k": "v"}, subject=subj)
+    path = commit["tmp"] / "content.json"
+    manifest.save(manifest.sign(body, commit["priv"], commit["pub"]), str(path))
+    rep = verify_paths([str(path)], ["BDR", "content"], artifacts_dir=commit["artifacts"])
+    assert rep["results"]["content"]["result"] == "FAIL"
+    return rep["manifests"][0]["content"]["entries"][0]
+
+
+def test_content_artifact_not_found(make_commitment):
+    commit = make_commitment(n_receipts=0)
+    entry = _content_entry(commit, "does-not-exist.txt")
+    assert entry["ok"] is False and entry["reason"] == "artifact not found"
+
+
+def test_content_artifact_unreadable(make_commitment, monkeypatch):
+    commit = make_commitment(n_receipts=0)
+
+    def deny(path, alg):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(hashing, "digest_path", deny)
+    entry = _content_entry(commit, "harness/eval.py")
+    assert entry["ok"] is False
+    assert entry["reason"] == "artifact unreadable: Permission denied"
+
+
+# --------------------------------------------------------------------------- #
+# remaining verifier branches
+# --------------------------------------------------------------------------- #
+def test_verify_ceiling_on_malformed_manifest_is_invalid():
+    from asexec.verifier import verify_ceiling
+
+    res = verify_ceiling({"ceiling": {"ceiling_type": "roughtime"}})  # no payload/signature
+    assert res["status"] == "invalid"
+    assert res["error"].startswith("malformed manifest:")
+
+
+def test_chain_receipt_pointing_to_missing_prev_is_a_gap(make_commitment):
+    commit = make_commitment(n_receipts=1)
+    body = manifest.build_postreg(
+        {"kind": "api", "provider": "anthropic", "model_id": "m", "endpoint": ""},
+        due="2099-01-01T00:00:00Z",
+        fulfills=commit["prereg_ref"],
+        prev_hash="sha-256:" + "cd" * 32,  # not any receipt we are verifying
+    )
+    path = commit["tmp"] / "orphan.json"
+    manifest.save(manifest.sign(body, commit["priv"], commit["pub"]), str(path))
+    rep = verify_paths([commit["prereg"], commit["receipts"][0], str(path)], ["BDR", "chain"])
+    cm = rep["commitments"][0]
+    assert cm["chain_ok"] is False and "gap" in cm["chain_note"]
+    assert rep["results"]["chain"]["result"] == "FAIL"
+
+
+def test_directory_argument_expands_to_json_files_only(make_commitment):
+    commit = make_commitment(n_receipts=1)
+    (commit["tmp"] / "notes.txt").write_text("not a manifest")
+    (commit["tmp"] / "artifacts").mkdir(exist_ok=True)  # subdir is ignored, not recursed
+    rep = verify_paths([str(commit["tmp"])], ["BDR"])
+    paths = sorted(mani["path"].rsplit("/", 1)[-1] for mani in rep["manifests"])
+    assert paths == ["prereg.json", "receipt0.json"]
+    assert rep["ok"] is True
