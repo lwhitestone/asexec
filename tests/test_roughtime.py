@@ -11,65 +11,10 @@ from asexec.errors import VerificationError
 
 
 # --------------------------------------------------------------------------- #
-# a synthetic Roughtime server, built to roughtime.py's documented wire spec
-# --------------------------------------------------------------------------- #
-def _u32(n):
-    return struct.pack("<I", n)
-
-
-def _u64(n):
-    return struct.pack("<Q", n)
-
-
-def _leaf(nonce):
-    return hashlib.sha512(b"\x00" + nonce).digest()
-
-
-def _node(left, right):
-    return hashlib.sha512(b"\x01" + left + right).digest()
-
-
-def make_server(
-    midpoint_us=1_700_000_000_000_000, radius_us=1_000_000, mint=0, maxt=2_000_000_000_000_000
-):
-    """Return (long_term_pub, sign_response) for a synthetic Roughtime server."""
-    lt_priv, lt_pub = keys.generate()
-    on_priv, on_pub = keys.generate()
-
-    dele = roughtime.build_message({"MINT": _u64(mint), "MAXT": _u64(maxt), "PUBK": on_pub})
-    cert = roughtime.build_message(
-        {
-            "DELE": dele,
-            "SIG": keys.sign(lt_priv, roughtime.DELEGATION_CONTEXT + dele),
-        }
-    )
-
-    def sign_response(nonce, index=0, path=b"", root=None):
-        if root is None:
-            root = _leaf(nonce)
-        srep = roughtime.build_message(
-            {"RADI": _u32(radius_us), "MIDP": _u64(midpoint_us), "ROOT": root}
-        )
-        sig = keys.sign(on_priv, roughtime.RESPONSE_CONTEXT + srep)
-        return roughtime.build_message(
-            {
-                "SIG": sig,
-                "NONC": nonce,
-                "PATH": path,
-                "INDX": _u32(index),
-                "SREP": srep,
-                "CERT": cert,
-            }
-        )
-
-    return lt_pub, sign_response
-
-
-# --------------------------------------------------------------------------- #
 # message framing round-trip
 # --------------------------------------------------------------------------- #
-def test_message_roundtrip():
-    fields = {"NONC": b"\x00" * 32, "VER": _u32(1), "ZZZZ": b"\x11" * 8}
+def test_message_roundtrip(wire):
+    fields = {"NONC": b"\x00" * 32, "VER": wire.u32(1), "ZZZZ": b"\x11" * 8}
     parsed = roughtime.parse_message(roughtime.build_message(fields))
     assert parsed == fields
 
@@ -92,7 +37,7 @@ def test_parse_rejects_duplicate_tags():
         roughtime.parse_message(body)
 
 
-def test_wrong_width_uint_field_rejected():
+def test_wrong_width_uint_field_rejected(make_server):
     # a MIDP that is 4 bytes instead of 8 must be rejected, not reinterpreted.
     nonce = hashlib.sha256(b"body").digest()
     lt_pub, sign_response = make_server()
@@ -154,7 +99,7 @@ def test_real_int08h_capture_rejects_wrong_pin():
 # --------------------------------------------------------------------------- #
 # verify_response — the real protocol path
 # --------------------------------------------------------------------------- #
-def test_single_leaf_verifies():
+def test_single_leaf_verifies(make_server):
     nonce = hashlib.sha256(b"body").digest()
     lt_pub, sign_response = make_server()
     resp = sign_response(nonce)
@@ -163,18 +108,18 @@ def test_single_leaf_verifies():
     assert info["radius"] == pytest.approx(1.0)
 
 
-def test_merkle_path_verifies():
+def test_merkle_path_verifies(make_server, wire):
     # nonce at index 1 of a 2-leaf tree; sibling is the other leaf's hash.
     nonce = hashlib.sha256(b"ours").digest()
-    other = _leaf(hashlib.sha256(b"other").digest())
-    root = _node(other, _leaf(nonce))
+    other = wire.leaf(hashlib.sha256(b"other").digest())
+    root = wire.node(other, wire.leaf(nonce))
     lt_pub, sign_response = make_server()
     resp = sign_response(nonce, index=1, path=other, root=root)
     info = roughtime.verify_response(resp, nonce, lt_pub)
     assert info["midpoint"] == pytest.approx(1_700_000_000.0)
 
 
-def test_wrong_long_term_key_rejected():
+def test_wrong_long_term_key_rejected(make_server):
     nonce = hashlib.sha256(b"body").digest()
     _lt_pub, sign_response = make_server()
     _other_priv, other_pub = keys.generate()
@@ -182,7 +127,7 @@ def test_wrong_long_term_key_rejected():
         roughtime.verify_response(sign_response(nonce), nonce, other_pub)
 
 
-def test_tampered_signature_rejected():
+def test_tampered_signature_rejected(make_server):
     nonce = hashlib.sha256(b"body").digest()
     lt_pub, sign_response = make_server()
     msg = roughtime.parse_message(sign_response(nonce))
@@ -193,7 +138,7 @@ def test_tampered_signature_rejected():
         roughtime.verify_response(roughtime.build_message(msg), nonce, lt_pub)
 
 
-def test_midpoint_outside_validity_window_rejected():
+def test_midpoint_outside_validity_window_rejected(make_server):
     nonce = hashlib.sha256(b"body").digest()
     # online key only valid far in the future; the attested midpoint predates it.
     lt_pub, sign_response = make_server(
@@ -203,7 +148,7 @@ def test_midpoint_outside_validity_window_rejected():
         roughtime.verify_response(sign_response(nonce), nonce, lt_pub)
 
 
-def test_wrong_nonce_does_not_root():
+def test_wrong_nonce_does_not_root(make_server):
     nonce = hashlib.sha256(b"body").digest()
     lt_pub, sign_response = make_server()
     resp = sign_response(nonce)
@@ -215,23 +160,10 @@ def test_wrong_nonce_does_not_root():
 # --------------------------------------------------------------------------- #
 # verify_ceiling — envelope record + nonce binding + pinned-key resolution
 # --------------------------------------------------------------------------- #
-def _ceiling_for(nonce_hex, witness_id, lt_pub, sign_response):
-    resp = sign_response(bytes.fromhex(nonce_hex))
-    return {
-        "ceiling_type": "roughtime",
-        "witness_id": witness_id,
-        "pubkey": lt_pub.hex(),
-        "nonce": nonce_hex,
-        "midpoint": 1_700_000_000.0,
-        "radius": 1.0,
-        "response": resp.hex(),
-    }
-
-
-def test_verify_ceiling_ok():
+def test_verify_ceiling_ok(make_server, ceiling_for):
     nonce_hex = hashlib.sha256(b"m").hexdigest()
     lt_pub, sign_response = make_server()
-    ceiling = _ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response)
+    ceiling = ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response)
     res = roughtime.verify_ceiling(
         ceiling, "sha-256:" + nonce_hex, servers={"synthetic": {"pubkey": lt_pub}}
     )
@@ -239,10 +171,10 @@ def test_verify_ceiling_ok():
     assert res["midpoint"] == pytest.approx(1_700_000_000.0)
 
 
-def test_verify_ceiling_nonce_must_bind():
+def test_verify_ceiling_nonce_must_bind(make_server, ceiling_for):
     nonce_hex = hashlib.sha256(b"m").hexdigest()
     lt_pub, sign_response = make_server()
-    ceiling = _ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response)
+    ceiling = ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response)
     res = roughtime.verify_ceiling(
         ceiling, "sha-256:" + "aa" * 32, servers={"synthetic": {"pubkey": lt_pub}}
     )
@@ -250,18 +182,18 @@ def test_verify_ceiling_nonce_must_bind():
     assert "does not bind" in res["error"]
 
 
-def test_verify_ceiling_unpinned_witness():
+def test_verify_ceiling_unpinned_witness(make_server, ceiling_for):
     nonce_hex = hashlib.sha256(b"m").hexdigest()
     lt_pub, sign_response = make_server()
-    ceiling = _ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response)
+    ceiling = ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response)
     res = roughtime.verify_ceiling(ceiling, "sha-256:" + nonce_hex, servers={})
     assert res["status"] == "unpinned"
 
 
-def test_verify_ceiling_pubkey_must_match_pin():
+def test_verify_ceiling_pubkey_must_match_pin(make_server, ceiling_for):
     nonce_hex = hashlib.sha256(b"m").hexdigest()
     lt_pub, sign_response = make_server()
-    ceiling = _ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response)
+    ceiling = ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response)
     _other_priv, other_pub = keys.generate()
     res = roughtime.verify_ceiling(
         ceiling, "sha-256:" + nonce_hex, servers={"synthetic": {"pubkey": other_pub}}
@@ -273,18 +205,133 @@ def test_verify_ceiling_pubkey_must_match_pin():
 # --------------------------------------------------------------------------- #
 # integration: a ceiling attached to a real manifest, through verify_paths
 # --------------------------------------------------------------------------- #
-def test_ceiling_through_verify_paths(make_commitment, monkeypatch):
-    c = make_commitment(n_receipts=0)
-    mani = manifest.load(c["prereg"])
+def test_ceiling_through_verify_paths(make_commitment, monkeypatch, make_server, ceiling_for):
+    commit = make_commitment(n_receipts=0)
+    mani = manifest.load(commit["prereg"])
     body = manifest.get_body(mani)
     nonce_hex = manifest.ref(body).split(":", 1)[-1]
 
     lt_pub, sign_response = make_server()
     monkeypatch.setitem(roughtime.SERVERS, "synthetic", {"pubkey": lt_pub})
-    manifest.attach_ceiling(mani, _ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response))
-    manifest.save(mani, c["prereg"])
+    manifest.attach_ceiling(mani, ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response))
+    manifest.save(mani, commit["prereg"])
 
-    rep = verifier.verify_paths([c["prereg"]], ["BDR", "ceiling"])
+    rep = verifier.verify_paths([commit["prereg"]], ["BDR", "ceiling"])
     assert rep["results"]["ceiling"]["result"] == "PASS"
     assert rep["code"] == "asexec-verify/1 BDR=PASS ceiling=PASS"
     assert rep["ceiling_trust"] and "trusting synthetic" in rep["ceiling_trust"][0]
+
+
+# --------------------------------------------------------------------------- #
+# sign-time client: request construction + fetch_ceiling (socket mocked)
+# --------------------------------------------------------------------------- #
+def test_build_request_is_padded_and_carries_nonce_and_version(wire):
+    nonce = b"\x07" * 32
+    req = roughtime.build_request(nonce)
+    assert len(req) >= roughtime._REQUEST_MIN_LEN
+    msg = roughtime.parse_message(req)
+    assert msg["NONC"] == nonce
+    assert msg["VER"] == wire.u32(1)
+
+
+class _FakeSocket:
+    """Stands in for a UDP socket; ``reply`` is bytes to return or an Exception."""
+
+    instances: list = []
+
+    def __init__(self, reply):
+        self.reply = reply
+        self.sent = []
+        self.closed = False
+        self.timeout = None
+        _FakeSocket.instances.append(self)
+
+    def settimeout(self, timeout):
+        self.timeout = timeout
+
+    def sendto(self, data, addr):
+        self.sent.append((data, addr))
+
+    def recvfrom(self, bufsize):
+        if isinstance(self.reply, Exception):
+            raise self.reply
+        return self.reply, ("x", 0)
+
+    def close(self):
+        self.closed = True
+
+
+def _patch_sockets(monkeypatch, replies):
+    _FakeSocket.instances = []
+    it = iter(replies)
+    monkeypatch.setattr(roughtime.socket, "socket", lambda *args, **kwargs: _FakeSocket(next(it)))
+
+
+def _servers(lt_pub, count=1):
+    return {
+        f"s{index}": {"host": f"h{index}.example", "port": 2000 + index, "pubkey": lt_pub}
+        for index in range(count)
+    }
+
+
+def test_fetch_ceiling_happy_path(monkeypatch, make_server):
+    lt_pub, sign_response = make_server()
+    nonce = b"\x09" * 32
+    _patch_sockets(monkeypatch, [sign_response(nonce)])
+    got = roughtime.fetch_ceiling("sha-256:" + nonce.hex(), _servers(lt_pub), timeout=2.5)
+    assert got["ceiling_type"] == "roughtime" and got["witness_id"] == "s0"
+    assert got["nonce"] == nonce.hex() and got["pubkey"] == lt_pub.hex()
+    sock = _FakeSocket.instances[0]
+    assert sock.closed and sock.timeout == 2.5
+    ((sent, addr),) = sock.sent
+    assert addr == ("h0.example", 2000)
+    assert roughtime.parse_message(sent)["NONC"] == nonce
+    # the returned record round-trips through the offline verifier
+    monkeypatch.setitem(roughtime.SERVERS, "s0", {"pubkey": lt_pub})
+    assert roughtime.verify_ceiling(got, "sha-256:" + nonce.hex())["status"] == "verified"
+
+
+def test_fetch_ceiling_strips_udp_framing(monkeypatch, make_server, wire):
+    lt_pub, sign_response = make_server()
+    nonce = b"\x0a" * 32
+    resp = sign_response(nonce)
+    framed = b"ROUGHTIM" + wire.u32(len(resp)) + resp
+    _patch_sockets(monkeypatch, [framed])
+    got = roughtime.fetch_ceiling("sha-256:" + nonce.hex(), _servers(lt_pub))
+    assert got["response"] == resp.hex()
+
+
+def test_fetch_ceiling_falls_through_timeout_and_bad_response(monkeypatch, make_server):
+    lt_pub, sign_response = make_server()
+    nonce = b"\x0b" * 32
+    _patch_sockets(monkeypatch, [TimeoutError("timed out"), b"garbage", sign_response(nonce)])
+    got = roughtime.fetch_ceiling("sha-256:" + nonce.hex(), _servers(lt_pub, 3))
+    assert got["witness_id"] == "s2"
+    assert all(sock.closed for sock in _FakeSocket.instances)
+
+
+def test_fetch_ceiling_rejects_response_for_other_nonce(monkeypatch, make_server):
+    from asexec.errors import NetworkError
+
+    lt_pub, sign_response = make_server()
+    _patch_sockets(monkeypatch, [sign_response(b"\x01" * 32)])
+    with pytest.raises(NetworkError, match="verifiable"):
+        roughtime.fetch_ceiling("sha-256:" + "02" * 32, _servers(lt_pub))
+
+
+def test_fetch_ceiling_wrong_pinned_key_is_network_error(monkeypatch, make_server):
+    from asexec.errors import NetworkError
+
+    _, sign_response = make_server()
+    other_pub = keys.generate()[1]
+    nonce = b"\x0c" * 32
+    _patch_sockets(monkeypatch, [sign_response(nonce)])
+    with pytest.raises(NetworkError):
+        roughtime.fetch_ceiling("sha-256:" + nonce.hex(), _servers(other_pub))
+
+
+def test_fetch_ceiling_no_servers_configured():
+    from asexec.errors import NetworkError
+
+    with pytest.raises(NetworkError, match="no Roughtime servers"):
+        roughtime.fetch_ceiling("sha-256:" + "00" * 32, {})
