@@ -43,9 +43,9 @@ def test_keygen_creates_0600_key_and_pub(tmp_path):
 
 def test_keygen_refuses_to_overwrite_existing_key(tmp_path, key):
     before = open(key).read()
-    with pytest.raises(SystemExit) as exc:
+    with pytest.raises(SystemExit) as e:
         run("keygen", "--out", key)
-    assert "--force" in str(exc.value)
+    assert "--force" in str(e.value)
     assert open(key).read() == before  # untouched
 
 
@@ -79,9 +79,9 @@ def test_keys_save_does_not_follow_into_existing_file(tmp_path):
 @pytest.mark.parametrize("due", ["2026-08-30T00:00:00", "2026-08-30", "2026-08-30 12:00"])
 def test_prereg_rejects_timezone_less_due(tmp_path, key, due):
     out = tmp_path / "p.json"
-    with pytest.raises(SystemExit) as exc:
+    with pytest.raises(SystemExit) as e:
         run("prereg", "--key", key, "--target", "t", "--due", due, "--out", out)
-    assert "offset" in str(exc.value) or "timezone" in str(exc.value)
+    assert "offset" in str(e.value) or "timezone" in str(e.value)
     assert not out.exists()
 
 
@@ -113,18 +113,18 @@ def _boom(*_a, **_k):
 def test_floor_fetch_failure_fails_and_writes_nothing(tmp_path, key, monkeypatch):
     monkeypatch.setattr(drand, "fetch_floor", _boom)
     out = tmp_path / "p.json"
-    with pytest.raises(SystemExit) as exc:
+    with pytest.raises(SystemExit) as e:
         run("prereg", "--key", key, "--target", "t", "--floor", "--out", out)
-    assert "--best-effort" in str(exc.value)
+    assert "--best-effort" in str(e.value)
     assert not out.exists()
 
 
 def test_ceiling_fetch_failure_fails_and_writes_nothing(tmp_path, key, monkeypatch):
     monkeypatch.setattr(roughtime, "fetch_ceiling", _boom)
     out = tmp_path / "p.json"
-    with pytest.raises(SystemExit) as exc:
+    with pytest.raises(SystemExit) as e:
         run("prereg", "--key", key, "--target", "t", "--ceiling", "--out", out)
-    assert "--best-effort" in str(exc.value)
+    assert "--best-effort" in str(e.value)
     assert not out.exists()
 
 
@@ -155,9 +155,9 @@ def test_postreg_floor_failure_fails_by_default(tmp_path, key, prereg, monkeypat
 # --- --fulfills / --prev (finding 12) -------------------------------------- #
 def test_fulfills_typo_is_an_error(tmp_path, key):
     out = tmp_path / "po.json"
-    with pytest.raises(SystemExit) as exc:
+    with pytest.raises(SystemExit) as e:
         run("postreg", "--key", key, "--target", "t", "--fulfills", "preg.json", "--out", out)
-    assert "preg.json" in str(exc.value)
+    assert "preg.json" in str(e.value)
     assert not out.exists()
 
 
@@ -372,13 +372,13 @@ def test_identity_without_subcommand_is_usage_error():
 # --- entry points ------------------------------------------------------------ #
 def test_python_dash_m_entry_point_exits_with_main_code(monkeypatch, prereg):
     monkeypatch.setattr(sys, "argv", ["asexec", "verify", prereg, "--tests", "BDR"])
-    with pytest.raises(SystemExit) as exc:
+    with pytest.raises(SystemExit) as e:
         runpy.run_module("asexec", run_name="__main__")
-    assert exc.value.code == 0
+    assert e.value.code == 0
 
 
 def test_version_flag(capsys):
-    with pytest.raises(SystemExit) as exc:
+    with pytest.raises(SystemExit) as e:
         run("--version")
-    assert exc.value.code == 0
+    assert e.value.code == 0
     assert capsys.readouterr().out.startswith("asexec ")
