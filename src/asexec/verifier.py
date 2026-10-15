@@ -324,7 +324,7 @@ def verify_paths(
         target = body.get("fulfills")
         if isinstance(target, str) and target in preregs:
             pr = preregs[target]
-            entry = {"ref": rref, "prev_hash": body.get("prev_hash"), "keyid": sig.get("keyid")}
+            entry = {"ref": rref, "prev_hash": _link_value(body), "keyid": sig.get("keyid")}
             reason = _get_postreg_rejection_reason(sig, pr)
             if reason:
                 pr["rejected_receipts"].append({**entry, "reason": reason})
@@ -472,6 +472,19 @@ def _commitment_state(pr: dict[str, Any], now: float) -> str:
     if due_ts is None:
         return "invalid-due"
     return "elapsed-no-receipt" if now >= due_ts else "open"
+
+
+# A prev_hash that is present but not a string can never match a receipt's ref, so it is
+# recorded as this dangling marker: it reads as a gap, never as a root.
+_MALFORMED_PREV = "(malformed prev_hash)"
+
+
+def _link_value(body: dict[str, Any]) -> str | None:
+    """``body.prev_hash`` as a string link, ``None`` if absent, or the dangling marker."""
+    prev = body.get("prev_hash")
+    if prev is None or isinstance(prev, str):
+        return prev
+    return _MALFORMED_PREV
 
 
 def _check_chain(receipts: list[dict[str, Any]]):

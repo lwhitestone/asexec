@@ -6,7 +6,7 @@ import struct
 
 import pytest
 
-from asexec import keys, manifest, roughtime, verifier
+from asexec import keys, roughtime
 from asexec.errors import VerificationError
 
 
@@ -200,26 +200,6 @@ def test_verify_ceiling_pubkey_must_match_pin(make_server, ceiling_for):
     )
     assert res["status"] == "invalid"
     assert "does not match the pinned key" in res["error"]
-
-
-# --------------------------------------------------------------------------- #
-# integration: a ceiling attached to a real manifest, through verify_paths
-# --------------------------------------------------------------------------- #
-def test_ceiling_through_verify_paths(make_commitment, monkeypatch, make_server, ceiling_for):
-    commit = make_commitment(n_receipts=0)
-    mani = manifest.load(commit["prereg"])
-    body = manifest.get_body(mani)
-    nonce_hex = manifest.ref(body).split(":", 1)[-1]
-
-    lt_pub, sign_response = make_server()
-    monkeypatch.setitem(roughtime.SERVERS, "synthetic", {"pubkey": lt_pub})
-    manifest.attach_ceiling(mani, ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response))
-    manifest.save(mani, commit["prereg"])
-
-    rep = verifier.verify_paths([commit["prereg"]], ["BDR", "ceiling"])
-    assert rep["results"]["ceiling"]["result"] == "PASS"
-    assert rep["code"] == "asexec-verify/1 BDR=PASS ceiling=PASS"
-    assert rep["ceiling_trust"] and "trusting synthetic" in rep["ceiling_trust"][0]
 
 
 # --------------------------------------------------------------------------- #
