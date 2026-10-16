@@ -14,8 +14,12 @@ from __future__ import annotations
 import hashlib
 import json
 import urllib.request
+from typing import TYPE_CHECKING
 
 from .errors import NetworkError
+
+if TYPE_CHECKING:  # models imports this module (for the pinned chains)
+    from .models import FloorInput
 
 # --- pinned chain parameters (verify-time constants; never fetched) ---------
 QUICKNET_HASH = "52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971"
@@ -67,13 +71,15 @@ def fetch_round(round_no: int | None = None, chain_hash: str = DEFAULT_CHAIN) ->
         try:
             with urllib.request.urlopen(url, timeout=10) as resp:
                 data = json.load(resp)
-            return {
+            round_data = {
                 "beacon": CHAINS[chain_hash]["beacon_id"],
                 "chain_hash": chain_hash,
                 "round": int(data["round"]),
                 "randomness": data["randomness"],
                 "signature": data["signature"],
             }
+            floor_record(round_data)  # a malformed round from this mirror: try the next
+            return round_data
         except Exception as e:  # try next mirror
             last_err = e
     raise NetworkError(f"could not fetch drand round from any mirror: {last_err}")
@@ -85,15 +91,18 @@ def floor_record(round_data: dict) -> dict:
     The floor is the signed, sign-time *freshness beacon*: it proves the
     manifest was created **no earlier than** this round's public moment. It is
     a beacon (a value fixed at T, independent of the manifest), and can be
-    embedded in the signed body.
+    embedded in the signed body. Raises ``ValidationError`` if the round is not a
+    well-formed drand round (``models.Floor``).
     """
-    return {
-        "floor_type": "drand",
-        "chain_hash": round_data["chain_hash"],
-        "round": int(round_data["round"]),
-        "signature": round_data["signature"],
-        "randomness": round_data["randomness"],
-    }
+    from .models import Floor  # lazy: models imports this module (for the pinned chains)
+
+    return Floor(
+        floor_type="drand",
+        chain_hash=round_data["chain_hash"],
+        round=int(round_data["round"]),
+        signature=round_data["signature"],
+        randomness=round_data["randomness"],
+    ).model_dump(mode="json", exclude_none=True)
 
 
 def fetch_floor(chain_hash: str = DEFAULT_CHAIN) -> dict:
@@ -101,30 +110,25 @@ def fetch_floor(chain_hash: str = DEFAULT_CHAIN) -> dict:
     return floor_record(fetch_round(chain_hash=chain_hash))
 
 
-def verify_floor(floor: dict) -> dict:
-    """Offline verification of an ``anchor.floor`` record.
+def verify_floor(floor: FloorInput) -> dict:
+    """Offline verification of a parsed ``anchor.floor``: floor #4 (randomness equals
+    sha256(signature)) and #5 (BLS). Its shape is ``models.FloorInput``'s job.
 
-    Returns ``{status, ...}`` where status is ``verified`` / ``invalid`` /
-    ``unsupported`` (an unknown ``floor_type``).
+    Returns ``{status, ...}`` where status is ``verified`` / ``invalid``. Never raises.
     """
-    ftype = floor.get("floor_type")
-    if ftype != "drand":
-        return {"status": "unsupported", "floor_type": ftype}
     try:
-        chain = floor.get("chain_hash", DEFAULT_CHAIN)
-        round_no = floor["round"]
-        if type(round_no) is not int:  # no coercion: "1000" / 1000.7 are not rounds
-            raise ValueError(f"round must be an integer, got {type(round_no).__name__}")
-        ok = verify_round(round_no, floor["signature"], floor.get("randomness"), chain_hash=chain)
-        t = time_of_round(round_no, chain)
-        return {
-            "status": "verified" if ok else "invalid",
-            "floor_type": "drand",
-            "round": round_no,
-            "created_no_earlier_than": t,
-        }
-    except Exception as e:
+        ok = verify_round(
+            floor.round, floor.signature, floor.randomness, chain_hash=floor.chain_hash
+        )
+        t = time_of_round(floor.round, floor.chain_hash)
+    except Exception as e:  # e.g. a round too large for 8 bytes
         return {"status": "invalid", "error": str(e)}
+    return {
+        "status": "verified" if ok else "invalid",
+        "floor_type": "drand",
+        "round": floor.round,
+        "created_no_earlier_than": t,
+    }
 
 
 def verify_round(

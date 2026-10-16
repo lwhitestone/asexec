@@ -235,10 +235,7 @@ def verify_floor(body: dict[str, Any]) -> dict[str, Any]:
         parsed = FloorInput.model_validate(floor)  # floor #1-#4 (shape)
     except ValidationError as e:
         return _invalid(e, "floor_type")
-    try:  # floor #4 equality, #5 BLS
-        return drand.verify_floor(parsed.model_dump())
-    except Exception as e:  # e.g. a round too large for 8 bytes; never crash
-        return {"status": "invalid", "error": str(e)}
+    return drand.verify_floor(parsed)  # floor #4 equality, #5 BLS; never raises
 
 
 def verify_ceiling(
@@ -263,7 +260,7 @@ def verify_ceiling(
 
     try:  # ceiling #2 binding, #3 pin lookup, #4 equality, #5 response
         expected_nonce = manifest.ref(mani["payload"])
-        return roughtime.verify_ceiling(parsed.model_dump(), expected_nonce, servers)
+        return roughtime.verify_ceiling(parsed, expected_nonce, servers)
     except Exception as e:  # an unsigned, attacker-shaped envelope field must not crash verify
         return {"status": "invalid", "error": str(e)}
 
@@ -371,7 +368,9 @@ def verify_paths(
             "content": content,
         }
         manifests_report.append(rec)
-        links = LinkInput.model_validate(body)
+        if not clean:
+            continue  # malformed: no other test examines it, so it joins no commitment
+        links = LinkInput.model_validate({k: body[k] for k in LinkInput.model_fields if k in body})
         if links.phase == "prereg" and sig.get("ref"):
             preregs[sig["ref"]] = {
                 "ref": sig["ref"],
@@ -399,8 +398,8 @@ def verify_paths(
 
     commitments = []
     for pr in preregs.values():
-        state = _commitment_state(pr, now)
-        _, _, due_naive = _parse_due(pr.get("due"))
+        due_present, due_ts, due_naive = _parse_due(pr.get("due"))
+        state = _commitment_state(pr, now, due_present, due_ts)
         chain_ok, chain_note = _check_chain(pr["receipts"])
         key_consistent = not any(
             r["reason"].startswith("signed by a different key") for r in pr["rejected_receipts"]
@@ -518,19 +517,21 @@ def _build_code(tests: list[str], results: dict[str, dict[str, Any]]) -> str:
 
 def _get_postreg_rejection_reason(sig: dict[str, Any], prereg: dict[str, Any]) -> str | None:
     """Why a postreg that references ``prereg`` does not count toward fulfilling
-    it, or None if it counts: validly signed by the prereg's own key."""
-    if sig.get("errors") or not (sig.get("signature_ok") and sig.get("keyid_ok")):
+    it, or None if it counts: validly signed by the prereg's own key. Only a
+    well-formed postreg gets here (a malformed one joins no commitment)."""
+    if not (sig.get("signature_ok") and sig.get("keyid_ok")):
         return "invalid signature"
     if sig.get("keyid") != prereg["keyid"]:
         return "signed by a different key than the pre-registration"
     return None
 
 
-def _commitment_state(pr: dict[str, Any], now: float) -> str:
+def _commitment_state(
+    pr: dict[str, Any], now: float, due_present: bool, due_ts: float | None
+) -> str:
     if pr["receipts"]:
         return "fulfilled"
-    present, due_ts, _naive = _parse_due(pr.get("due"))
-    if not present:
+    if not due_present:
         return "open"  # no deadline declared -> cannot elapse
     if due_ts is None:
         return "invalid-due"

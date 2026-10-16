@@ -1,6 +1,7 @@
 """Manifest build/sign/ref + bedrock enforcement (asexec schema)."""
 
 import pytest
+from pydantic import ValidationError
 
 from asexec import PREDICATE_TYPE, SCHEMA_VERSION, drand, keys, manifest
 from asexec.canonical import signing_input
@@ -105,6 +106,23 @@ def test_postreg_requires_fulfills():
     body["phase"] = "postreg"  # now it's a postreg with no fulfills
     with pytest.raises(ManifestError):
         manifest.sign(body, priv, pub)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        pytest.param({"chain_hash": None}, id="null-is-not-a-default"),
+        pytest.param({"round": "1000"}, id="no-coercion"),
+        pytest.param({"signature": "zz"}, id="signature-not-hex"),
+        pytest.param({"extra": 1}, id="no-extra-fields"),
+    ],
+)
+def test_writer_floor_rejects_what_it_would_not_write(change):
+    """The writer gates what it writes: no coercion, no None-as-default, no stray field."""
+    floor = {"floor_type": "drand", "chain_hash": drand.QUICKNET_HASH, "round": 1,
+             "signature": "cd", **change}  # fmt: skip
+    with pytest.raises(ValidationError):
+        manifest.build_prereg(_target(), due=DUE, subject=_subj(), floor=floor)
 
 
 def test_floor_lands_in_anchor_and_ref_stable_across_ceiling():

@@ -55,7 +55,6 @@ import pytest
 
 from asexec import drand, hashing, keys, manifest
 from asexec.canonical import signing_input
-from asexec.errors import ManifestError
 from asexec.verifier import verify_paths
 
 TARGET = {"kind": "api", "provider": "anthropic", "model_id": "m", "endpoint": ""}
@@ -119,6 +118,7 @@ class Scenario:
         self.missing: list[str] = []  # names handed to verify without a file behind them
         self.raw: dict[str, str | bytes] = {}  # extra files written verbatim
         self.dropped: set[str] = set()  # specs derived from but not written
+        self.ungated: set[str] = set()  # specs signed without the writer's signing gate
         self._bodies: dict[str, dict] = {}
 
         self.add_prereg("prereg")
@@ -199,6 +199,12 @@ class Scenario:
         """Edit the envelope after signing (the signature no longer matches)."""
         self.post_sign.setdefault(name, []).append(fn)
 
+    def skip_writer_gate(self, *names: str) -> None:
+        """Sign these manifests (default: all) even if the writer's signing gate would
+        refuse the body, as anyone with a key could. Without this, a refused body fails
+        the test setup loudly instead of being signed by accident."""
+        self.ungated.update(names or self.specs)
+
     def drop(self, name: str) -> None:
         """Do not provide this manifest to verify (others still link to it)."""
         self.dropped.add(name)
@@ -259,7 +265,9 @@ class Scenario:
         paths = []
         for name in self.specs:
             body = self._body(name)
-            envelope = _sign(body, *self.signers.get(name, self.key))
+            envelope = _sign(
+                body, *self.signers.get(name, self.key), gated=name not in self.ungated
+            )
             record = self.ceilings.get(name)
             if record is not None:
                 nonce_hex = manifest.ref(body).split(":", 1)[-1]
@@ -302,15 +310,14 @@ class Scenario:
         return self.verify(*tests, **kwargs)["code"]
 
 
-def _sign(body: dict, priv: bytes, pub: bytes) -> dict:
-    """Sign with the production writer; a junk body its signing gate refuses (e.g. a
-    subject with a null hash_alg) is signed anyway, as anyone with a key could."""
-    try:
+def _sign(body: dict, priv: bytes, pub: bytes, *, gated: bool) -> dict:
+    """Sign with the production writer, or (``gated=False``) by hand, so a junk body its
+    signing gate refuses (e.g. a subject with a null hash_alg) is signed anyway."""
+    if gated:
         return manifest.sign(body, priv, pub)
-    except ManifestError:
-        sig = keys.sign(priv, signing_input(body))
-        signature = {"alg": "ed25519", "keyid": keys.keyid_for(pub), "pubkey": pub.hex()}
-        return {"payload": body, "signature": {**signature, "sig": sig.hex()}}
+    sig = keys.sign(priv, signing_input(body))
+    signature = {"alg": "ed25519", "keyid": keys.keyid_for(pub), "pubkey": pub.hex()}
+    return {"payload": body, "signature": {**signature, "sig": sig.hex()}}
 
 
 @pytest.fixture

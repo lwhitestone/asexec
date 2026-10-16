@@ -44,8 +44,10 @@ tests that examine it.
   vacuous and is judged `FAIL`. One that lacks them is not examined and cannot fail the
   test; it also does not count toward passing.
 - Verification is offline.
-- A file that cannot be read, is not a JSON object, or contains a duplicate JSON key at any
-  level is malformed: it fails `BDR`, and no other test examines it.
+- A file is **malformed** if it cannot be read, is not a JSON object, contains a duplicate
+  JSON key at any level, lacks an object `payload` or `signature`, or its
+  `signature.pubkey` and `signature.sig` are not both hex. It fails `BDR`, and no other test
+  examines it: it joins no commitment, so it is neither counted nor rejected.
 
 ## Summary
 

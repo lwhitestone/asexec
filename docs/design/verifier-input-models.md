@@ -50,7 +50,7 @@ a parsed object or raises `ValidationError`, which the verifier turns into a FAI
 
 | Owner | Owns |
 |---|---|
-| Input models (`models.py`, `types.py`) | Conditions decidable from one slice alone: types, required fields, literals, hex format, membership in constants fixed at import time |
+| Input models (`models.py`, `fields.py`) | Conditions decidable from one slice alone: types, required fields, literals, hex format, membership in constants fixed at import time |
 | Domain modules (`keys`, `drand`, `roughtime`, `hashing`) | Cryptographic and digest checks on parsed values |
 | Verifier (`verifier.py`) | Run rules (examined / absent / vacuous, malformed files); slicing and parsing; checks across slices (ceiling #2), across manifests (`chain`, `keyconsist`, counting rule), and on the run or install (ceiling #3 pin lookup, content #2–#6); verdicts and the code |
 
@@ -73,7 +73,7 @@ How the rule sorts the borderline cases:
 | `strict` | **`True`** (new; fixes writer coercion) | `True` |
 | Used by | `manifest.build_*`, CLI | `verifier` |
 
-They share constrained field types from a new `asexec/types.py`, so a constraint is
+They share constrained field types from a new `asexec/fields.py`, so a constraint is
 written once:
 
 ```python
@@ -90,8 +90,9 @@ Ref = str  # links are compared by string equality, not parsed (chain #2)
   that. Rounds below 1 already fail BLS (#5).
 
 Where a writer model and an input model describe the same slice (e.g. the floor), the
-writer model subclasses the input model with `extra="forbid"`. One class per slice, one
-config difference. Today's writer `Floor` uses `extra="allow"` "to keep future beacon
+writer model subclasses the input model with `extra="forbid"` and `null_is_absent = False`
+(for the writer an explicit `None` is a caller bug, never a default). One class per slice,
+two config differences. Today's writer `Floor` uses `extra="allow"` "to keep future beacon
 fields"; `floor_record` writes only known fields, so `forbid` is safe, and this design
 makes that change on purpose.
 
@@ -123,6 +124,11 @@ class FloorInput(InputModel):  # VERIFICATION.md ### floor
 | `LinkInput` | `payload.phase`, `fulfills`, `prev_hash` | chain #2 (a link is a string or absent) | chain #1–#3 graph checks |
 | `DueInput` | `payload.due` | `invalid-due` (a string) | ISO-8601 parse, timezone rule |
 
+The code checks take the parsed model, not a dict: `drand.verify_floor(FloorInput)` and
+`roughtime.verify_ceiling(CeilingInput, ...)` hold no shape checks of their own, so each
+structural rule is written once. `SubjectEntryInput` raises `TypeError` (a caller bug, not
+a FAIL) if it is validated without its `hash_alg` context.
+
 ### 4. Layered parsing in the verifier
 
 A junk floor must fail only `floor`, never `BDR` or `chain`. So nothing parses the whole
@@ -137,6 +143,10 @@ body strictly. The flow per file:
    slice: `FloorInput.model_validate(floor)`, and so on. A `ValidationError` marks that
    unit FAIL.
 5. Code checks (BLS, Roughtime, digests, graph) run on the parsed models only.
+
+A file that fails step 1 or 2, or whose signature cannot be checked at all, is
+**malformed**: no other test examines it, and it joins no commitment (it is neither a
+counted nor a rejected receipt).
 
 **Absence rule.** A property is absent iff its key is missing or its value is `null`. An
 absent property is not examined (Run rules, (\*)). Every other value is examined and either
@@ -164,6 +174,11 @@ any other model failure is `invalid`.
   seam, not an internal one: offline tests cannot get a real Roughtime response for an
   arbitrary nonce, so they pass a map of test witnesses instead of monkeypatching the
   module global.
+- Sign time, symmetrically: `drand.floor_record` builds a `models.Floor`, and
+  `drand.fetch_round` validates each mirror's round with it inside its retry loop. A
+  malformed round from one mirror tries the next; if all are malformed, the CLI gets its
+  usual `NetworkError` (and `--best-effort` applies) instead of a `ValidationError` later,
+  when the body is built.
 
 ### 6. Tests
 
@@ -229,8 +244,15 @@ Intended (each brings behavior in line with the doc):
   `true` was skipped (only a string was compared), so `ceiling` could PASS. It is present,
   so it must equal the pinned key: now FAIL. Found by the differential run below, not by
   the suite; it has its own commit and contract test.
+- **A malformed postreg joins no commitment.** One whose signature cannot be checked
+  (e.g. non-hex `signature.pubkey`) used to become a rejected receipt, which made its
+  prereg "referenced" for `keyconsist`: a prereg whose only postreg was malformed gave
+  `keyconsist=PASS`. It is now not examined, as Run rules say, so that case is a vacuous
+  FAIL. Found by the adversarial review; this was true on `main` too.
 - **Report detail (not contract):** undocumented `error` strings change. A missing or
   non-string `ceiling.witness_id` is now status `invalid` instead of `unpinned`.
+- **Writer test data:** `test_manifest.py`'s floor used `chain_hash: "ab"` as filler; the
+  strict writer refuses an unpinned chain, so it now uses the quicknet hash.
 
 Not intended, and covered by the contract suite: every other verdict and code for every
 input the suite builds. Commit 3's new contract tests, run against commit 2's `src/`, fail
@@ -243,9 +265,6 @@ odd-length respellings of every hex field. Each is verified with all six tests b
 commit. No version raises. Commit 2 matches `main` on every case. Each later commit differs
 from its parent only in the cases listed above.
 
-- **Writer test data:** `test_manifest.py`'s floor used `chain_hash: "ab"` as filler; the
-  strict writer refuses an unpinned chain, so it now uses the quicknet hash.
-
 ## Doc changes (`VERIFICATION.md`)
 
 - Header: "Authoritative implementation: `src/asexec/verifier.py`. Structural conditions
@@ -254,24 +273,30 @@ from its parent only in the cases listed above.
 - Conventions, **Hex**: hex is what `bytes.fromhex` accepts, which makes the 0.3.x
   leniency explicit; comparisons with a computed digest stay exact. Contract tests pin it
   for BDR #2, floor #3 and ceiling #4/#5: a valid value in uppercase, with spaces, passes.
-- Run rules: state the absence rule, including that `null` is absent.
+- Run rules: state the absence rule, including that `null` is absent; define a malformed
+  file as one that fails `EnvelopeInput` too (no object `payload` / `signature`, or
+  non-hex `signature.pubkey` / `signature.sig`), and say it joins no commitment.
 - Content #1: `payload.subject` is a non-empty array, and each entry's `name` is a string
   and `digest[hash_alg]` is a string. `payload.subject` joins content's *Examines* list.
 
 ## Rollout
 
-One PR: the design, then four commits, each green:
+One PR: the design, then five commits, each green:
 
 1. **Contract suite, against current code.** `scenario.set` by property path; the doc
    coverage test; the internals tests rewritten or deleted; reason assertions limited to
    documented reasons; hex leniency contract tests. No `src/` changes.
-2. **Input models.** `types.py` and input models; verifier parses through them; writer
+2. **Input models.** `fields.py` and input models; verifier parses through them; writer
    models go strict; `Ceiling` model; `verify_paths(servers=...)`; doc header. The suite
    from commit 1 passes with assertions unchanged (the `servers` fixture switches from
    monkeypatch to the parameter).
 3. **Absence rule.** Verifier change, the Run-rules doc update, and contract tests for each
    case under Behavior changes.
 4. **ceiling #4.** A present non-string `ceiling.pubkey` fails.
+5. **Review fixes.** A malformed postreg joins no commitment; fetched drand rounds are
+   validated per mirror; the domain checks take parsed models; the writer rejects `None`;
+   `SubjectEntryInput` requires its context; `types.py` is renamed `fields.py` (it
+   shadowed the stdlib module); the test fixture's signing-gate bypass is opt-in.
 
 ## Decisions
 
@@ -279,7 +304,7 @@ Resolved during review:
 
 - **Hex:** lenient (`bytes.fromhex`) in 0.3.x, strict lowercase in 0.4.0.
 - **Model location:** input models in `models.py`, grouped by family; shared types in
-  `types.py`.
+  `fields.py`.
 - **Coverage:** checked against test names parsed from `VERIFICATION.md`, not against
   model metadata.
 - **Doc pointer:** the header names both `verifier.py` and the input models (Doc changes).

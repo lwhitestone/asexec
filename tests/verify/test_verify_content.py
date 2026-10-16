@@ -60,8 +60,10 @@ def test_content__fail__1_subject_is_a_non_empty_array(scenario, subject):
 
 
 def test_content__pass__2_null_hash_alg_is_absent(scenario):
-    """content #2: a null hash_alg is absent, so it defaults to sha-256."""
+    """content #2: a null hash_alg is absent, so it defaults to sha-256. (The writer would
+    refuse to sign a subject without hash_alg; a signer need not use the writer.)"""
     scenario.mutate_all(lambda body: body.update(hash_alg=None))
+    scenario.skip_writer_gate()
     assert scenario.code("content") == PASS
 
 

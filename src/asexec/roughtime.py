@@ -65,7 +65,7 @@ import struct
 
 from . import keys
 from .errors import NetworkError, VerificationError
-from .models import Ceiling
+from .models import Ceiling, CeilingInput
 
 # --- pinned Roughtime servers (one source of truth for both verify and fetch).
 # ``pubkey`` is the long-term public key used as the VERIFY-time trust anchor (a
@@ -284,11 +284,12 @@ def verify_response(response: bytes, nonce: bytes, long_term_pubkey: bytes) -> d
 
 
 def verify_ceiling(
-    ceiling: dict[str, object],
+    ceiling: CeilingInput,
     expected_nonce: str,
     servers: dict[str, dict[str, object]] | None = None,
 ) -> dict[str, object]:
-    """Verify an envelope ``ceiling`` record and its binding to ``expected_nonce``.
+    """Verify a parsed envelope ``ceiling`` and its binding to ``expected_nonce``:
+    ceiling #2-#5 beyond their shape, which is ``models.CeilingInput``'s job.
 
     ``expected_nonce`` is the manifest's ``ref`` (``sha-256:<hex>``); the ceiling
     binds iff its nonce equals that digest. The long-term key is resolved from
@@ -298,40 +299,33 @@ def verify_ceiling(
     servers = SERVERS if servers is None else servers
     out: dict[str, object] = {
         "status": "invalid",
-        "witness_id": ceiling.get("witness_id"),
-        "midpoint": ceiling.get("midpoint"),
-        "radius": ceiling.get("radius"),
+        "witness_id": ceiling.witness_id,
+        "midpoint": getattr(ceiling, "midpoint", None),  # informational, not checked
+        "radius": getattr(ceiling, "radius", None),
     }
-    if ceiling.get("ceiling_type") != "roughtime":
-        out["status"] = "unsupported"
-        out["error"] = f"unknown ceiling_type {ceiling.get('ceiling_type')!r}"
-        return out
 
     want_hex = expected_nonce.split(":", 1)[-1]
-    if ceiling.get("nonce") != want_hex:
+    if ceiling.nonce != want_hex:
         out["error"] = "ceiling nonce does not bind to this manifest (nonce != ref)"
         return out
 
-    witness_id = ceiling.get("witness_id")
-    entry = servers.get(witness_id) if isinstance(witness_id, str) else None
+    entry = servers.get(ceiling.witness_id)
     pinned = entry.get("pubkey") if entry else None
     if not isinstance(pinned, (bytes, bytearray)):
         out["status"] = "unpinned"
         out["error"] = (
-            f"no pinned long-term key for witness {witness_id!r}; "
+            f"no pinned long-term key for witness {ceiling.witness_id!r}; "
             "cannot verify against a trust anchor"
         )
         return out
     # If the record advertises a long-term pubkey, it must match the pinned one.
-    adv = ceiling.get("pubkey")
-    if isinstance(adv, str) and bytes.fromhex(adv) != pinned:
+    if ceiling.pubkey is not None and bytes.fromhex(ceiling.pubkey) != pinned:
         out["error"] = "record long-term pubkey does not match the pinned key"
         return out
 
     try:
         nonce = bytes.fromhex(want_hex)
-        response = bytes.fromhex(ceiling["response"])  # type: ignore[index]
-        info = verify_response(response, nonce, pinned)
+        info = verify_response(bytes.fromhex(ceiling.response), nonce, pinned)
     except (VerificationError, KeyError, ValueError) as e:
         out["error"] = str(e)
         return out

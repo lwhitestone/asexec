@@ -14,8 +14,9 @@ requirement of ``docs/VERIFICATION.md`` (noted beside it); every other requireme
 every verdict, stays in ``verifier.py`` and the modules it calls. A ``null`` value is read
 as absent, the same as a missing key (VERIFICATION.md, Run rules).
 
-Where both families describe one slice, the writer model subclasses the input model and
-only forbids extra fields, so a shape is written once.
+Where both families describe one slice, the writer model subclasses the input model,
+forbids extra fields and rejects ``None`` (``null_is_absent = False``), so a shape is
+written once.
 
 Schema note (v3 term/type refactor): ``phase`` is ``prereg`` | ``postreg``;
 the commitment is expressed as a free-form ``target`` (what) plus an optional
@@ -26,7 +27,7 @@ optional (a commitment with no deadline simply stays ``open`` forever).
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import (
     BaseModel,
@@ -40,7 +41,7 @@ from pydantic import (
 )
 
 from . import PREDICATE_TYPE, SCHEMA_VERSION, drand
-from .types import Hex, Link, PinnedChain, StrictInt
+from .fields import Hex, Link, PinnedChain, StrictInt
 
 # A field the caller may express either as a plain string or as structured JSON.
 # "take what is provided and compile it" - more disclosure buys more trust, but
@@ -58,10 +59,14 @@ class InputModel(BaseModel):
 
     model_config = ConfigDict(strict=True, extra="allow")
 
+    # The writer subclasses turn this off: for them an explicit None is a caller bug,
+    # never a default.
+    null_is_absent: ClassVar[bool] = True
+
     @model_validator(mode="before")
     @classmethod
     def _null_is_absent(cls, data: Any) -> Any:
-        if isinstance(data, dict):
+        if cls.null_is_absent and isinstance(data, dict):
             return {k: v for k, v in data.items() if v is not None}
         return data
 
@@ -103,7 +108,7 @@ class CeilingInput(InputModel):
 
 
 class SubjectEntryInput(InputModel):
-    """One ``payload.subject[]`` entry (content #1). Validated with
+    """One ``payload.subject[]`` entry (content #1). Must be validated with
     ``context={"hash_alg": ...}``: ``digest[hash_alg]`` must be a string."""
 
     name: str  # content #1
@@ -112,7 +117,9 @@ class SubjectEntryInput(InputModel):
     @model_validator(mode="after")
     def _digest_for_alg(self, info: ValidationInfo) -> SubjectEntryInput:
         if info.context is None or "hash_alg" not in info.context:
-            return self  # the writer validates its digests by type instead
+            # A caller bug, not a malformed entry: TypeError is not turned into a
+            # ValidationError, so it can never pass silently as a FAIL or a PASS.
+            raise TypeError('SubjectEntryInput needs context={"hash_alg": ...}')
         alg = info.context["hash_alg"]
         if not isinstance(alg, str) or not isinstance(self.digest.get(alg), str):
             raise ValueError("digest[hash_alg] is not a string")
@@ -125,7 +132,7 @@ SubjectInput = TypeAdapter(Annotated[list[Any], Strict(), Field(min_length=1)])
 
 class LinkInput(InputModel):
     """``payload.phase`` / ``fulfills`` / ``prev_hash``: a link is a string or absent
-    (chain #2). Never fails: a non-string link is ``types.DANGLING``."""
+    (chain #2). Never fails: a non-string link is ``fields.DANGLING``."""
 
     phase: Link = None
     fulfills: Link = None
@@ -146,14 +153,20 @@ class SubjectItem(SubjectEntryInput):
     """One hashed artifact: ``{"name": ..., "digest": {alg: hexhash}}``."""
 
     model_config = ConfigDict(extra="forbid")
+    null_is_absent = False
 
     digest: dict[str, str]
+
+    @model_validator(mode="after")
+    def _digest_for_alg(self, info: ValidationInfo) -> SubjectItem:
+        return self  # every digest is typed as a string; ManifestBody pairs it with hash_alg
 
 
 class Floor(FloorInput):
     """A drand freshness floor (``anchor.floor``), as ``drand.floor_record`` writes it."""
 
     model_config = ConfigDict(extra="forbid")
+    null_is_absent = False
 
 
 class Ceiling(CeilingInput):
@@ -161,6 +174,7 @@ class Ceiling(CeilingInput):
     writes it."""
 
     model_config = ConfigDict(extra="forbid")
+    null_is_absent = False
 
     pubkey: Hex
     midpoint: float
@@ -236,6 +250,7 @@ class ManifestBody(BaseModel):
 
 class Signature(SignatureInput):
     model_config = ConfigDict(extra="forbid")
+    null_is_absent = False
 
     alg: str = "ed25519"
     keyid: str
@@ -244,6 +259,8 @@ class Signature(SignatureInput):
 class Manifest(EnvelopeInput):
     """The envelope. ``extra="allow"`` so a ceiling witness can be attached at
     the envelope level after signing without tripping validation."""
+
+    null_is_absent = False
 
     payloadType: str = "application/vnd.asexec+json"
     signature: Signature
