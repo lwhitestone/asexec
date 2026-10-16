@@ -7,6 +7,7 @@ import pytest
 
 from asexec import drand
 from asexec.errors import NetworkError
+from asexec.models import FloorInput
 
 # Real quicknet round 1000 (fetched once; verification is offline).
 ROUND = 1000
@@ -53,10 +54,11 @@ def test_round_time_roundtrip():
 
 # --- verify_floor ------------------------------------------------------------ #
 def _floor(**over):
+    """A parsed floor: its shape is FloorInput's job (covered by tests/verify/)."""
     floor = {"floor_type": "drand", "chain_hash": drand.QUICKNET_HASH, "round": ROUND,
          "signature": SIG, "randomness": RAND}  # fmt: skip
     floor.update(over)
-    return floor
+    return FloorInput.model_validate(floor)
 
 
 def test_verify_floor_accepts_real_round():
@@ -71,18 +73,6 @@ def test_verify_floor_accepts_real_round():
 
 def test_verify_floor_tampered_round_is_invalid():
     assert drand.verify_floor(_floor(round=ROUND + 1))["status"] == "invalid"
-
-
-def test_verify_floor_missing_fields_is_invalid_not_crash():
-    floor = _floor()
-    del floor["signature"]
-    res = drand.verify_floor(floor)
-    assert res["status"] == "invalid" and "error" in res
-
-
-@pytest.mark.parametrize("floor", [{}, {"floor_type": "other"}])
-def test_verify_floor_unsupported_type(floor):
-    assert drand.verify_floor(floor)["status"] == "unsupported"
 
 
 # --- fetch_round / fetch_floor (urlopen mocked) ------------------------------- #
@@ -158,6 +148,33 @@ def test_fetch_round_malformed_body_is_network_error(monkeypatch):
         drand.fetch_round(ROUND)
 
 
+@pytest.mark.parametrize(
+    "bad",
+    [
+        pytest.param({"signature": "not-hex"}, id="signature-not-hex"),
+        pytest.param({"signature": 5}, id="signature-not-string"),
+        pytest.param({"randomness": "zz"}, id="randomness-not-hex"),
+    ],
+)
+def test_fetch_round_malformed_round_falls_back_to_next_mirror(monkeypatch, bad):
+    """A mirror's malformed round is never signed into a floor: the next mirror is tried."""
+    bodies = [{"round": ROUND, "randomness": RAND, "signature": SIG, **bad}]
+    bodies.append({"round": ROUND, "randomness": RAND, "signature": SIG})
+    monkeypatch.setattr(
+        drand.urllib.request,
+        "urlopen",
+        lambda url, timeout: _Resp(json.dumps(bodies.pop(0)).encode()),
+    )
+    assert drand.fetch_floor() == _floor().model_dump()
+
+
+def test_fetch_floor_every_mirror_malformed_is_network_error(monkeypatch):
+    body = json.dumps({"round": ROUND, "randomness": RAND, "signature": "not-hex"}).encode()
+    monkeypatch.setattr(drand.urllib.request, "urlopen", lambda url, timeout: _Resp(body))
+    with pytest.raises(NetworkError, match="any mirror"):
+        drand.fetch_floor()
+
+
 def test_fetch_floor_returns_floor_record(monkeypatch):
     monkeypatch.setattr(drand.urllib.request, "urlopen", lambda url, timeout: _payload())
-    assert drand.fetch_floor() == _floor()
+    assert drand.fetch_floor() == _floor().model_dump()

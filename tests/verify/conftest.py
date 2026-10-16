@@ -13,6 +13,7 @@ One file per catalog test, plus one per cross-cutting section of the doc::
     test_verify_counting_rule.py     ## Counting rule
     test_verify_commitment_states.py ## Commitment states
     test_verify_run_rules.py         ## Conventions (Result, Code, Run rules)
+    test_verify_doc_coverage.py      every numbered item above has a fail test
 
 Within a catalog-test file the tests appear in this order, and are named::
 
@@ -27,6 +28,11 @@ every docstring starts with ``<TEST> #<N>:`` followed by the item's wording. A
 the items allow: where one item cannot be broken without another, the test says
 so), and asserts the whole code, so ``BDR=PASS`` also shows the rest still holds.
 Several documented failure modes of one item share a parametrized test.
+
+Tests are black-box: they build inputs, run ``verify_paths``, and assert what the doc
+defines (verdicts, the code, documented reasons). Invalid inputs are written as the
+doc's dotted property paths (``scenario.set(name, "payload.anchor.floor.round", "1000")``),
+never through the verifier's own models.
 
 Cross-cutting files use ``test_counting_rule__...``, ``test_state__<state>__...``,
 ``test_due__...`` and, in run rules, ``test_tests_arg__``, ``test_code__``, ``test_run__``
@@ -47,7 +53,8 @@ from typing import Any
 
 import pytest
 
-from asexec import drand, hashing, keys, manifest, roughtime
+from asexec import drand, hashing, keys, manifest
+from asexec.canonical import signing_input
 from asexec.verifier import verify_paths
 
 TARGET = {"kind": "api", "provider": "anthropic", "model_id": "m", "endpoint": ""}
@@ -88,8 +95,7 @@ class Scenario:
     unless a test deliberately overrides the link.
     """
 
-    def __init__(self, tmp_path, monkeypatch, make_server, ceiling_for):
-        self.monkeypatch = monkeypatch
+    def __init__(self, tmp_path, make_server, ceiling_for):
         self.ceiling_for = ceiling_for
         self.manifest_dir = tmp_path / "manifests"
         self.manifest_dir.mkdir()
@@ -103,7 +109,7 @@ class Scenario:
 
         self.key = keys.generate()
         self.server_pub, self.sign_response = make_server()
-        monkeypatch.setitem(roughtime.SERVERS, WITNESS_ID, {"pubkey": self.server_pub})
+        self.servers = {WITNESS_ID: {"pubkey": self.server_pub}}  # the pinned witnesses
 
         self.specs: dict[str, _Spec] = {}
         self.signers: dict[str, tuple[bytes, bytes]] = {}
@@ -112,6 +118,7 @@ class Scenario:
         self.missing: list[str] = []  # names handed to verify without a file behind them
         self.raw: dict[str, str | bytes] = {}  # extra files written verbatim
         self.dropped: set[str] = set()  # specs derived from but not written
+        self.ungated: set[str] = set()  # specs signed without the writer's signing gate
         self._bodies: dict[str, dict] = {}
 
         self.add_prereg("prereg")
@@ -147,6 +154,33 @@ class Scenario:
         """Edit a body before signing (links to later manifests follow the edit)."""
         self.specs[name].mutations.append(fn)
 
+    def set(self, name: str, path: str, value: Any) -> None:
+        """Set the property at a doc-style dotted ``path`` (from the envelope root).
+
+        ``payload.*`` is edited before signing, so the junk is validly signed; any other
+        root (``signature.*``, ``ceiling.*``) is edited after signing. Missing objects on
+        the way are created; a numeric segment indexes an array.
+        """
+        self._edit(name, path, lambda parent, key: parent.__setitem__(key, value))
+
+    def unset(self, name: str, path: str) -> None:
+        """Remove the property at a doc-style dotted ``path`` (see ``set``)."""
+        self._edit(name, path, lambda parent, key: parent.pop(key, None))
+
+    def _edit(self, name: str, path: str, op: Callable[[Any, Any], None]) -> None:
+        parts = [int(k) if k.isdigit() else k for k in path.split(".")]
+
+        def apply(envelope: Any) -> None:
+            obj = envelope
+            for key in parts[:-1]:
+                obj = obj[key] if isinstance(key, int) else obj.setdefault(key, {})
+            op(obj, parts[-1])
+
+        if parts[0] == "payload":
+            self.mutate(name, lambda body: apply({"payload": body}))
+        else:
+            self.tamper(name, apply)
+
     def mutate_all(self, fn: Callable[[dict], None]) -> None:
         for name in self.specs:
             self.mutate(name, fn)
@@ -165,6 +199,12 @@ class Scenario:
         """Edit the envelope after signing (the signature no longer matches)."""
         self.post_sign.setdefault(name, []).append(fn)
 
+    def skip_writer_gate(self, *names: str) -> None:
+        """Sign these manifests (default: all) even if the writer's signing gate would
+        refuse the body, as anyone with a key could. Without this, a refused body fails
+        the test setup loudly instead of being signed by accident."""
+        self.ungated.update(names or self.specs)
+
     def drop(self, name: str) -> None:
         """Do not provide this manifest to verify (others still link to it)."""
         self.dropped.add(name)
@@ -181,7 +221,7 @@ class Scenario:
         return (self.manifest_dir / f"{name}.json").read_text()
 
     def pin_server(self, pubkey: bytes) -> None:
-        self.monkeypatch.setitem(roughtime.SERVERS, WITNESS_ID, {"pubkey": pubkey})
+        self.servers = {WITNESS_ID: {"pubkey": pubkey}}
 
     # --- building ------------------------------------------------------------ #
     def _subject(self, names: list[str]) -> list[dict]:
@@ -225,7 +265,9 @@ class Scenario:
         paths = []
         for name in self.specs:
             body = self._body(name)
-            envelope = manifest.sign(body, *self.signers.get(name, self.key))
+            envelope = _sign(
+                body, *self.signers.get(name, self.key), gated=name not in self.ungated
+            )
             record = self.ceilings.get(name)
             if record is not None:
                 nonce_hex = manifest.ref(body).split(":", 1)[-1]
@@ -256,15 +298,28 @@ class Scenario:
     def verify(self, *tests: str, artifacts: bool = True, now: float | None = None) -> dict:
         names = ["BDR", *[t for t in tests if t != "BDR"]]
         paths = self.write()
-        report = verify_paths(
-            paths, names, artifacts_dir=str(self.artifacts) if artifacts else None, now=now
+        return verify_paths(
+            paths,
+            names,
+            artifacts_dir=str(self.artifacts) if artifacts else None,
+            now=now,
+            servers=self.servers,
         )
-        return report
 
     def code(self, *tests: str, **kwargs) -> str:
         return self.verify(*tests, **kwargs)["code"]
 
 
+def _sign(body: dict, priv: bytes, pub: bytes, *, gated: bool) -> dict:
+    """Sign with the production writer, or (``gated=False``) by hand, so a junk body its
+    signing gate refuses (e.g. a subject with a null hash_alg) is signed anyway."""
+    if gated:
+        return manifest.sign(body, priv, pub)
+    sig = keys.sign(priv, signing_input(body))
+    signature = {"alg": "ed25519", "keyid": keys.keyid_for(pub), "pubkey": pub.hex()}
+    return {"payload": body, "signature": {**signature, "sig": sig.hex()}}
+
+
 @pytest.fixture
-def scenario(tmp_path, monkeypatch, make_server, ceiling_for) -> Scenario:
-    return Scenario(tmp_path, monkeypatch, make_server, ceiling_for)
+def scenario(tmp_path, make_server, ceiling_for) -> Scenario:
+    return Scenario(tmp_path, make_server, ceiling_for)

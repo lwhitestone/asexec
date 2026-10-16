@@ -31,10 +31,14 @@ def test_state__fulfilled__at_least_one_counted_postreg(scenario):
     assert _state(scenario) == "fulfilled"
 
 
-@pytest.mark.parametrize("due", ["2099-01-01T00:00:00Z", None], ids=["future", "absent"])
+@pytest.mark.parametrize(
+    "due", ["2099-01-01T00:00:00Z", None, "null"], ids=["future", "absent", "null"]
+)
 def test_state__open__no_counted_postreg_and_due_absent_or_future(scenario, due):
-    """open: no counted postreg, and due is absent or in the future."""
-    _only_prereg(scenario, due)
+    """open: no counted postreg, and due is absent (missing or null) or in the future."""
+    _only_prereg(scenario, None if due == "null" else due)
+    if due == "null":
+        scenario.set("prereg", "payload.due", None)
     assert _state(scenario, now=NOW) == "open"
 
 
@@ -47,7 +51,11 @@ def test_state__elapsed_no_receipt__due_at_or_before_now(scenario, due):
     assert _state(scenario, now=NOW) == "elapsed-no-receipt"
 
 
-@pytest.mark.parametrize("due", ["next tuesday", 12345, ["a"]], ids=["text", "number", "list"])
+@pytest.mark.parametrize(
+    "due",
+    ["next tuesday", 12345, ["a"], "", 0, False],
+    ids=["text", "number", "list", "empty-string", "zero", "false"],
+)
 def test_state__invalid_due__due_present_but_not_iso_8601_string(scenario, due):
     """invalid-due: no counted postreg, and due is present but not a parseable ISO-8601 string."""
     _only_prereg(scenario, due)
