@@ -22,9 +22,13 @@ def test_ceiling__pass__all(sc):
     assert report["manifests"][0]["ceiling"]["status"] == "verified"
 
 
-def test_ceiling__pass__4_pubkey_may_be_absent(sc):
-    """ceiling #4: ceiling.pubkey is optional; the pinned key is used, never the file's."""
-    sc.ceilings["prereg"] = lambda nonce_hex: _record(sc, nonce_hex, pubkey=None)
+@pytest.mark.parametrize("absent", ["missing", "null"])
+def test_ceiling__pass__4_pubkey_may_be_absent(sc, absent):
+    """ceiling #4: ceiling.pubkey is optional (missing or null); the pinned key is used."""
+    if absent == "missing":
+        sc.ceilings["prereg"] = lambda nonce_hex: _record(sc, nonce_hex, pubkey=None)
+    else:
+        sc.set("prereg", "ceiling.pubkey", None)
     assert sc.code("ceiling") == PASS
 
 
@@ -71,6 +75,14 @@ def _record(sc, nonce_hex, *, pubkey=_PINNED, sign_response=None, **changes):
 def test_ceiling__fail__1_type_is_roughtime(sc):
     """ceiling #1: ceiling_type == "roughtime"."""
     sc.ceilings["prereg"] = lambda nonce_hex: _record(sc, nonce_hex, ceiling_type="ots")
+    assert sc.code("ceiling") == FAIL
+
+
+@pytest.mark.parametrize("value", [{}, [], "", False, 0], ids=["{}", "[]", "''", "false", "0"])
+def test_ceiling__fail__1_present_falsy_ceiling_is_examined(sc, value):
+    """ceiling #1: a present ceiling (anything but missing or null) needs ceiling_type. The
+    junk sits beside the prereg's valid ceiling, so were it not examined, ceiling would pass."""
+    sc.set("postreg0", "ceiling", value)
     assert sc.code("ceiling") == FAIL
 
 
@@ -140,8 +152,11 @@ def test_ceiling__fail__5_response_verifies(sc, make_server, case):
     assert sc.code("ceiling") == FAIL
 
 
-def test_ceiling__fail__vacuous_no_manifest_carries_one(scenario):
-    """ceiling (*): no manifest carries a ceiling, so the test fails rather than passing."""
+@pytest.mark.parametrize("absent", ["missing", "null"])
+def test_ceiling__fail__vacuous_no_manifest_carries_one(scenario, absent):
+    """ceiling (*): no manifest carries a ceiling (missing or null), so the test fails."""
+    if absent == "null":
+        scenario.set("prereg", "ceiling", None)
     report = scenario.verify("ceiling")
     assert report["code"] == FAIL
     assert report["results"]["ceiling"]["applicable"] == 0

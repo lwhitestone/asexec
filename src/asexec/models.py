@@ -11,7 +11,8 @@ is signed/referenced/serialized.
 are ``strict`` and ``extra="allow"``, so an unknown or future field in a published
 manifest can never break offline verification. Each field encodes one *structural*
 requirement of ``docs/VERIFICATION.md`` (noted beside it); every other requirement, and
-every verdict, stays in ``verifier.py`` and the modules it calls.
+every verdict, stays in ``verifier.py`` and the modules it calls. A ``null`` value is read
+as absent, the same as a missing key (VERIFICATION.md, Run rules).
 
 Where both families describe one slice, the writer model subclasses the input model and
 only forbids extra fields, so a shape is written once.
@@ -30,6 +31,7 @@ from typing import Annotated, Any, Literal
 from pydantic import (
     BaseModel,
     ConfigDict,
+    Field,
     Strict,
     TypeAdapter,
     ValidationInfo,
@@ -52,9 +54,16 @@ PHASES = ("prereg", "postreg")
 # input models (what the verifier reads)
 # --------------------------------------------------------------------------- #
 class InputModel(BaseModel):
-    """Base of the input models: strict, and open to unknown fields."""
+    """Base of the input models: strict, open to unknown fields, ``null`` read as absent."""
 
     model_config = ConfigDict(strict=True, extra="allow")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _null_is_absent(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            return {k: v for k, v in data.items() if v is not None}
+        return data
 
 
 class SignatureInput(InputModel):
@@ -110,8 +119,8 @@ class SubjectEntryInput(InputModel):
         return self
 
 
-# ``payload.subject`` (content #1): an array; each entry is a ``SubjectEntryInput``.
-SubjectInput = TypeAdapter(Annotated[list[Any], Strict()])
+# ``payload.subject`` (content #1): a non-empty array; each entry is a ``SubjectEntryInput``.
+SubjectInput = TypeAdapter(Annotated[list[Any], Strict(), Field(min_length=1)])
 
 
 class LinkInput(InputModel):

@@ -1,6 +1,6 @@
 # Design: strict input models for the verifier
 
-Status: proposed. Follows PR #13 (verify test reorganization). Target: 0.3.16.
+Status: implemented (this PR). Follows PR #13 (verify test reorganization). Target: 0.3.16.
 
 ## Problem
 
@@ -118,7 +118,8 @@ class FloorInput(InputModel):  # VERIFICATION.md ### floor
 | `EnvelopeInput` | file top level | BDR #1 (object, `payload` and `signature` present and objects), BDR #2 hex shape | BDR #2 signature, #3 keyid |
 | `FloorInput` | `payload.anchor.floor` | floor #1, #2, #3, #4 shape | floor #4 equality, #5 BLS |
 | `CeilingInput` | `ceiling` | ceiling #1, #3 shape (`witness_id` is a string), #4 shape | ceiling #2 binding, #3 pin lookup, #4 equality, #5 response |
-| `SubjectEntryInput` | `payload.subject[]` | content #1 | content #2–#6 |
+| `SubjectInput` (a `TypeAdapter`) | `payload.subject` | content #1 (a non-empty array) | |
+| `SubjectEntryInput` | `payload.subject[]` | content #1 (validated with `context={"hash_alg": ...}`) | content #2–#6 |
 | `LinkInput` | `payload.phase`, `fulfills`, `prev_hash` | chain #2 (a link is a string or absent) | chain #1–#3 graph checks |
 | `DueInput` | `payload.due` | `invalid-due` (a string) | ISO-8601 parse, timezone rule |
 
@@ -146,8 +147,13 @@ Today the code tests truthiness instead (`if not floor`, `if not ceiling`,
 `if not subject`, `not r["prev_hash"]`), so falsy values such as `{}`, `[]`, `""`, `false`
 and `0` count as absent. See Behavior changes.
 
+The rule applies at every level: the input models read a `null` field as absent too, so
+`chain_hash: null` takes its default and `randomness: null` / `ceiling.pubkey: null` are
+not checked. `payload.hash_alg: null` defaults to `sha-256`.
+
 `verify_paths` keeps its return shape; per-manifest `floor` / `ceiling` / `content` records
-keep their `status` values.
+keep their `status` values. A wrong `floor_type` / `ceiling_type` is still `unsupported`;
+any other model failure is `invalid`.
 
 ### 5. Ceiling model and the `servers` seam
 
@@ -201,34 +207,49 @@ Intended (each brings behavior in line with the doc):
 - **Writer:** `models.Floor` (and every writer model) rejects coerced values. A
   caller passing `round="1000"` now gets a `ValidationError` instead of a silently fixed
   manifest. `floor_record` already passes an `int`.
-- **Absence rule (section 4).** A falsy but non-null slice is examined and fails instead of
-  being skipped:
-  - `payload.anchor.floor` of `{}`, `false`, `""`, `0` or `[]`, or a non-object
+- **Absence rule (section 4).** A falsy but non-null value is present and examined:
+  - `payload.anchor.floor` of `{}`, `false`, `""`, `0` or `[]`, or a falsy non-object
     `payload.anchor` such as `[]`: `floor` FAIL (floor #1). Today these count as absent.
-  - `ceiling` of `{}` or another falsy value: `ceiling` FAIL (ceiling #1).
+  - `ceiling` of `{}`, `[]`, `""`, `false` or `0`: `ceiling` FAIL (ceiling #1).
   - `payload.prev_hash` of `""` is a link, not a root, so a postreg with it fails chain #2,
     and if it was the only root, chain #1 too.
-  - `payload.subject` of `[]`: `content` FAIL (content #1: a subject names at least one
-    artifact). Today it is skipped.
+  - `payload.subject` of `[]` or `{}`: `content` FAIL (content #1: a subject is a non-empty
+    array). Today it is skipped.
+  - `payload.due` of `""`, `0` or `false`: state `invalid-due`. Today `open`.
+- **`null` is absent inside a slice (section 4).** Two cases that failed today now take
+  their documented default:
+  - `anchor.floor.chain_hash: null` means the quicknet chain: `floor` can PASS (was FAIL).
+  - `payload.hash_alg: null` means `sha-256`: `content` can PASS (was FAIL, each
+    entry a `malformed subject entry`).
+
+  Both loosen a verdict, so they are worth a second look. Neither value is something this
+  tool writes. The alternative is to read `null` as absent only for whole slices, and
+  as a present, failing value inside them.
+- **Report detail (not contract):** undocumented `error` strings change. A missing or
+  non-string `ceiling.witness_id` is now status `invalid` instead of `unpinned`.
 
 Not intended, and covered by the contract suite: every other verdict and code for every
-input the suite builds.
+input the suite builds. Commit 3's new contract tests, run against commit 2's `src/`, fail
+on exactly the cases listed above (19 of 170) and nowhere else.
+
+- **Writer test data:** `test_manifest.py`'s floor used `chain_hash: "ab"` as filler; the
+  strict writer refuses an unpinned chain, so it now uses the quicknet hash.
 
 ## Doc changes (`VERIFICATION.md`)
 
 - Header: "Authoritative implementation: `src/asexec/verifier.py`. Structural conditions
   (types and shapes) are implemented as input models in `src/asexec/models.py`; everything
   else, and every verdict, is in the verifier and the modules it calls. Describes 0.3.16."
-- BDR #2 (and wherever else hex is required): "hex as accepted by `bytes.fromhex`", which
-  makes the 0.3.x leniency explicit. Contract tests pin it: a valid `sig` in uppercase, or
-  with spaces between byte pairs, passes.
+- Conventions, **Hex**: hex is what `bytes.fromhex` accepts, which makes the 0.3.x
+  leniency explicit; comparisons with a computed digest stay exact. Contract tests pin it
+  for BDR #2, floor #3 and ceiling #4/#5: a valid value in uppercase, with spaces, passes.
 - Run rules: state the absence rule, including that `null` is absent.
 - Content #1: `payload.subject` is a non-empty array, and each entry's `name` is a string
-  and `digest[hash_alg]` is a string.
+  and `digest[hash_alg]` is a string. `payload.subject` joins content's *Examines* list.
 
 ## Rollout
 
-One PR, three commits, each green:
+One PR: the design, then three commits, each green:
 
 1. **Contract suite, against current code.** `scenario.set` by property path; the doc
    coverage test; the internals tests rewritten or deleted; reason assertions limited to

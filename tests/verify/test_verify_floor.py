@@ -38,15 +38,23 @@ def test_floor__pass__all(sc):
     assert floor["created_no_earlier_than"] == drand.time_of_round(1000)
 
 
-def test_floor__pass__2_chain_hash_defaults_to_quicknet(sc):
-    """floor #2: an absent chain_hash means the pinned quicknet chain."""
-    _edit_floor(sc, chain_hash=None)
+@pytest.mark.parametrize("absent", ["missing", "null"])
+def test_floor__pass__2_chain_hash_defaults_to_quicknet(sc, absent):
+    """floor #2: an absent (missing or null) chain_hash means the pinned quicknet chain."""
+    if absent == "missing":
+        sc.unset("prereg", "payload.anchor.floor.chain_hash")
+    else:
+        sc.set("prereg", "payload.anchor.floor.chain_hash", None)
     assert sc.code("floor") == PASS
 
 
-def test_floor__pass__4_randomness_may_be_absent(sc):
-    """floor #4: randomness is optional; the BLS check (#5) still has to hold."""
-    _edit_floor(sc, randomness=None)
+@pytest.mark.parametrize("absent", ["missing", "null"])
+def test_floor__pass__4_randomness_may_be_absent(sc, absent):
+    """floor #4: randomness is optional (missing or null); the BLS check (#5) still holds."""
+    if absent == "missing":
+        sc.unset("prereg", "payload.anchor.floor.randomness")
+    else:
+        sc.set("prereg", "payload.anchor.floor.randomness", None)
     assert sc.code("floor") == PASS
 
 
@@ -61,12 +69,30 @@ def test_floor__pass__3_signature_hex_accepts_either_case_and_whitespace(sc):
     assert sc.code("floor") == PASS
 
 
-@pytest.mark.parametrize("case", ["floor-not-object", "type-other", "type-missing"])
+@pytest.mark.parametrize(
+    "path,value",
+    [
+        pytest.param("payload.anchor.floor", "x", id="floor-string"),
+        pytest.param("payload.anchor.floor", {}, id="floor-empty-object"),
+        pytest.param("payload.anchor.floor", [], id="floor-empty-list"),
+        pytest.param("payload.anchor.floor", "", id="floor-empty-string"),
+        pytest.param("payload.anchor.floor", False, id="floor-false"),
+        pytest.param("payload.anchor.floor", 0, id="floor-zero"),
+        pytest.param("payload.anchor", [], id="anchor-empty-list"),
+        pytest.param("payload.anchor", "x", id="anchor-string"),
+    ],
+)
+def test_floor__fail__1_floor_is_an_object(sc, path, value):
+    """floor #1: a present anchor.floor (anything but missing or null) is an object. The
+    junk sits beside the prereg's valid floor, so were it not examined, floor would pass."""
+    sc.set("postreg0", path, value)
+    assert sc.code("floor") == FAIL
+
+
+@pytest.mark.parametrize("case", ["type-other", "type-missing"])
 def test_floor__fail__1_drand_floor_object(sc, case):
     """floor #1: anchor.floor is an object and floor_type == "drand"."""
-    if case == "floor-not-object":
-        sc.set("prereg", "payload.anchor.floor", "x")
-    elif case == "type-other":
+    if case == "type-other":
         _edit_floor(sc, floor_type="other")
     else:
         _edit_floor(sc, floor_type=None)
@@ -107,8 +133,12 @@ def test_floor__fail__5_signature_verifies_for_round(sc):
     assert sc.code("floor") == FAIL
 
 
-def test_floor__fail__vacuous_no_manifest_carries_one(scenario):
-    """floor (*): no manifest carries an anchor.floor, so the test fails rather than passing."""
+@pytest.mark.parametrize("absent", ["missing", "null-floor", "null-anchor"])
+def test_floor__fail__vacuous_no_manifest_carries_one(scenario, absent):
+    """floor (*): no manifest carries an anchor.floor (missing or null), so the test fails."""
+    if absent != "missing":
+        path = {"null-floor": "payload.anchor.floor", "null-anchor": "payload.anchor"}[absent]
+        scenario.set("prereg", path, None)
     report = scenario.verify("floor")
     assert report["code"] == FAIL
     assert report["results"]["floor"]["applicable"] == 0

@@ -151,27 +151,43 @@ def parse_tests(spec: str) -> list[str]:
     return [t for t in TEST_CATALOG if t in names]
 
 
-def _parse_due(raw: Any) -> tuple[float | None, bool]:
-    """Parse a ``due`` value to ``(epoch_seconds, naive)``.
+def _parse_due(raw: Any) -> tuple[bool, float | None, bool]:
+    """Parse a ``due`` value to ``(present, epoch_seconds, naive)``.
 
     A timezone-less value is read as UTC so the result never depends on the
-    verifier's local timezone; ``naive`` flags it. ``(None, False)`` if ``due``
-    is not a parseable ISO-8601 string.
+    verifier's local timezone; ``naive`` flags it. ``epoch_seconds`` is None if
+    ``due`` is absent (missing or null) or not a parseable ISO-8601 string.
     """
     try:
         due = DueInput.model_validate({"due": raw}).due
     except ValidationError:
-        return None, False
+        return True, None, False
     if due is None:
-        return None, False
+        return False, None, False
     try:
         dt = datetime.datetime.fromisoformat(due.replace("Z", "+00:00"))
     except ValueError:
-        return None, False
+        return True, None, False
     naive = dt.tzinfo is None
     if naive:
         dt = dt.replace(tzinfo=datetime.UTC)
-    return dt.timestamp(), naive
+    return True, dt.timestamp(), naive
+
+
+def _lookup(obj: Any, *path: str) -> tuple[bool, Any]:
+    """``(present, value)`` of the property at ``path`` under ``obj`` (Run rules).
+
+    A property is absent iff its key is missing or its value is null. Any other
+    value is present, and so examined. A non-object on the way makes the property
+    present, as that non-object, so it fails its input model.
+    """
+    for key in path:
+        if not isinstance(obj, dict):
+            return True, obj
+        obj = obj.get(key)
+        if obj is None:
+            return False, None
+    return True, obj
 
 
 def verify_signature(mani: dict[str, Any]) -> dict[str, Any]:
@@ -212,9 +228,8 @@ def _invalid(error: ValidationError, type_field: str) -> dict[str, Any]:
 
 def verify_floor(body: dict[str, Any]) -> dict[str, Any]:
     """Verify the drand freshness floor at ``body.anchor.floor`` (if present)."""
-    anchor = body.get("anchor")
-    floor = anchor.get("floor") if isinstance(anchor, dict) else anchor
-    if not floor:
+    present, floor = _lookup(body, "anchor", "floor")
+    if not present:
         return {"status": "absent"}
     try:
         parsed = FloorInput.model_validate(floor)  # floor #1-#4 (shape)
@@ -237,8 +252,8 @@ def verify_ceiling(
     binding, the pin lookup in ``servers`` (default: the pinned
     ``roughtime.SERVERS``) and the witness cryptography to the ``roughtime`` module.
     """
-    ceiling = manifest.get_ceiling(mani)
-    if not ceiling:
+    present, ceiling = _lookup(mani, "ceiling")
+    if not present:
         return {"status": "absent"}
     try:
         parsed = CeilingInput.model_validate(ceiling)  # ceiling #1, #3-#5 (shape)
@@ -288,8 +303,8 @@ def _verify_subject_item(item: Any, alg: Any, artifacts_dir: str) -> dict[str, A
 def verify_content(body: dict[str, Any], artifacts_dir: str | None) -> dict[str, Any]:
     if not artifacts_dir:
         return {"status": "skipped", "reason": "no artifacts provided"}
-    subject = body.get("subject")
-    if not subject:
+    present, subject = _lookup(body, "subject")
+    if not present:
         return {"status": "skipped", "reason": "manifest has no subject"}
     try:
         SubjectInput.validate_python(subject)  # content #1 (an array of entries)
@@ -298,7 +313,8 @@ def verify_content(body: dict[str, Any], artifacts_dir: str | None) -> dict[str,
             "status": "mismatch",
             "entries": [{"name": "(subject)", "ok": False, "reason": "malformed subject"}],
         }
-    alg = body.get("hash_alg", hashing.DEFAULT_ALG)
+    present, alg = _lookup(body, "hash_alg")
+    alg = alg if present else hashing.DEFAULT_ALG
     entries = [_verify_subject_item(item, alg, artifacts_dir) for item in subject]
     return {"status": "ok" if all(e["ok"] for e in entries) else "mismatch", "entries": entries}
 
@@ -384,7 +400,7 @@ def verify_paths(
     commitments = []
     for pr in preregs.values():
         state = _commitment_state(pr, now)
-        _, due_naive = _parse_due(pr.get("due"))
+        _, _, due_naive = _parse_due(pr.get("due"))
         chain_ok, chain_note = _check_chain(pr["receipts"])
         key_consistent = not any(
             r["reason"].startswith("signed by a different key") for r in pr["rejected_receipts"]
@@ -513,31 +529,30 @@ def _get_postreg_rejection_reason(sig: dict[str, Any], prereg: dict[str, Any]) -
 def _commitment_state(pr: dict[str, Any], now: float) -> str:
     if pr["receipts"]:
         return "fulfilled"
-    due = pr.get("due")
-    if not due:
+    present, due_ts, _naive = _parse_due(pr.get("due"))
+    if not present:
         return "open"  # no deadline declared -> cannot elapse
-    due_ts, _naive = _parse_due(due)
     if due_ts is None:
         return "invalid-due"
     return "elapsed-no-receipt" if now >= due_ts else "open"
 
 
 def _check_chain(receipts: list[dict[str, Any]]):
-    """A prev_hash chain: exactly one root (prev_hash null), each other points
+    """A prev_hash chain: exactly one root (no prev_hash), each other points
     to a present receipt, and no receipt has more than one successor (a single
     linear chain: no forks, no cycles)."""
     if not receipts:
         return True, "no receipts"
     refs = {r["ref"] for r in receipts}
-    roots = [r for r in receipts if not r["prev_hash"]]
+    roots = [r for r in receipts if r["prev_hash"] is None]
     if len(roots) != 1:
         return False, f"expected exactly one chain root, found {len(roots)}"
     successors: dict[Any, int] = {}
     for r in receipts:
         prev = r["prev_hash"]
-        if prev and prev not in refs:
+        if prev is not None and prev not in refs:
             return False, "a receipt's prev_hash points to a missing receipt (gap)"
-        if prev:
+        if prev is not None:
             successors[prev] = successors.get(prev, 0) + 1
     if any(n > 1 for n in successors.values()):
         return False, "a receipt has more than one successor (fork)"

@@ -54,6 +54,8 @@ from typing import Any
 import pytest
 
 from asexec import drand, hashing, keys, manifest
+from asexec.canonical import signing_input
+from asexec.errors import ManifestError
 from asexec.verifier import verify_paths
 
 TARGET = {"kind": "api", "provider": "anthropic", "model_id": "m", "endpoint": ""}
@@ -166,17 +168,18 @@ class Scenario:
         self._edit(name, path, lambda parent, key: parent.pop(key, None))
 
     def _edit(self, name: str, path: str, op: Callable[[Any, Any], None]) -> None:
-        root, *parts = [int(k) if k.isdigit() else k for k in path.split(".")]
+        parts = [int(k) if k.isdigit() else k for k in path.split(".")]
 
-        def apply(obj: Any) -> None:
+        def apply(envelope: Any) -> None:
+            obj = envelope
             for key in parts[:-1]:
                 obj = obj[key] if isinstance(key, int) else obj.setdefault(key, {})
             op(obj, parts[-1])
 
-        if root == "payload":
-            self.mutate(name, apply)
+        if parts[0] == "payload":
+            self.mutate(name, lambda body: apply({"payload": body}))
         else:
-            self.tamper(name, lambda envelope: apply(envelope[root]))
+            self.tamper(name, apply)
 
     def mutate_all(self, fn: Callable[[dict], None]) -> None:
         for name in self.specs:
@@ -256,7 +259,7 @@ class Scenario:
         paths = []
         for name in self.specs:
             body = self._body(name)
-            envelope = manifest.sign(body, *self.signers.get(name, self.key))
+            envelope = _sign(body, *self.signers.get(name, self.key))
             record = self.ceilings.get(name)
             if record is not None:
                 nonce_hex = manifest.ref(body).split(":", 1)[-1]
@@ -297,6 +300,17 @@ class Scenario:
 
     def code(self, *tests: str, **kwargs) -> str:
         return self.verify(*tests, **kwargs)["code"]
+
+
+def _sign(body: dict, priv: bytes, pub: bytes) -> dict:
+    """Sign with the production writer; a junk body its signing gate refuses (e.g. a
+    subject with a null hash_alg) is signed anyway, as anyone with a key could."""
+    try:
+        return manifest.sign(body, priv, pub)
+    except ManifestError:
+        sig = keys.sign(priv, signing_input(body))
+        signature = {"alg": "ed25519", "keyid": keys.keyid_for(pub), "pubkey": pub.hex()}
+        return {"payload": body, "signature": {**signature, "sig": sig.hex()}}
 
 
 @pytest.fixture
