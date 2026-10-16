@@ -98,7 +98,7 @@ class CeilingInput(InputModel):
     ceiling_type: Literal["roughtime"]  # ceiling #1
     nonce: str  # ceiling #2 (shape; the binding to ref(payload) is code)
     witness_id: str  # ceiling #3 (shape; the pin lookup is code)
-    pubkey: Any = None  # ceiling #4 (a non-string is not compared, as before this model)
+    pubkey: Hex | None = None  # ceiling #4 (shape; the equality is code)
     response: Hex  # ceiling #5 (shape; the response check is code)
 
 

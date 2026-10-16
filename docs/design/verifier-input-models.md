@@ -225,12 +225,23 @@ Intended (each brings behavior in line with the doc):
   Both loosen a verdict, so they are worth a second look. Neither value is something this
   tool writes. The alternative is to read `null` as absent only for whole slices, and
   as a present, failing value inside them.
+- **ceiling #4, non-string `ceiling.pubkey`.** A present `pubkey` such as `{}`, `1` or
+  `true` was skipped (only a string was compared), so `ceiling` could PASS. It is present,
+  so it must equal the pinned key: now FAIL. Found by the differential run below, not by
+  the suite; it has its own commit and contract test.
 - **Report detail (not contract):** undocumented `error` strings change. A missing or
   non-string `ceiling.witness_id` is now status `invalid` instead of `unpinned`.
 
 Not intended, and covered by the contract suite: every other verdict and code for every
 input the suite builds. Commit 3's new contract tests, run against commit 2's `src/`, fail
-on exactly the cases listed above (19 of 170) and nowhere else.
+on exactly the absence-rule cases listed above (19 of 170) and nowhere else.
+
+**Differential run.** 498 commitments, each with one signed (or post-sign) junk edit: 30
+property paths × 16 values (`null`, `{}`, `[]`, `""`, `false`, `0`, `1`, `-1`, `1.5`,
+`true`, `"x"`, `"ZZ"`, `[1]`, `{"a": 1}`, `2**70`, deleted) plus uppercase / spaced /
+odd-length respellings of every hex field. Each is verified with all six tests by every
+commit. No version raises. Commit 2 matches `main` on every case. Each later commit differs
+from its parent only in the cases listed above.
 
 - **Writer test data:** `test_manifest.py`'s floor used `chain_hash: "ab"` as filler; the
   strict writer refuses an unpinned chain, so it now uses the quicknet hash.
@@ -249,7 +260,7 @@ on exactly the cases listed above (19 of 170) and nowhere else.
 
 ## Rollout
 
-One PR: the design, then three commits, each green:
+One PR: the design, then four commits, each green:
 
 1. **Contract suite, against current code.** `scenario.set` by property path; the doc
    coverage test; the internals tests rewritten or deleted; reason assertions limited to
@@ -260,6 +271,7 @@ One PR: the design, then three commits, each green:
    monkeypatch to the parameter).
 3. **Absence rule.** Verifier change, the Run-rules doc update, and contract tests for each
    case under Behavior changes.
+4. **ceiling #4.** A present non-string `ceiling.pubkey` fails.
 
 ## Decisions
 

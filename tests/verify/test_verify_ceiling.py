@@ -108,6 +108,13 @@ def test_ceiling__fail__4_present_pubkey_equals_pinned(sc):
     assert sc.code("ceiling") == FAIL
 
 
+@pytest.mark.parametrize("value", [{}, [], 0, 1, True, ["a"]], ids=repr)
+def test_ceiling__fail__4_present_pubkey_equals_pinned__not_a_string(sc, value):
+    """ceiling #4: a present non-string ceiling.pubkey cannot equal the pinned key."""
+    sc.set("prereg", "ceiling.pubkey", value)
+    assert sc.code("ceiling") == FAIL
+
+
 def _tamper_srep(sc):
     """A response whose SREP changed after the delegated key signed it."""
 
