@@ -112,14 +112,15 @@ def verify_floor(floor: dict) -> dict:
         return {"status": "unsupported", "floor_type": ftype}
     try:
         chain = floor.get("chain_hash", DEFAULT_CHAIN)
-        ok = verify_round(
-            int(floor["round"]), floor["signature"], floor.get("randomness"), chain_hash=chain
-        )
-        t = time_of_round(int(floor["round"]), chain)
+        round_no = floor["round"]
+        if type(round_no) is not int:  # no coercion: "1000" / 1000.7 are not rounds
+            raise ValueError(f"round must be an integer, got {type(round_no).__name__}")
+        ok = verify_round(round_no, floor["signature"], floor.get("randomness"), chain_hash=chain)
+        t = time_of_round(round_no, chain)
         return {
             "status": "verified" if ok else "invalid",
             "floor_type": "drand",
-            "round": int(floor["round"]),
+            "round": round_no,
             "created_no_earlier_than": t,
         }
     except Exception as e:
