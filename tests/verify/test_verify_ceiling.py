@@ -20,12 +20,35 @@ def test_ceiling__pass__all(sc):
     report = sc.verify("ceiling")
     assert report["code"] == PASS
     assert report["manifests"][0]["ceiling"]["status"] == "verified"
-    assert "trusting synthetic" in report["ceiling_trust"][0]
 
 
 def test_ceiling__pass__4_pubkey_may_be_absent(sc):
     """ceiling #4: ceiling.pubkey is optional; the pinned key is used, never the file's."""
     sc.ceilings["prereg"] = lambda nonce_hex: _record(sc, nonce_hex, pubkey=None)
+    assert sc.code("ceiling") == PASS
+
+
+def _respelled(sc, field):
+    """A valid record whose hex ``field`` is uppercased, with a space between bytes."""
+
+    def build(nonce_hex):
+        record = _record(sc, nonce_hex)
+        upper = record[field].upper()
+        record[field] = upper[:8] + " " + upper[8:]
+        return record
+
+    return build
+
+
+def test_ceiling__pass__4_pubkey_hex_accepts_either_case_and_whitespace(sc):
+    """ceiling #4: pubkey is hex as bytes.fromhex accepts it (Conventions, Hex)."""
+    sc.ceilings["prereg"] = _respelled(sc, "pubkey")
+    assert sc.code("ceiling") == PASS
+
+
+def test_ceiling__pass__5_response_hex_accepts_either_case_and_whitespace(sc):
+    """ceiling #5: response is hex as bytes.fromhex accepts it (Conventions, Hex)."""
+    sc.ceilings["prereg"] = _respelled(sc, "response")
     assert sc.code("ceiling") == PASS
 
 

@@ -14,7 +14,7 @@ def test_chain__pass__all(scenario):
     """chain #1-#3: one root, every other prev_hash is a counted postreg, no forks."""
     report = scenario.verify("chain")
     assert report["code"] == PASS
-    assert report["commitments"][0]["chain_note"] == "chain intact"
+    assert report["commitments"][0]["chain_ok"] is True
 
 
 def test_chain__pass__single_postreg(scenario):
@@ -39,9 +39,7 @@ def test_chain__fail__1_exactly_one_root__no_root(scenario):
 def test_chain__fail__2_prev_hash_is_a_counted_postreg__missing_link(scenario):
     """chain #2: a prev_hash pointing at a postreg that was not provided is a gap."""
     scenario.drop("postreg1")
-    report = scenario.verify("chain")
-    assert report["code"] == FAIL
-    assert "gap" in report["commitments"][0]["chain_note"]
+    assert scenario.code("chain") == FAIL
 
 
 def test_chain__fail__2_prev_hash_is_a_counted_postreg__other_commitment(scenario):
@@ -49,9 +47,7 @@ def test_chain__fail__2_prev_hash_is_a_counted_postreg__other_commitment(scenari
     scenario.add_prereg("other")
     scenario.add_postreg("other_postreg", fulfills="other")
     scenario.link("postreg2", prev="other_postreg")
-    report = scenario.verify("chain")
-    assert report["code"] == FAIL
-    assert "gap" in report["commitments"][0]["chain_note"]
+    assert scenario.code("chain") == FAIL
 
 
 @pytest.mark.parametrize(
@@ -66,18 +62,14 @@ def test_chain__fail__2_prev_hash_is_a_counted_postreg__other_commitment(scenari
 )
 def test_chain__fail__2_prev_hash_is_a_counted_postreg__not_a_string(scenario, junk):
     """chain #2: a non-string prev_hash links to nothing. It is a gap, never a root."""
-    scenario.mutate("postreg1", lambda body: body.update(prev_hash=junk))
-    report = scenario.verify("chain")
-    assert report["code"] == FAIL
-    assert "gap" in report["commitments"][0]["chain_note"]
+    scenario.set("postreg1", "payload.prev_hash", junk)
+    assert scenario.code("chain") == FAIL
 
 
 def test_chain__fail__3_no_prev_hash_shared__fork(scenario):
     """chain #3: no ref is the prev_hash of more than one counted postreg."""
     scenario.add_postreg("postreg1b", prev="postreg0", transcript="transcript1.txt")
-    report = scenario.verify("chain")
-    assert report["code"] == FAIL
-    assert "fork" in report["commitments"][0]["chain_note"]
+    assert scenario.code("chain") == FAIL
 
 
 def test_chain__fail__vacuous_no_counted_postreg(scenario):

@@ -20,17 +20,13 @@ def sc(scenario):
 
 
 def _edit_floor(sc, **changes):
-    """Change ``anchor.floor`` fields after the body is built; a value of None deletes one."""
-
-    def mutate(body):
-        floor = body["anchor"]["floor"]
-        for key, value in changes.items():
-            if value is None:
-                floor.pop(key, None)
-            else:
-                floor[key] = value
-
-    sc.mutate("prereg", mutate)
+    """Change ``payload.anchor.floor`` fields (signed); a value of None deletes one."""
+    for key, value in changes.items():
+        path = f"payload.anchor.floor.{key}"
+        if value is None:
+            sc.unset("prereg", path)
+        else:
+            sc.set("prereg", path, value)
 
 
 def test_floor__pass__all(sc):
@@ -54,11 +50,22 @@ def test_floor__pass__4_randomness_may_be_absent(sc):
     assert sc.code("floor") == PASS
 
 
+def test_floor__pass__3_signature_hex_accepts_either_case_and_whitespace(sc):
+    """floor #3: signature is hex as bytes.fromhex accepts it (Conventions, Hex)."""
+
+    def respell(body):
+        sig = body["anchor"]["floor"]["signature"].upper()
+        body["anchor"]["floor"]["signature"] = sig[:8] + " " + sig[8:]
+
+    sc.mutate("prereg", respell)
+    assert sc.code("floor") == PASS
+
+
 @pytest.mark.parametrize("case", ["floor-not-object", "type-other", "type-missing"])
 def test_floor__fail__1_drand_floor_object(sc, case):
     """floor #1: anchor.floor is an object and floor_type == "drand"."""
     if case == "floor-not-object":
-        sc.mutate("prereg", lambda body: body.update(anchor={"floor": "x"}))
+        sc.set("prereg", "payload.anchor.floor", "x")
     elif case == "type-other":
         _edit_floor(sc, floor_type="other")
     else:

@@ -13,6 +13,7 @@ One file per catalog test, plus one per cross-cutting section of the doc::
     test_verify_counting_rule.py     ## Counting rule
     test_verify_commitment_states.py ## Commitment states
     test_verify_run_rules.py         ## Conventions (Result, Code, Run rules)
+    test_verify_doc_coverage.py      every numbered item above has a fail test
 
 Within a catalog-test file the tests appear in this order, and are named::
 
@@ -27,6 +28,11 @@ every docstring starts with ``<TEST> #<N>:`` followed by the item's wording. A
 the items allow: where one item cannot be broken without another, the test says
 so), and asserts the whole code, so ``BDR=PASS`` also shows the rest still holds.
 Several documented failure modes of one item share a parametrized test.
+
+Tests are black-box: they build inputs, run ``verify_paths``, and assert what the doc
+defines (verdicts, the code, documented reasons). Invalid inputs are written as the
+doc's dotted property paths (``scenario.set(name, "payload.anchor.floor.round", "1000")``),
+never through the verifier's own models.
 
 Cross-cutting files use ``test_counting_rule__...``, ``test_state__<state>__...``,
 ``test_due__...`` and, in run rules, ``test_tests_arg__``, ``test_code__``, ``test_run__``
@@ -146,6 +152,32 @@ class Scenario:
     def mutate(self, name: str, fn: Callable[[dict], None]) -> None:
         """Edit a body before signing (links to later manifests follow the edit)."""
         self.specs[name].mutations.append(fn)
+
+    def set(self, name: str, path: str, value: Any) -> None:
+        """Set the property at a doc-style dotted ``path`` (from the envelope root).
+
+        ``payload.*`` is edited before signing, so the junk is validly signed; any other
+        root (``signature.*``, ``ceiling.*``) is edited after signing. Missing objects on
+        the way are created; a numeric segment indexes an array.
+        """
+        self._edit(name, path, lambda parent, key: parent.__setitem__(key, value))
+
+    def unset(self, name: str, path: str) -> None:
+        """Remove the property at a doc-style dotted ``path`` (see ``set``)."""
+        self._edit(name, path, lambda parent, key: parent.pop(key, None))
+
+    def _edit(self, name: str, path: str, op: Callable[[Any, Any], None]) -> None:
+        root, *parts = [int(k) if k.isdigit() else k for k in path.split(".")]
+
+        def apply(obj: Any) -> None:
+            for key in parts[:-1]:
+                obj = obj[key] if isinstance(key, int) else obj.setdefault(key, {})
+            op(obj, parts[-1])
+
+        if root == "payload":
+            self.mutate(name, apply)
+        else:
+            self.tamper(name, lambda envelope: apply(envelope[root]))
 
     def mutate_all(self, fn: Callable[[dict], None]) -> None:
         for name in self.specs:

@@ -46,7 +46,7 @@ def test_content__pass__all(scenario):
 )
 def test_content__fail__1_entry_is_well_formed(scenario, entry):
     """content #1: name is a string and digest[hash_alg] is a string."""
-    scenario.mutate("prereg", lambda body: body.update(subject=[entry]))
+    scenario.set("prereg", "payload.subject", [entry])
     report = scenario.verify("content")
     assert report["code"] == FAIL
     assert _entry_reasons(report) == ["malformed subject entry"]

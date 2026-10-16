@@ -18,6 +18,11 @@ paths from the envelope root, e.g. `payload.anchor.floor.round`, `signature.keyi
 `payload.phase == "postreg"`. `ref(m)` is `sha-256:<hex>` over the canonical bytes of
 `m.payload`.
 
+**Hex.** A value required to be hex is a string that `bytes.fromhex` accepts: an even
+number of hex digits in either case, with ASCII whitespace allowed around and between bytes. Where a
+requirement compares a value to a computed digest (ceiling #2, floor #4), the comparison is
+exact against the lowercase hex of the digest.
+
 **Result.** Each requested test yields exactly one of `PASS` / `FAIL`. There is no third
 value and no error state. Malformed input is never an exception: it is a failure of the
 tests that examine it.
