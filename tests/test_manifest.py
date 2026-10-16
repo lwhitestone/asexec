@@ -2,7 +2,7 @@
 
 import pytest
 
-from asexec import PREDICATE_TYPE, SCHEMA_VERSION, keys, manifest
+from asexec import PREDICATE_TYPE, SCHEMA_VERSION, drand, keys, manifest
 from asexec.canonical import signing_input
 from asexec.errors import ManifestError
 
@@ -111,7 +111,7 @@ def test_floor_lands_in_anchor_and_ref_stable_across_ceiling():
     priv, pub = keys.generate()
     floor = {
         "floor_type": "drand",
-        "chain_hash": "ab",
+        "chain_hash": drand.QUICKNET_HASH,
         "round": 1,
         "signature": "cd",
         "randomness": "ef",

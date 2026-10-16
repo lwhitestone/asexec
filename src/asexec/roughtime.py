@@ -65,6 +65,7 @@ import struct
 
 from . import keys
 from .errors import NetworkError, VerificationError
+from .models import Ceiling
 
 # --- pinned Roughtime servers (one source of truth for both verify and fetch).
 # ``pubkey`` is the long-term public key used as the VERIFY-time trust anchor (a
@@ -386,15 +387,15 @@ def fetch_ceiling(
                 sock.close()
             response = _strip_framing(data)
             info = verify_response(response, nonce, pubkey)
-            return {
-                "ceiling_type": "roughtime",
-                "witness_id": witness_id,
-                "pubkey": pubkey.hex(),
-                "nonce": nonce.hex(),
-                "midpoint": info["midpoint"],
-                "radius": info["radius"],
-                "response": response.hex(),
-            }
+            return Ceiling(
+                ceiling_type="roughtime",
+                witness_id=witness_id,
+                pubkey=pubkey.hex(),
+                nonce=nonce.hex(),
+                midpoint=info["midpoint"],
+                radius=info["radius"],
+                response=response.hex(),
+            ).model_dump(mode="json")
         except Exception as e:  # try the next server
             last_err = e
     raise NetworkError(f"no Roughtime server produced a verifiable response: {last_err}")

@@ -1,14 +1,20 @@
-"""Pydantic models for asexec manifest bodies and envelopes.
+"""Pydantic models for asexec manifest bodies and envelopes, in two families.
 
-These give typed construction and validation of manifests. They do not participate
-in the cryptography: signing is always over the canonical bytes of a plain ``dict``
-(see ``canonical.py``). A model is built, validated, then dumped to a dict via
-:meth:`ManifestBody.to_body` (``mode="json"``, ``exclude_none=True``) before it is
-signed/referenced/serialized.
+**Writer models** (``ManifestBody``, ``Floor``, ``Ceiling``, ...) gate what this tool
+writes: ``strict`` (no coercion) and ``extra="forbid"`` (a stray field is a caller bug).
+They do not participate in the cryptography: signing is always over the canonical bytes
+of a plain ``dict`` (see ``canonical.py``). A model is built, validated, then dumped to a
+dict via :meth:`ManifestBody.to_body` (``mode="json"``, ``exclude_none=True``) before it
+is signed/referenced/serialized.
 
-The verifier reads raw dicts, never these models, so an unknown or future field
-in a published manifest can never break offline verification - the models only
-gate what this tool writes.
+**Input models** (``*Input``) parse what the verifier reads, one slice at a time. They
+are ``strict`` and ``extra="allow"``, so an unknown or future field in a published
+manifest can never break offline verification. Each field encodes one *structural*
+requirement of ``docs/VERIFICATION.md`` (noted beside it); every other requirement, and
+every verdict, stays in ``verifier.py`` and the modules it calls.
+
+Where both families describe one slice, the writer model subclasses the input model and
+only forbids extra fields, so a shape is written once.
 
 Schema note (v3 term/type refactor): ``phase`` is ``prereg`` | ``postreg``;
 the commitment is expressed as a free-form ``target`` (what) plus an optional
@@ -19,11 +25,20 @@ optional (a commitment with no deadline simply stays ``open`` forever).
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Strict,
+    TypeAdapter,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
-from . import PREDICATE_TYPE, SCHEMA_VERSION
+from . import PREDICATE_TYPE, SCHEMA_VERSION, drand
+from .types import Hex, Link, PinnedChain, StrictInt
 
 # A field the caller may express either as a plain string or as structured JSON.
 # "take what is provided and compile it" - more disclosure buys more trust, but
@@ -33,30 +48,118 @@ Freeform = str | dict[str, Any]
 PHASES = ("prereg", "postreg")
 
 
-class SubjectItem(BaseModel):
+# --------------------------------------------------------------------------- #
+# input models (what the verifier reads)
+# --------------------------------------------------------------------------- #
+class InputModel(BaseModel):
+    """Base of the input models: strict, and open to unknown fields."""
+
+    model_config = ConfigDict(strict=True, extra="allow")
+
+
+class SignatureInput(InputModel):
+    """``signature`` (VERIFICATION.md ### BDR)."""
+
+    pubkey: Hex  # BDR #2
+    sig: Hex  # BDR #2
+    keyid: Any = None  # BDR #3 compares it to the derived keyid; any other value fails there
+
+
+class EnvelopeInput(InputModel):
+    """The file's top level (BDR #1). ``payload`` stays a dict: its slices are parsed on
+    demand, so a junk floor fails only ``floor``."""
+
+    payload: dict[str, Any]
+    signature: SignatureInput
+
+
+class FloorInput(InputModel):
+    """``payload.anchor.floor`` (VERIFICATION.md ### floor)."""
+
+    floor_type: Literal["drand"]  # floor #1
+    chain_hash: PinnedChain = drand.DEFAULT_CHAIN  # floor #2
+    round: StrictInt  # floor #3
+    signature: Hex  # floor #3
+    randomness: Hex | None = None  # floor #4 (shape; the equality is code)
+
+
+class CeilingInput(InputModel):
+    """``ceiling`` (VERIFICATION.md ### ceiling)."""
+
+    ceiling_type: Literal["roughtime"]  # ceiling #1
+    nonce: str  # ceiling #2 (shape; the binding to ref(payload) is code)
+    witness_id: str  # ceiling #3 (shape; the pin lookup is code)
+    pubkey: Any = None  # ceiling #4 (a non-string is not compared, as before this model)
+    response: Hex  # ceiling #5 (shape; the response check is code)
+
+
+class SubjectEntryInput(InputModel):
+    """One ``payload.subject[]`` entry (content #1). Validated with
+    ``context={"hash_alg": ...}``: ``digest[hash_alg]`` must be a string."""
+
+    name: str  # content #1
+    digest: dict[str, Any]  # content #1
+
+    @model_validator(mode="after")
+    def _digest_for_alg(self, info: ValidationInfo) -> SubjectEntryInput:
+        if info.context is None or "hash_alg" not in info.context:
+            return self  # the writer validates its digests by type instead
+        alg = info.context["hash_alg"]
+        if not isinstance(alg, str) or not isinstance(self.digest.get(alg), str):
+            raise ValueError("digest[hash_alg] is not a string")
+        return self
+
+
+# ``payload.subject`` (content #1): an array; each entry is a ``SubjectEntryInput``.
+SubjectInput = TypeAdapter(Annotated[list[Any], Strict()])
+
+
+class LinkInput(InputModel):
+    """``payload.phase`` / ``fulfills`` / ``prev_hash``: a link is a string or absent
+    (chain #2). Never fails: a non-string link is ``types.DANGLING``."""
+
+    phase: Link = None
+    fulfills: Link = None
+    prev_hash: Link = None
+
+
+class DueInput(InputModel):
+    """``payload.due``: a string or absent (Commitment states, ``invalid-due``). The
+    ISO-8601 parse stays in the verifier."""
+
+    due: str | None = None
+
+
+# --------------------------------------------------------------------------- #
+# writer models (what this tool writes)
+# --------------------------------------------------------------------------- #
+class SubjectItem(SubjectEntryInput):
     """One hashed artifact: ``{"name": ..., "digest": {alg: hexhash}}``."""
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str
     digest: dict[str, str]
 
 
-class Floor(BaseModel):
-    """A drand freshness floor (``anchor.floor``). ``extra="allow"`` keeps any
-    future beacon fields verbatim through a round-trip."""
+class Floor(FloorInput):
+    """A drand freshness floor (``anchor.floor``), as ``drand.floor_record`` writes it."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
-    floor_type: str
-    chain_hash: str | None = None
-    round: int | None = None
-    signature: str | None = None
-    randomness: str | None = None
+
+class Ceiling(CeilingInput):
+    """A Roughtime ceiling witness (envelope ``ceiling``), as ``roughtime.fetch_ceiling``
+    writes it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pubkey: Hex
+    midpoint: float
+    radius: float
 
 
 class Anchor(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(strict=True, extra="forbid")
 
     floor: Floor | None = None
 
@@ -68,7 +171,7 @@ class ManifestBody(BaseModel):
     is a bug in the caller, not something to sign silently.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(strict=True, extra="forbid")
 
     # structural bedrock - the format frame
     schema_version: str = SCHEMA_VERSION
@@ -122,21 +225,16 @@ class ManifestBody(BaseModel):
         return self.model_dump(mode="json", exclude_none=True)
 
 
-class Signature(BaseModel):
+class Signature(SignatureInput):
     model_config = ConfigDict(extra="forbid")
 
     alg: str = "ed25519"
     keyid: str
-    pubkey: str
-    sig: str
 
 
-class Manifest(BaseModel):
+class Manifest(EnvelopeInput):
     """The envelope. ``extra="allow"`` so a ceiling witness can be attached at
     the envelope level after signing without tripping validation."""
 
-    model_config = ConfigDict(extra="allow")
-
     payloadType: str = "application/vnd.asexec+json"
-    payload: dict[str, Any]
     signature: Signature

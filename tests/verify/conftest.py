@@ -53,7 +53,7 @@ from typing import Any
 
 import pytest
 
-from asexec import drand, hashing, keys, manifest, roughtime
+from asexec import drand, hashing, keys, manifest
 from asexec.verifier import verify_paths
 
 TARGET = {"kind": "api", "provider": "anthropic", "model_id": "m", "endpoint": ""}
@@ -94,8 +94,7 @@ class Scenario:
     unless a test deliberately overrides the link.
     """
 
-    def __init__(self, tmp_path, monkeypatch, make_server, ceiling_for):
-        self.monkeypatch = monkeypatch
+    def __init__(self, tmp_path, make_server, ceiling_for):
         self.ceiling_for = ceiling_for
         self.manifest_dir = tmp_path / "manifests"
         self.manifest_dir.mkdir()
@@ -109,7 +108,7 @@ class Scenario:
 
         self.key = keys.generate()
         self.server_pub, self.sign_response = make_server()
-        monkeypatch.setitem(roughtime.SERVERS, WITNESS_ID, {"pubkey": self.server_pub})
+        self.servers = {WITNESS_ID: {"pubkey": self.server_pub}}  # the pinned witnesses
 
         self.specs: dict[str, _Spec] = {}
         self.signers: dict[str, tuple[bytes, bytes]] = {}
@@ -213,7 +212,7 @@ class Scenario:
         return (self.manifest_dir / f"{name}.json").read_text()
 
     def pin_server(self, pubkey: bytes) -> None:
-        self.monkeypatch.setitem(roughtime.SERVERS, WITNESS_ID, {"pubkey": pubkey})
+        self.servers = {WITNESS_ID: {"pubkey": pubkey}}
 
     # --- building ------------------------------------------------------------ #
     def _subject(self, names: list[str]) -> list[dict]:
@@ -288,15 +287,18 @@ class Scenario:
     def verify(self, *tests: str, artifacts: bool = True, now: float | None = None) -> dict:
         names = ["BDR", *[t for t in tests if t != "BDR"]]
         paths = self.write()
-        report = verify_paths(
-            paths, names, artifacts_dir=str(self.artifacts) if artifacts else None, now=now
+        return verify_paths(
+            paths,
+            names,
+            artifacts_dir=str(self.artifacts) if artifacts else None,
+            now=now,
+            servers=self.servers,
         )
-        return report
 
     def code(self, *tests: str, **kwargs) -> str:
         return self.verify(*tests, **kwargs)["code"]
 
 
 @pytest.fixture
-def scenario(tmp_path, monkeypatch, make_server, ceiling_for) -> Scenario:
-    return Scenario(tmp_path, monkeypatch, make_server, ceiling_for)
+def scenario(tmp_path, make_server, ceiling_for) -> Scenario:
+    return Scenario(tmp_path, make_server, ceiling_for)

@@ -1,7 +1,9 @@
 # Verification catalog
 
 Reference for every test accepted by `asexec verify --tests`. Authoritative implementation:
-`src/asexec/verifier.py`. Describes 0.3.15.
+`src/asexec/verifier.py`. Structural requirements (types and shapes) are implemented as the
+input models in `src/asexec/models.py`; everything else, and every verdict, is in the
+verifier and the modules it calls. Describes 0.3.16.
 
 ```
 asexec verify <manifest|dir>... --tests <name>[,<name>...] [--artifacts <dir>]
