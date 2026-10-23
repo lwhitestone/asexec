@@ -224,22 +224,8 @@ disclose is the practitioner's call.
     "provenance": "reproducible",                    // asserted | reproducible
     "repro_recipe": { "seed": 42, "decode": "greedy", "runtime": "vllm 0.9" },
     "notes": "free-form text or JSON"
-  },
-  "signature": {                                     // required
-    "alg": "ed25519",
-    "keyid": "sha-256:8f3e0a91…",                    // required: sha-256 of pubkey
-    "pubkey": "d75a9801…",                           // required
-    "sig": "e5564300…"                               // required
-  },
-  "ceiling": {                                       // Roughtime (--ceiling): not after
-    "ceiling_type": "roughtime",
-    "witness_id": "int08h-Roughtime",
-    "pubkey": "016e6e02…",
-    "nonce": "5e9a7c44…",                            // = ref(payload)
-    "midpoint": 1787234400.0,
-    "radius": 1.0,
-    "response": "0400000040…"
   }
+  // "signature" (required) and "ceiling": same shape as in the prereg
 }
 ```
 
