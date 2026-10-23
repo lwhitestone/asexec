@@ -2,7 +2,7 @@
 
 How `asexec` is set up, checked, built and released. The project uses
 [`uv`](https://docs.astral.sh/uv/) and the `uv_build` backend; linting and formatting use
-[Ruff](https://docs.astral.sh/ruff/); tests use pytest. Supported Python: 3.11 and 3.12.
+[Ruff](https://docs.astral.sh/ruff/); tests use pytest. Supported Python: 3.12 through 3.14; CI tests each of them.
 
 ## Local setup
 

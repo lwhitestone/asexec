@@ -16,7 +16,6 @@ import sys
 import uuid
 from collections.abc import Callable
 from datetime import datetime
-from typing import TypeVar
 
 from . import __version__, drand, hashing, identity, keys, manifest, verifier
 from .errors import VerificationError
@@ -24,7 +23,6 @@ from .errors import VerificationError
 REF_RE = re.compile(r"sha-256:[0-9a-f]{64}")
 OK = "✓"
 NO = "✗"
-T = TypeVar("T")
 
 
 # --------------------------------------------------------------------------- #
@@ -39,7 +37,7 @@ def _load_json(path: str) -> str | dict:
         raise SystemExit(f"error: {path} must contain valid JSON: {e}") from e
 
 
-def _get_arg_or_file(
+def _get_arg_or_file[T](
     args, arg_name: str, file_arg_name: str, load_file: Callable[[str], T]
 ) -> str | T | None:
     """Load a value from either ``--<arg>`` or ``--<file-arg>``, but not both."""
