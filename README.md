@@ -101,8 +101,11 @@ test:
 
 ## Installation
 
+Requires Python 3.12 or later.
+
 ```bash
-pip install asexec # ed25519 (PyNaCl) + BLS verification for drand (py_ecc)
+pip install asexec            # ed25519 (PyNaCl) + BLS verification for drand (py_ecc)
+pip install 'asexec[blake3]'  # optional: blake3 as a content-hash algorithm
 ```
 
 ## Usage
@@ -115,11 +118,11 @@ asexec keygen --out lab.key   # refuses to overwrite an existing key unless --fo
 asexec prereg --key lab.key \
     --subject ./harness \
     --target "claude-opus-4-8 via the anthropic API" \
-    --due 2026-08-30T00:00:00Z \
+    --due 2099-01-01T00:00:00Z \
     --declaration "all runs of this harness against this model, in full" \
     --out preregistration.json
 
-# 3. Practitioner, AFTER each run: post-register a receipt of the inputs
+# 3. Practitioner, AFTER each run: post-register a receipt of the run
 asexec postreg --key lab.key --fulfills preregistration.json \
     --subject ./transcript.txt ./harness \
     --out postregistration.json
@@ -130,7 +133,7 @@ asexec verify preregistration.json postregistration.json \
     --tests BDR,content,chain,keyconsist --artifacts .
 ```
 
-`--due` must carry an explicit UTC offset or `Z` (`2026-08-30T00:00:00Z`); a timezone-less
+`--due` must carry an explicit UTC offset or `Z` (`2099-01-01T00:00:00Z`); a timezone-less
 deadline is rejected. `--fulfills` and `--prev` take an existing manifest file or a literal
 `sha-256:<64 hex>` ref; anything else is an error.
 
@@ -152,19 +155,15 @@ Grammar (`asexec-verify/1` versions the code format): the literal prefix, then o
 single-space delimited. The same result set is byte-identical everywhere.
 
 - You declare your appetite. `--tests` is required and must include
-  [`BDR`](./docs/VERIFICATION.md#bdr) (bedrock - the mandatory minimum: signature + keyid).
-  Everything else is opt-in: [`content`](./docs/VERIFICATION.md#content) (subject digests
-  vs. `--artifacts`), [`chain`](./docs/VERIFICATION.md#chain) (`prev_hash` integrity),
-  [`keyconsist`](./docs/VERIFICATION.md#keyconsist) (postregs share the prereg's key),
-  [`floor`](./docs/VERIFICATION.md#floor) (drand freshness),
-  [`ceiling`](./docs/VERIFICATION.md#ceiling) (Roughtime witness).
+  [`BDR`](./docs/VERIFICATION.md#bdr); every other test is opt-in (see
+  [What `asexec` can prove](#what-asexec-can-prove-optional-fields-and-tests)).
 - Named, not scored, so it's forward-compatible. Because the code names which tests
   ran, adding a test in a later version can never change the meaning of an older code. A code
   means exactly one thing, permanently.
 - A requested test that applies nowhere is `FAIL`, never a silent omission (e.g.
   `--tests BDR,ceiling` on manifests with no ceiling -> `ceiling=FAIL`).
 - The code is not a certificate. Real verification comes from the verifier running the tool
-  against the files and get the code.
+  against the files and getting the code.
 
 ## Manifest at a glance
 
@@ -182,7 +181,7 @@ disclose is the practitioner's call.
     "predicateType": "https://asexec.dev/manifest",  // required
     "phase": "prereg",                               // required: prereg | postreg
     "target": "claude-opus-4-8 via the anthropic API", // required: text or JSON
-    "due": "2026-08-30T00:00:00Z",                   // deadline; none = stays open
+    "due": "2099-01-01T00:00:00Z",                   // deadline; none = stays open
     "declaration": "all runs of this harness against this model, in full", // text or JSON
     "subject": [                                     // artifacts, hashed
       { "name": "harness/", "digest": { "sha-256": "2c26b46b…" } }
@@ -228,7 +227,7 @@ disclose is the practitioner's call.
     "predicateType": "https://asexec.dev/manifest",  // required
     "phase": "postreg",                              // required: prereg | postreg
     "target": "claude-opus-4-8 via the anthropic API", // required: text or JSON
-    "due": "2026-08-30T00:00:00Z",                   // deadline; none = stays open
+    "due": "2099-01-01T00:00:00Z",                   // deadline; none = stays open
     "declaration": "all runs of this harness against this model, in full", // text or JSON
     "subject": [                                     // artifacts, hashed
       { "name": "transcript.txt", "digest": { "sha-256": "9f86d081…" } },
@@ -292,8 +291,8 @@ There are a few opt-in registration paths that use a network connection:
 If a requested `--floor`/`--ceiling` fetch fails, signing fails and nothing is written.
 Pass `--best-effort` to warn and sign without the anchor instead.
 
-The `asexec identity` check loop is also network-dependent, as it is explicitly a domain-
-ownership check. It exists outside registration verification as an opt-in helper.
+`asexec identity` is network-dependent too, since it checks domain ownership; it is an
+opt-in helper outside `verify`.
 
 ## Prior art and related projects
 
@@ -305,7 +304,7 @@ ownership check. It exists outside registration verification as an opt-in helper
 - [drand](https://drand.love/) and the
   [League of Entropy](https://www.cloudflare.com/leagueofentropy/)
 
-## Development and Releases
+## Development and releases
 
 Local setup, checks, CI, and the tag-triggered release pipeline (TestPyPI, then PyPI after
 manual approval) are documented in [`docs/DEVELOPMENT.md`](./docs/DEVELOPMENT.md).
@@ -317,25 +316,8 @@ scripts/dev-setup.sh   # one-time setup
 scripts/check.sh       # lint + format check + tests
 ```
 
-How the verifier is built, and how to change it:
-
-- [`docs/VERIFICATION.md`](./docs/VERIFICATION.md) is the contract. A model decides whether
-  one slice of JSON is well-formed; the verifier decides everything else, including every
-  verdict. Each *structural* requirement (types, shapes, literals, hex, pinned constants)
-  is a field on a strict pydantic input model in `models.py` (shared field types in
-  `fields.py`). Cryptographic, filesystem and cross-manifest checks stay as code that runs
-  on the parsed models. A model never returns PASS or FAIL: it parses or raises, and the
-  verifier turns that into a FAIL. Malformed input is never an exception.
-- Input models are `strict` and `extra="allow"`, so a future field never breaks offline
-  verification, and read `null` as absent. Where a writer model describes the same slice, it
-  subclasses the input model, forbids extra fields and rejects `None`, so a shape is
-  written once.
-- `tests/verify/` is a black-box contract test of `VERIFICATION.md`: it calls
-  `verify_paths` or the CLI and never imports the input models. Valid inputs come from the
-  production writer; invalid ones are written as dotted property paths
-  (`scenario.set("payload.anchor.floor.round", "1000")`), never built with the models, so a
-  wrong model cannot produce a matching wrong input. A coverage test requires a failing
-  test (`test_<name>__fail__<n>_...`) for every numbered requirement in the doc.
+How the verifier is built, and how to change it, is in
+[`docs/DEVELOPMENT.md`](./docs/DEVELOPMENT.md#verifier-architecture).
 
 ## Author
 

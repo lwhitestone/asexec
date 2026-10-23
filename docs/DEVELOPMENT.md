@@ -27,6 +27,26 @@ again after pulling dependency changes. It does not run lint or tests.
 `scripts/check.sh` runs `ruff check`, `ruff format --check` (no files modified) and
 `pytest -v`. Tests are offline: the drand round is baked in as a fixture.
 
+## Verifier architecture
+
+- [`docs/VERIFICATION.md`](./docs/VERIFICATION.md) is the contract. A model decides whether
+  one slice of JSON is well-formed; the verifier decides everything else, including every
+  verdict. Each *structural* requirement (types, shapes, literals, hex, pinned constants)
+  is a field on a strict pydantic input model in `models.py` (shared field types in
+  `fields.py`). Cryptographic, filesystem and cross-manifest checks stay as code that runs
+  on the parsed models. A model never returns PASS or FAIL: it parses or raises, and the
+  verifier turns that into a FAIL. Malformed input is never an exception.
+- Input models are `strict` and `extra="allow"`, so a future field never breaks offline
+  verification, and read `null` as absent. Where a writer model describes the same slice, it
+  subclasses the input model, forbids extra fields and rejects `None`, so a shape is
+  written once.
+- `tests/verify/` is a black-box contract test of `VERIFICATION.md`: it calls
+  `verify_paths` or the CLI and never imports the input models. Valid inputs come from the
+  production writer; invalid ones are written as dotted property paths
+  (`scenario.set("payload.anchor.floor.round", "1000")`), never built with the models, so a
+  wrong model cannot produce a matching wrong input. A coverage test requires a failing
+  test (`test_<name>__fail__<n>_...`) for every numbered requirement in the doc.
+
 ## Continuous integration (`.github/workflows/ci.yml`)
 
 Runs on pushes to `main`, on pull requests, and when called by `publish.yml`. It never
