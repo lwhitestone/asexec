@@ -295,13 +295,15 @@ Pass `--best-effort` to warn and sign without the anchor instead.
 The `asexec identity` check loop is also network-dependent, as it is explicitly a domain-
 ownership check. It exists outside registration verification as an opt-in helper.
 
-## Prior art and related projects 
+## Prior art and related projects
 
-[AsPredicted](https://aspredicted.org)/[OSF](https://osf.io/) pre-registration,
-[ClinicalTrials.gov](https://clinicaltrials.gov/) + the
-[FDAAA TrialsTracker](https://fdaaa.trialstracker.net/),
-[OpenTimestamps](https://opentimestamps.org/), [in-toto](https://in-toto.io/)/[DSSE](https://github.com/secure-systems-lab/dsse),
-[drand](https://drand.love/)/[League of Entropy](https://www.cloudflare.com/leagueofentropy/).
+- [AsPredicted](https://aspredicted.org), [OSF](https://osf.io/) (pre-registration)
+- [ClinicalTrials.gov](https://clinicaltrials.gov/) and the
+  [FDAAA TrialsTracker](https://fdaaa.trialstracker.net/)
+- [OpenTimestamps](https://opentimestamps.org/)
+- [in-toto](https://in-toto.io/) and [DSSE](https://github.com/secure-systems-lab/dsse)
+- [drand](https://drand.love/) and the
+  [League of Entropy](https://www.cloudflare.com/leagueofentropy/)
 
 ## Development and Releases
 
