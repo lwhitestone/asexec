@@ -52,8 +52,9 @@ in the form of `asexec verify` providing a code regarding the checks applied.
   used to tell `open` from `elapsed-no-receipt`*, but `asexec` does **not** check that a
   post-registration was created before `due`; that check (`timely`) arrives in 0.4.0.
 - A manifest was created no earlier than a public moment (floor "freshness" check, offered by
-  `drand`).
-- A manifest was created no later than time T (ceiling "witness" check, offered by `Roughtime`;
+  [drand](https://drand.love/)).
+- A manifest was created no later than time T (ceiling "witness" check, offered by
+  [Roughtime](https://datatracker.ietf.org/doc/draft-ietf-ntp-roughtime/);
   a signature-witness, not proof-of-work).
 
 **`asexec` does not prove**:
@@ -229,7 +230,8 @@ disclose is the practitioner's call.
 }
 ```
 
-`sig` signs a DSSE-style PAE encoding of `payload` (in-toto field names, not the tooling).
+`sig` signs a [DSSE](https://github.com/secure-systems-lab/dsse)-style [PAE](https://github.com/secure-systems-lab/dsse/blob/master/protocol.md#signature-definition)
+(pre-authentication encoding) of `payload`, borrowing [in-toto](https://in-toto.io/) field names.
 A postreg carries its prereg's `target`, `due` and `declaration`, links back with `fulfills`
 (the prereg's ref, which is also its ceiling `nonce`) and `prev_hash`, and, from the CLI,
 adds `provenance` and `repro_recipe`. The ceiling sits outside the signed `payload` because
@@ -270,8 +272,11 @@ ownership check. It exists outside registration verification as an opt-in helper
 
 ## Prior art and related projects 
 
-AsPredicted/OSF pre-registration, ClinicalTrials.gov + the FDAAA TrialsTracker,
-OpenTimestamps, in-toto/DSSE, drand/League of Entropy.
+[AsPredicted](https://aspredicted.org)/[OSF](https://osf.io/) pre-registration,
+[ClinicalTrials.gov](https://clinicaltrials.gov/) + the
+[FDAAA TrialsTracker](https://fdaaa.trialstracker.net/),
+[OpenTimestamps](https://opentimestamps.org/), [in-toto](https://in-toto.io/)/[DSSE](https://github.com/secure-systems-lab/dsse),
+[drand](https://drand.love/)/[League of Entropy](https://www.cloudflare.com/leagueofentropy/).
 
 ## Development and Releases
 
