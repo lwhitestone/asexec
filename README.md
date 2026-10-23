@@ -3,12 +3,19 @@
 **Pre-registered attestations for AI executions. Tamper-evident and independently verifiable.**
 How it works in a nutshell: a practitioner attests to invoking AI *before* the outcome is known,
 then publishes records of what actually happened. Anyone with the records can verify nothing was
-changed and whether any assertions hold up. Benefits: as a practitioner, using `asexec` signals
-intellectual honesty, transparency, and a commitment to responsible disclosure, as you can no
-longer withhold results (which might not appear favorable on their own) without your non-disclosure
-becoming public. This makes any results you publish more meaningful to your audience, who can
-now "trust, but verify" your claims. As a consumer, you now have the power to pressure-test
-claims that controllers of generative AI systems may make.
+changed and whether any assertions hold up.
+
+**Benefits:**
+- As a practitioner, using `asexec` signals intellectual honesty, transparency, and a commitment to
+responsible disclosure, as you can no longer withhold results (which might not appear favorable on
+their own) without your non-disclosure becoming public. This makes any results you publish more
+meaningful to your audience, who can now "trust, but verify" your claims.
+- As a watchdog, you now have the power to pressure-test claims that controllers of generative AI
+systems may make. A practitioner refusing to pre-register their executions serves as its own red
+flag.
+- As a consumer, you now have increased confidence that quality and safety problems are caught,
+because practitioners are more transparent with watchdogs, who actually have the incentive to
+notify you when issues arise.
 
 It is the "as executed" counterpart to pre-registration ([as predicted](https://aspredicted.org)),
 borrowing the commit-then-reveal mechanism from clinical-trial pre-registration and applying it to
