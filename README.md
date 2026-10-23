@@ -192,6 +192,26 @@ scripts/dev-setup.sh   # one-time setup
 scripts/check.sh       # lint + format check + tests
 ```
 
+How the verifier is built, and how to change it:
+
+- [`docs/VERIFICATION.md`](./docs/VERIFICATION.md) is the contract. A model decides whether
+  one slice of JSON is well-formed; the verifier decides everything else, including every
+  verdict. Each *structural* requirement (types, shapes, literals, hex, pinned constants)
+  is a field on a strict pydantic input model in `models.py` (shared field types in
+  `fields.py`). Cryptographic, filesystem and cross-manifest checks stay as code that runs
+  on the parsed models. A model never returns PASS or FAIL: it parses or raises, and the
+  verifier turns that into a FAIL. Malformed input is never an exception.
+- Input models are `strict` and `extra="allow"`, so a future field never breaks offline
+  verification, and read `null` as absent. Where a writer model describes the same slice, it
+  subclasses the input model, forbids extra fields and rejects `None`, so a shape is
+  written once.
+- `tests/verify/` is a black-box contract test of `VERIFICATION.md`: it calls
+  `verify_paths` or the CLI and never imports the input models. Valid inputs come from the
+  production writer; invalid ones are written as dotted property paths
+  (`scenario.set("payload.anchor.floor.round", "1000")`), never built with the models, so a
+  wrong model cannot produce a matching wrong input. A coverage test requires a failing
+  test (`test_<name>__fail__<n>_...`) for every numbered requirement in the doc.
+
 ## Author
 
 Designed by Luke Whitestone. Check out my other projects at: **[lukewhitest.one](https://lukewhitest.one/)**.
@@ -221,21 +241,24 @@ explicitly not scheduled (hosted transparency log, identity binding/CA).
 > newer one. (0.2.0 rebalanced the schema in a breaking way by design.) Stability begins at
 > `1.0.0`, which is neither defined nor planned yet.
 
-## Known issues (0.3.x alpha)
+## Known issues
 
-Fixed in 0.3.15: see [`ROADMAP.md`](./ROADMAP.md) for the full list. The following remain
-(format-level fixes arrive in 0.4.0). Until then, treat `asexec verify` output with these
-caveats:
+Fixed issues are listed in [`ROADMAP.md`](./ROADMAP.md). The following remain (format-level
+fixes arrive in 0.4.0). Until then, treat `asexec verify` output with these caveats:
 
 **Commitment state and chain**
 - Dropping the *last* receipt(s) of a chain is undetectable, and timeliness is not checked:
   a post-registration created after `due` still renders `fulfilled`.
-- A manifest whose `due` has no timezone (only possible from manifests signed before 0.3.15)
-  is read as UTC and flagged in the report.
+- A manifest whose `due` has no timezone (the writer no longer produces one) is read as UTC
+  and flagged in the report.
 
 **Input handling**
-- `BDR` checks the signature only; any signed JSON object passes, whether or not it is a
-  well-formed asexec manifest.
+- `BDR` checks only the envelope (an object `payload` and a `signature` with hex `pubkey`
+  and `sig`) and the signature. Any validly signed payload object passes, whether or not it
+  is a well-formed asexec manifest body; the body is checked only slice by slice, by the
+  tests that examine it.
+- Hex is lenient: any spelling `bytes.fromhex` accepts (either case, whitespace between
+  bytes) is read as hex. This tool writes only lowercase; strict lowercase arrives in 0.4.0.
 - Directory hashing (v1) is ambiguous on POSIX: a filename containing a newline can make two
   different trees hash identically. Symlinks are skipped silently.
 
