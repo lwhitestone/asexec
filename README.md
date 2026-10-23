@@ -262,6 +262,34 @@ adds `provenance` and `repro_recipe`. The ceiling sits outside the signed `paylo
 its nonce is the payload's own hash; the floor sits inside it, because a value fixed before
 signing can be signed.
 
+## Keys
+
+`asexec keygen --out lab.key` writes two files:
+
+| File | Contains | Secret? |
+|---|---|---|
+| `lab.key` | ed25519 private key (hex, **unencrypted**), public key, `keyid` | **Yes.** Written mode `0600` on Unix |
+| `lab.key.pub` | public key and `keyid` (`sha-256:` of the public key) | No. It is also in every manifest you sign |
+
+**Why it matters.** A post-registration counts toward a pre-registration only if the same key
+signed both. So:
+
+- **Lose the key** and your open commitments can never be fulfilled: they stay `open`, or
+  turn `elapsed-no-receipt` once `due` passes. Back it up offline (e.g. in an encrypted
+  password manager or vault) before you pre-register.
+- **Leak the key** and anyone can sign pre- and post-registrations as you, including
+  post-registrations that count toward your commitments. `asexec` has no revocation: stop
+  using the key, say so publicly, and remove it from your
+  [identity](#identity-optional-domain-control-check-no-ca) `.well-known` file.
+
+**Handling.**
+- Never commit it (`*.key` in `.gitignore`) or print it in logs. In CI, keep it in the secret
+  store and write it to a `0600` file only for the signing step.
+- On Windows, file modes are not applied; restrict the file's ACL yourself.
+- `keygen` refuses to overwrite an existing key; `--force` replaces it and the old key is gone.
+- A key is your pseudonym: every manifest it signs is linkable to the others. Use separate keys
+  for identities you want kept apart.
+
 ## Identity (optional domain control check, no CA)
 
 ```bash
