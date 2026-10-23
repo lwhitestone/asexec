@@ -203,6 +203,11 @@ Runtime today is 13 packages; `py_ecc` alone roots 10 (`eth-utils`,
   witnesses.
 - **Multi-party co-signing** at prereg; **structured regulatory
   cross-reference** field — add when a concrete need appears.
+- **Roughtime interop beyond int08h.** Keys for four IETF-Roughtime servers are pinned
+  from the ecosystem list, but the wire format is reconciled only against a live
+  `int08h-Roughtime` capture (baked as an offline fixture). The other three were
+  unreachable during capture (UDP egress, not a known format mismatch), so their interop is
+  expected but unproven; `--ceiling` fails safe if a server's variant differs.
 - **Process (not releases):** team/customer usage after dogfooding; a
   verification website as a *separate* repo, buildable by anyone from the
   spec alone.

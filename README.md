@@ -341,22 +341,8 @@ Designed by Luke Whitestone. Check out my other projects at: **[lukewhitest.one]
 
 ## Status
 
-Currently: **0.3.x - alpha.** Realigns the vocabulary and hardens the types (breaking, no back-compat):
-`prereg`/`postreg` commands + phases, a free-form `target` (the only mandatory claim), an
-optional `due` deadline + `declaration`, opt-in drand `--floor`, the `BDR` bedrock code
-token, and Pydantic-typed manifest construction. Builds on 0.2.0's schema rebalance + typed
-`anchor.floor` (drand) / external-witness `ceiling` (Roughtime) + canonical
-`asexec-verify/1` code. See [`ROADMAP.md`](./ROADMAP.md) for the version-keyed backlog —
-including later items (per-key public index, re-execution/determinism mode) and what is
-explicitly not scheduled (hosted transparency log, identity binding/CA).
-
-> Ceiling — status: the Roughtime verification protocol (delegation chain, Merkle path,
-> validity window) is fully implemented and offline-verifiable. Long-term keys for four public
-> IETF-Roughtime servers are pinned from the official ecosystem list, and the wire format is
-> reconciled against a live `int08h-Roughtime` capture baked as an offline fixture. The
-> other three servers weren't reachable during capture (UDP egress, not a known format
-> mismatch), so end-to-end interop is proven for int08h and expected-but-unproven for the
-> rest. `--ceiling` fetch fails safe if a server's variant differs.
+**Alpha.** [`ROADMAP.md`](./ROADMAP.md) has the release history, what is planned, and what is
+explicitly not.
 
 > **No backward-compatibility guarantee before `1.0.0`.** This is pre-1.0 alpha: any release
 > may change the manifest schema, the signed-byte format, the verifier output, or the CLI
@@ -366,24 +352,12 @@ explicitly not scheduled (hosted transparency log, identity binding/CA).
 
 ## Known issues
 
-Fixed issues are listed in [`ROADMAP.md`](./ROADMAP.md). The following remain (format-level
-fixes arrive in 0.4.0). Until then, treat `asexec verify` output with these caveats:
+Where `asexec` deviates from the [verification contract](./docs/VERIFICATION.md) (fixes
+arrive in 0.4.0):
 
-**Commitment state and chain**
-- Dropping the *last* receipt(s) of a chain is undetectable, and timeliness is not checked:
-  a post-registration created after `due` still renders `fulfilled`.
-- A manifest whose `due` has no timezone (the writer no longer produces one) is read as UTC
-  and flagged in the report.
-
-**Input handling**
-- `BDR` checks only the envelope (an object `payload` and a `signature` with hex `pubkey`
-  and `sig`) and the signature. Any validly signed payload object passes, whether or not it
-  is a well-formed asexec manifest body; the body is checked only slice by slice, by the
-  tests that examine it.
-- Hex is lenient: any spelling `bytes.fromhex` accepts (either case, whitespace between
-  bytes) is read as hex. This tool writes only lowercase; strict lowercase arrives in 0.4.0.
-- Directory hashing (v1) is ambiguous on POSIX: a filename containing a newline can make two
-  different trees hash identically. Symlinks are skipped silently.
+- **Directory hashes (v1) are ambiguous**, so `content` can pass for a different tree: a
+  filename containing a newline can make two trees hash identically, and symlinks inside a
+  directory are skipped silently.
 
 ## License
 
