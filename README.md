@@ -167,9 +167,10 @@ single-space delimited. The same result set is byte-identical everywhere.
 
 ## Manifest at a glance
 
-A pre-registration and a post-registration that fulfills it, with every field filled in.
-Fields marked `required` must be present; everything else is optional, and how much to
-disclose is the practitioner's call.
+A pre-registration and a post-registration that fulfills it, as would be built by
+`asexec prereg` and `asexec postreg`, with every field filled in. Fields marked `required`
+will always be present; everything else is optional, and how much to disclose is the
+practitioner's call.
 
 **Pre-registration**
 
