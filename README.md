@@ -142,8 +142,57 @@ single-space delimited. The same result set is byte-identical everywhere.
 
 ## Manifest at a glance
 
-A post-registration with every field filled in. Fields marked `required` must be present;
-everything else is optional, and how much to disclose is the practitioner's call.
+A pre-registration and a post-registration that fulfills it, with every field filled in.
+Fields marked `required` must be present; everything else is optional, and how much to
+disclose is the practitioner's call.
+
+**Pre-registration**
+
+```jsonc
+{
+  "payloadType": "application/vnd.asexec+json",
+  "payload": {                                       // required: the signed body
+    "schema_version": "asexec",                      // required
+    "predicateType": "https://asexec.dev/manifest",  // required
+    "phase": "prereg",                               // required: prereg | postreg
+    "target": "claude-opus-4-8 via the anthropic API", // required: text or JSON
+    "due": "2026-08-30T00:00:00Z",                   // deadline; none = stays open
+    "declaration": "all runs of this harness against this model, in full", // text or JSON
+    "subject": [                                     // artifacts, hashed
+      { "name": "harness/", "digest": { "sha-256": "2c26b46b…" } }
+    ],
+    "hash_alg": "sha-256",                           // required with subject
+    "anchor": {
+      "floor": {                                     // drand (--floor): not before
+        "floor_type": "drand",
+        "chain_hash": "52db9ba7…",
+        "round": 21102400,
+        "signature": "b7e04a19…",
+        "randomness": "1f0c9d2e…"
+      }
+    },
+    "identity": ["lab.example"],                     // free-form list
+    "notes": "hypothesis: refusal rate under 2%"     // text or JSON
+  },
+  "signature": {                                     // required
+    "alg": "ed25519",
+    "keyid": "sha-256:8f3e0a91…",                    // required: sha-256 of pubkey
+    "pubkey": "d75a9801…",                           // required
+    "sig": "3a91c0de…"                               // required
+  },
+  "ceiling": {                                       // Roughtime (--ceiling): not after
+    "ceiling_type": "roughtime",
+    "witness_id": "int08h-Roughtime",
+    "pubkey": "016e6e02…",
+    "nonce": "4be1c1f8…",                            // = ref(payload)
+    "midpoint": 1785911400.0,
+    "radius": 1.0,
+    "response": "0400000040…"
+  }
+}
+```
+
+**Post-registration**
 
 ```jsonc
 {
@@ -194,10 +243,12 @@ everything else is optional, and how much to disclose is the practitioner's call
 }
 ```
 
-`sig` signs a DSSE-style PAE encoding of `payload` (in-toto field names, not the tooling). A
-prereg has the same shape without `fulfills` and `prev_hash`. The ceiling sits outside the
-signed `payload` because its nonce is the payload's own hash; the floor sits inside it,
-because a value fixed before signing can be signed.
+`sig` signs a DSSE-style PAE encoding of `payload` (in-toto field names, not the tooling).
+A postreg carries its prereg's `target`, `due` and `declaration`, links back with `fulfills`
+(the prereg's ref, which is also its ceiling `nonce`) and `prev_hash`, and, from the CLI,
+adds `provenance` and `repro_recipe`. The ceiling sits outside the signed `payload` because
+its nonce is the payload's own hash; the floor sits inside it, because a value fixed before
+signing can be signed.
 
 ## Identity (optional domain control check, no CA)
 
