@@ -112,6 +112,9 @@ For a detailed look at parameters and options, see: `asexec --help`.
 
 ### Verification output
 
+What each test examines, its exact pass criteria, and what it does not establish are
+specified in the [verification catalog](./docs/VERIFICATION.md).
+
 `verify` runs the tests you name and prints one canonical code, e.g.:
 
 ```
@@ -122,18 +125,79 @@ Grammar (`asexec-verify/1` versions the code format): the literal prefix, then o
 `name=RESULT` token per requested test (`RESULT ∈ {PASS, FAIL}`), sorted alphabetically,
 single-space delimited. The same result set is byte-identical everywhere.
 
-- You declare your appetite. `--tests` is required and must include `BDR` (bedrock - the
-  mandatory minimum: signature + keyid). Everything else is opt-in: `content` (subject
-  digests vs. `--artifacts`), `chain` (`prev_hash` integrity), `keyconsist` (postregs share
-  the prereg's key), `floor` (drand freshness), `ceiling` (Roughtime witness).
+- You declare your appetite. `--tests` is required and must include
+  [`BDR`](./docs/VERIFICATION.md#bdr) (bedrock - the mandatory minimum: signature + keyid).
+  Everything else is opt-in: [`content`](./docs/VERIFICATION.md#content) (subject digests
+  vs. `--artifacts`), [`chain`](./docs/VERIFICATION.md#chain) (`prev_hash` integrity),
+  [`keyconsist`](./docs/VERIFICATION.md#keyconsist) (postregs share the prereg's key),
+  [`floor`](./docs/VERIFICATION.md#floor) (drand freshness),
+  [`ceiling`](./docs/VERIFICATION.md#ceiling) (Roughtime witness).
 - Named, not scored, so it's forward-compatible. Because the code names which tests
   ran, adding a test in a later version can never change the meaning of an older code. A code
   means exactly one thing, permanently.
 - A requested test that applies nowhere is `FAIL`, never a silent omission (e.g.
   `--tests BDR,ceiling` on manifests with no ceiling -> `ceiling=FAIL`).
-- Each test's exact pass criteria are in the [verification catalog](./docs/VERIFICATION.md).
 - The code is not a certificate. Real verification comes from the verifier running the tool
   against the files and get the code.
+
+## Manifest at a glance
+
+A post-registration with every field filled in. Fields marked `required` must be present;
+everything else is optional, and how much to disclose is the practitioner's call.
+
+```jsonc
+{
+  "payloadType": "application/vnd.asexec+json",
+  "payload": {                                       // required: the signed body
+    "schema_version": "asexec",                      // required
+    "predicateType": "https://asexec.dev/manifest",  // required
+    "phase": "postreg",                              // required: prereg | postreg
+    "target": "claude-opus-4-8 via the anthropic API", // required: text or JSON
+    "due": "2026-08-30T00:00:00Z",                   // deadline; none = stays open
+    "declaration": "all runs of this harness against this model, in full", // text or JSON
+    "subject": [                                     // artifacts, hashed
+      { "name": "transcript.txt", "digest": { "sha-256": "9f86d081…" } },
+      { "name": "harness/", "digest": { "sha-256": "2c26b46b…" } }
+    ],
+    "hash_alg": "sha-256",                           // required with subject
+    "fulfills": "sha-256:4be1c1f8…",                 // required in a postreg
+    "prev_hash": "sha-256:07ad3b2e…",                // previous postreg
+    "anchor": {
+      "floor": {                                     // drand (--floor): not before
+        "floor_type": "drand",
+        "chain_hash": "52db9ba7…",
+        "round": 21543210,
+        "signature": "8d2f1c3a…",
+        "randomness": "c3d4e5f6…"
+      }
+    },
+    "identity": ["lab.example"],                     // free-form list
+    "provenance": "reproducible",                    // asserted | reproducible
+    "repro_recipe": { "seed": 42, "decode": "greedy", "runtime": "vllm 0.9" },
+    "notes": "free-form text or JSON"
+  },
+  "signature": {                                     // required
+    "alg": "ed25519",
+    "keyid": "sha-256:8f3e0a91…",                    // required: sha-256 of pubkey
+    "pubkey": "d75a9801…",                           // required
+    "sig": "e5564300…"                               // required
+  },
+  "ceiling": {                                       // Roughtime (--ceiling): not after
+    "ceiling_type": "roughtime",
+    "witness_id": "int08h-Roughtime",
+    "pubkey": "016e6e02…",
+    "nonce": "5e9a7c44…",                            // = ref(payload)
+    "midpoint": 1787234400.0,
+    "radius": 1.0,
+    "response": "0400000040…"
+  }
+}
+```
+
+`sig` signs a DSSE-style PAE encoding of `payload` (in-toto field names, not the tooling). A
+prereg has the same shape without `fulfills` and `prev_hash`. The ceiling sits outside the
+signed `payload` because its nonce is the payload's own hash; the floor sits inside it,
+because a value fixed before signing can be signed.
 
 ## Identity (optional domain control check, no CA)
 
@@ -166,32 +230,6 @@ Pass `--best-effort` to warn and sign without the anchor instead.
 
 The `asexec identity` check loop is also network-dependent, as it is explicitly a domain-
 ownership check. It exists outside registration verification as an opt-in helper.
-
-## Manifest at a glance
-
-Bespoke signed JSON, signed over a DSSE-style PAE input (borrows in-toto field names for
-consistency with prior art). The bedrock (mandatory) set is deliberately small - the fields
-whose absence would break verifiability of commitment -> fulfillment/gap:
-
-- semantic: `target` (what was committed to - plain text or structured JSON). This is the
-  only mandatory claim.
-- structural: the format frame - `schema_version`, `predicateType`, `phase`
-  (`prereg` | `postreg`).
-
-Everything else is individually optional: `due` (the disclosure deadline — a commitment
-without one simply stays `open`), `declaration` (plain-language or structured commitment
-text), `subject` + `hash_alg` (conditionally paired - `hash_alg` is required iff a
-`subject` is present; a pre-registration may commit to a target before any harness exists to
-hash), `anchor.floor` (drand, opt-in via `--floor`), `identity`, `provenance` +
-`repro_recipe`, free-form `notes`. Specificity is a trust gradient the reader prices.
-
-The ceiling witness (Roughtime) lives at the envelope level, beside `payload` and
-`signature` - not inside the signed body, because its nonce is the body's own hash
-(`ref(payload)`), which can't be embedded in the thing it hashes. It is self-authenticated by
-the witness signature and binds to the manifest via `nonce == ref(payload)`. This is a purposeful
-asymmetry between floor and ceiling, because the proof of floor requires a piece of information
-to be embedded in the manifest, while the ceiling proof requires the payload to be referenced
-by an external witness.
 
 ## Prior art and related projects 
 
