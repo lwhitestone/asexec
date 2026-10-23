@@ -1,7 +1,10 @@
 # asexec - AsExecuted
 
 **Pre-registered attestations for AI executions. Tamper-evident and independently verifiable.**
-How it works in a nutshell: a practitioner attests to invoking AI *before* the outcome is known,
+
+**How it works in a nutshell:**
+
+A practitioner attests to invoking AI *before* the outcome is known,
 then publishes records of what actually happened. Anyone with the records can verify nothing was
 changed and whether any assertions hold up.
 
@@ -17,13 +20,17 @@ flag.
 because practitioners are more transparent with watchdogs, who actually have the incentive to
 notify you when issues arise.
 
+**As predicted... for AI:**
+
 It is the "as executed" counterpart to pre-registration ([as predicted](https://aspredicted.org)),
 borrowing the commit-then-reveal mechanism from clinical-trial pre-registration and applying it to
 similar transparency problems in AI safety, including selective disclosure and lack of oversight.
 
+**Opinionated about verification, but everything else is up to you:**
+
 `asexec` is a primitive, not a platform. It offers a signing/verification library and a thin CLI.
-There is no hosted service, no CA, no leaderboard, etc, in the core product. Publish the files
-wherever you like according to how you wish to disclose.
+There is no hosted service, no CA, no leaderboard, etc, in the core product. Choose what you wish
+to disclose, and publish the records wherever you like. Verifiers choose what tests to run.
 
 ---
 
@@ -66,13 +73,13 @@ in the form of `asexec verify` providing a code regarding the checks applied.
 
 ---
 
-## Install
+## Installation
 
 ```bash
 pip install asexec # ed25519 (PyNaCl) + BLS verification for drand (py_ecc)
 ```
 
-## Quickstart (the full commit-then-reveal cycle)
+## Usage
 
 ```bash
 # 1. Practitioner, one-time: generate a pseudonymous keypair (no CA, no registration)
@@ -103,7 +110,7 @@ deadline is rejected. `--fulfills` and `--prev` take an existing manifest file o
 
 For a detailed look at parameters and options, see: `asexec --help`.
 
-### The verify code (what step 4 produces)
+### Verification output
 
 `verify` runs the tests you name and prints one canonical code, e.g.:
 
@@ -143,7 +150,7 @@ asexec identity match --domain lab.example --key lab.key
 
 ## Network requirements
 
-Most `asexec` functionality is fully offline, which serves to drastically reduce the trust
+Most `asexec` functionality is offline, which serves to drastically reduce the trust
 surface. This includes all `asexec verify` operations, which are 100% offline by design;
 everything needed to perform a verification is baked-in to the prereg/postreg manifests.
 
@@ -162,9 +169,9 @@ ownership check. It exists outside registration verification as an opt-in helper
 
 ## Manifest at a glance
 
-Bespoke signed JSON, signed over a DSSE-style PAE input (borrows in-toto field names, not the
-tooling). The bedrock (mandatory) set is deliberately small - the fields whose absence
-would break verifiability of commitment -> fulfillment/gap:
+Bespoke signed JSON, signed over a DSSE-style PAE input (borrows in-toto field names for
+consistency with prior art). The bedrock (mandatory) set is deliberately small - the fields
+whose absence would break verifiability of commitment -> fulfillment/gap:
 
 - semantic: `target` (what was committed to - plain text or structured JSON). This is the
   only mandatory claim.
