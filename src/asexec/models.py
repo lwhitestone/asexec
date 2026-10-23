@@ -41,7 +41,7 @@ from pydantic import (
 )
 
 from . import PREDICATE_TYPE, SCHEMA_VERSION, drand
-from .fields import Hex, Link, PinnedChain, StrictInt
+from .fields import Hex, Link, LowerHex, PinnedChain, StrictInt
 
 # A field the caller may express either as a plain string or as structured JSON.
 # "take what is provided and compile it" - more disclosure buys more trust, but
@@ -114,8 +114,14 @@ class SubjectEntryInput(InputModel):
     name: str  # content #1
     digest: dict[str, Any]  # content #1
 
+    # The writer subclass turns this off: it types every digest as a string, and
+    # ManifestBody pairs the subject with its hash_alg.
+    digest_needs_hash_alg: ClassVar[bool] = True
+
     @model_validator(mode="after")
     def _digest_for_alg(self, info: ValidationInfo) -> SubjectEntryInput:
+        if not self.digest_needs_hash_alg:
+            return self
         if info.context is None or "hash_alg" not in info.context:
             # A caller bug, not a malformed entry: TypeError is not turned into a
             # ValidationError, so it can never pass silently as a FAIL or a PASS.
@@ -154,12 +160,9 @@ class SubjectItem(SubjectEntryInput):
 
     model_config = ConfigDict(extra="forbid")
     null_is_absent = False
+    digest_needs_hash_alg = False
 
     digest: dict[str, str]
-
-    @model_validator(mode="after")
-    def _digest_for_alg(self, info: ValidationInfo) -> SubjectItem:
-        return self  # every digest is typed as a string; ManifestBody pairs it with hash_alg
 
 
 class Floor(FloorInput):
@@ -167,6 +170,9 @@ class Floor(FloorInput):
 
     model_config = ConfigDict(extra="forbid")
     null_is_absent = False
+
+    signature: LowerHex
+    randomness: LowerHex | None = None
 
 
 class Ceiling(CeilingInput):
@@ -176,7 +182,9 @@ class Ceiling(CeilingInput):
     model_config = ConfigDict(extra="forbid")
     null_is_absent = False
 
-    pubkey: Hex
+    nonce: LowerHex
+    pubkey: LowerHex
+    response: LowerHex
     midpoint: float
     radius: float
 
@@ -254,6 +262,8 @@ class Signature(SignatureInput):
 
     alg: str = "ed25519"
     keyid: str
+    pubkey: LowerHex
+    sig: LowerHex
 
 
 class Manifest(EnvelopeInput):

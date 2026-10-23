@@ -276,11 +276,13 @@ def _resolve_inside(artifacts_dir: str, name: str) -> str | None:
 
 
 def _verify_subject_item(item: Any, alg: Any, artifacts_dir: str) -> dict[str, Any]:
+    label = str(item.get("name") if isinstance(item, dict) else item)[:80]
+    if not isinstance(alg, str):  # content #2: no install has a non-string algorithm
+        return {"name": label, "ok": False, "reason": f"algorithm unavailable: {alg!r}"}
     try:
         entry = SubjectEntryInput.model_validate(item, context={"hash_alg": alg})  # content #1
     except ValidationError:
-        label = item.get("name") if isinstance(item, dict) else item
-        return {"name": str(label)[:80], "ok": False, "reason": "malformed subject entry"}
+        return {"name": label, "ok": False, "reason": "malformed subject entry"}
     name, expected = entry.name, entry.digest[alg]
     if alg not in hashing.available_algorithms():
         return {"name": name, "ok": False, "reason": f"algorithm unavailable: {alg!r}"}
@@ -380,11 +382,10 @@ def verify_paths(
                 "rejected_receipts": [],
             }
         elif links.phase == "postreg":
-            receipts.append((sig.get("ref"), body, links, sig))
+            receipts.append((sig.get("ref"), links, sig))
 
     notarization_only = []
-    for rref, body, links, sig in receipts:
-        target = body.get("fulfills")
+    for rref, links, sig in receipts:
         if links.fulfills in preregs:
             pr = preregs[links.fulfills]
             entry = {"ref": rref, "prev_hash": links.prev_hash, "keyid": sig.get("keyid")}
@@ -394,7 +395,9 @@ def verify_paths(
             else:
                 pr["receipts"].append(entry)
         else:
-            notarization_only.append({"ref": rref, "fulfills": target, "keyid": sig.get("keyid")})
+            notarization_only.append(
+                {"ref": rref, "fulfills": links.fulfills, "keyid": sig.get("keyid")}
+            )
 
     commitments = []
     for pr in preregs.values():

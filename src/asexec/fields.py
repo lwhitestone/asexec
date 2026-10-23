@@ -6,6 +6,7 @@ models that produce a manifest and the models that read one cannot drift apart.
 
 from __future__ import annotations
 
+import re
 from typing import Annotated, Any
 
 from pydantic import AfterValidator, PlainValidator, Strict
@@ -15,6 +16,15 @@ from . import drand
 
 def _fromhex_ok(value: str) -> str:
     bytes.fromhex(value)  # a ValueError here becomes a ValidationError
+    return value
+
+
+_LOWER_HEX = re.compile(r"(?:[0-9a-f]{2})*")
+
+
+def _lower_hex(value: str) -> str:
+    if not _LOWER_HEX.fullmatch(value):
+        raise ValueError("not lowercase hex")
     return value
 
 
@@ -39,6 +49,10 @@ StrictInt = Annotated[int, Strict()]
 # Hex as ``bytes.fromhex`` accepts it (VERIFICATION.md, Conventions, Hex). Kept as the
 # string as written: comparisons against a computed digest stay exact.
 Hex = Annotated[str, AfterValidator(_fromhex_ok)]
+
+# Hex as this tool writes it: lowercase, no whitespace. The writer models use it, so the
+# tool never writes a spelling that an exact comparison with a digest would reject.
+LowerHex = Annotated[str, AfterValidator(_lower_hex)]
 
 # A drand chain hash the verifier pins (floor #2). ``drand.CHAINS`` is fixed at import.
 PinnedChain = Annotated[str, AfterValidator(_pinned_chain)]
