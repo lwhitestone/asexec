@@ -40,35 +40,60 @@ What a particular execution cycle's manifest proves is up to the practitioner (w
 choose what to disclose) and the verifier (who can choose what to check). Proof comes
 in the form of `asexec verify` providing a code regarding the checks applied.
 
-**`asexec` can prove:**
-- A manifest (pre-registration or post-registration) was not altered after signing.
-- A post-registration references a specific prior pre-registration, and the post-registrations
-  of a commitment form a single linear `prev_hash` chain (one root, no gaps, no forks). A
-  post-registration counts toward fulfilling a pre-registration only if it is validly signed by
-  that pre-registration's key. *Dropping the last post-registration(s) of a chain is **not**
-  detectable yet; close-out manifests (`final`) arrive in 0.4.0.*
-- The state of each commitment, rendered as an explicit `fulfilled`/`open`/`elapsed-no-receipt`/
-  `invalid-due`/`notarization-only`. The declared disclosure deadline (`due`) is *displayed and
-  used to tell `open` from `elapsed-no-receipt`*, but `asexec` does **not** check that a
-  post-registration was created before `due`; that check (`timely`) arrives in 0.4.0.
-- A manifest was created no earlier than a public moment (floor "freshness" check, offered by
-  [drand](https://drand.love/)).
-- A manifest was created no later than time T (ceiling "witness" check, offered by
-  [Roughtime](https://datatracker.ietf.org/doc/draft-ietf-ntp-roughtime/);
-  a signature-witness, not proof-of-work).
+### What `asexec` always proves
 
-**`asexec` does not prove**:
-- Provenance. Content hashes prove a transcript wasn't altered; they do not prove it is the
+Every `verify` run checks [`BDR`](./docs/VERIFICATION.md#bdr) and renders the state of each
+commitment:
+
+- **Integrity.** A manifest (pre-registration or post-registration) was not altered after
+  signing, and was signed by the key its `keyid` names.
+- **What was committed to.** Every manifest carries a `target`, and every post-registration
+  names the pre-registration it `fulfills`.
+- **Commitment state.** Each pre-registration is rendered as `fulfilled`, `open`,
+  `elapsed-no-receipt` or `invalid-due`; a post-registration whose pre-registration was not
+  provided is `notarization-only`. A post-registration counts toward fulfilling a
+  pre-registration only if it is validly signed by that pre-registration's key. The declared
+  deadline (`due`) is *displayed and used to tell `open` from `elapsed-no-receipt`*, but
+  `asexec` does **not** check that a post-registration was created before `due`; that check
+  (`timely`) arrives in 0.4.0.
+
+### What `asexec` can prove (optional fields and tests)
+
+Each of these holds only when the practitioner includes the field and the verifier names the
+test:
+
+- **Content** (`subject`; [`content`](./docs/VERIFICATION.md#content) with `--artifacts`). The
+  artifacts the verifier holds match the digests a manifest records.
+- **Chain** (`prev_hash`; [`chain`](./docs/VERIFICATION.md#chain)). The post-registrations of a
+  commitment form a single linear chain: one root, no gaps, no forks. *Dropping the last
+  post-registration(s) of a chain is **not** detectable yet; close-out manifests (`final`)
+  arrive in 0.4.0.*
+- **Key consistency** ([`keyconsist`](./docs/VERIFICATION.md#keyconsist)). Every validly
+  signed post-registration of a commitment uses the pre-registration's key.
+- **Created no earlier than** (`anchor.floor`; [`floor`](./docs/VERIFICATION.md#floor)). A
+  manifest was created after a public moment: a [drand](https://drand.love/) beacon round it
+  embeds.
+- **Created no later than** (`ceiling`; [`ceiling`](./docs/VERIFICATION.md#ceiling)). A
+  manifest existed by time T: a
+  [Roughtime](https://datatracker.ietf.org/doc/draft-ietf-ntp-roughtime/) server signed its
+  hash (a signature-witness, not proof-of-work).
+
+### What `asexec` cannot prove
+
+- **Who signed.** A key is pseudonymous: `asexec` proves which key signed, not whose it is.
+  The optional [identity check](#identity-optional-domain-control-check-no-ca) ties a key to
+  a domain, outside `verify`.
+- **Provenance.** Content hashes prove a transcript wasn't altered; they do not prove it is the
   output of the named harness+model (asserted by the signer, not re-executed).
-- Completeness. It renders only the manifests you give it; it cannot prove a lab pre-registered
+- **Completeness.** It renders only the manifests you give it; it cannot prove a lab pre-registered
   every eval it should have (selective pre-registration). However, just like practitioners are not
   forced to `asexec prereg` all their testing, verifiers are not forced to trust results that were
   telegraphed less than they could have been. It is a signal of good faith to pre-register as much
   as you can!
-- Qualities of the science of evals, including eval quality, elicitation rigor, sandbagging, etc.
-  `asexec` aims to make the process of AI testing auditable, but does not make claims about the
-  science itself.
-- Anti-forgery of verify codes. The code is a summary of a computation, not a certificate. It is
+- **The science of evals.** Eval quality, elicitation rigor, sandbagging, etc. `asexec` aims
+  to make the process of AI testing auditable, but does not make claims about the science
+  itself.
+- **Anti-forgery of verify codes.** The code is a summary of a computation, not a certificate. It is
   meaningful to verifiers only when produced from the registration files. In other words, don't
   blindly trust a verify code handed to you; see if you can reproduce it!
 
