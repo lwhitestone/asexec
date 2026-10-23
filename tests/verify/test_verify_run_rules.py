@@ -10,9 +10,8 @@ import urllib.request
 
 import pytest
 
-from asexec import drand
 from asexec.errors import VerificationError
-from asexec.verifier import parse_tests, verify_ceiling, verify_paths
+from asexec.verifier import parse_tests, verify_paths
 
 # --- `--tests` argument ------------------------------------------------------ #
 
@@ -71,7 +70,7 @@ def test_run__every_examined_manifest_must_pass(scenario):
     (scenario.artifacts / "transcript2.txt").write_text("TAMPERED\n")  # only postreg2's subject
     report = scenario.verify("content")
     assert report["code"] == "asexec-verify/1 BDR=PASS content=FAIL"
-    assert report["results"]["content"]["reason"] == "1/4 subject(s) failed"
+    assert report["results"]["content"]["applicable"] == 4
 
 
 def test_run__manifest_lacking_the_examined_properties_is_not_examined(scenario):
@@ -116,6 +115,20 @@ def test_run__file_unreadable_by_BDR_is_examined_by_no_other_test(scenario):
     )
     report = scenario.verify("ceiling", "content", "floor")
     assert report["code"] == "asexec-verify/1 BDR=FAIL ceiling=PASS content=PASS floor=PASS"
+
+
+def test_run__malformed_postreg_joins_no_commitment(scenario):
+    """A malformed postreg (here: non-hex pubkey) fulfilling the prereg is not a receipt,
+    counted or rejected, so chain and keyconsist have nothing to examine."""
+    scenario.drop("postreg1")
+    scenario.drop("postreg2")
+    scenario.set("postreg0", "signature.pubkey", "zz")
+    report = scenario.verify("chain", "keyconsist")
+    assert report["code"] == "asexec-verify/1 BDR=FAIL chain=FAIL keyconsist=FAIL"
+    assert report["results"]["keyconsist"]["applicable"] == 0
+    (commitment,) = report["commitments"]
+    assert commitment["receipts"] == [] and commitment["rejected_receipts"] == []
+    assert report["notarization_only"] == []
 
 
 def test_run__verification_is_offline(scenario, monkeypatch):
@@ -163,30 +176,31 @@ SIGNED_JUNK = [
 @pytest.mark.parametrize("field,value", SIGNED_JUNK)
 def test_never_raises__validly_signed_junk_in_a_body_field(scenario, field, value):
     """BDR checks only the signature, so a signed-but-junk body must not crash any test."""
-    scenario.mutate("postreg1", lambda body: body.update({field: value}))
+    scenario.set("postreg1", f"payload.{field}", value)
     if field not in ("fulfills", "prev_hash"):
-        scenario.mutate("prereg", lambda body: body.update({field: value}))
+        scenario.set("prereg", f"payload.{field}", value)
     report = scenario.verify("ceiling", "chain", "content", "floor", "keyconsist")
     assert report["code"].startswith("asexec-verify/1 BDR=PASS")
 
 
-def test_never_raises__floor_verifier_exception(scenario, monkeypatch):
-    """An exception inside the drand check is reported as an invalid floor."""
+@pytest.mark.parametrize(
+    "path,value",
+    [
+        pytest.param("round", 2**70, id="round-overflows-8-bytes"),
+        pytest.param("round", -1, id="round-negative"),
+        pytest.param("round", True, id="round-bool"),
+        pytest.param("signature", 5, id="signature-not-string"),
+        pytest.param("signature", "abc", id="signature-odd-length"),
+        pytest.param("randomness", 5, id="randomness-not-string"),
+        pytest.param("chain_hash", [], id="chain_hash-not-string"),
+        pytest.param("floor_type", {}, id="floor_type-not-string"),
+    ],
+)
+def test_never_raises__junk_floor_member(scenario, path, value):
+    """A validly signed but malformed anchor.floor member fails floor; it never raises."""
     scenario.with_floor("prereg")
-
-    def boom(_floor):
-        raise RuntimeError("kaboom")
-
-    monkeypatch.setattr(drand, "verify_floor", boom)
-    report = scenario.verify("floor")
-    assert report["code"] == "asexec-verify/1 BDR=PASS floor=FAIL"
-    assert "malformed anchor.floor: kaboom" in report["manifests"][0]["floor"]["error"]
-
-
-def test_never_raises__ceiling_on_a_manifest_without_payload():
-    result = verify_ceiling({"ceiling": {"ceiling_type": "roughtime"}})
-    assert result["status"] == "invalid"
-    assert result["error"].startswith("malformed manifest:")
+    scenario.set("prereg", f"payload.anchor.floor.{path}", value)
+    assert scenario.code("floor") == "asexec-verify/1 BDR=PASS floor=FAIL"
 
 
 @pytest.mark.parametrize(

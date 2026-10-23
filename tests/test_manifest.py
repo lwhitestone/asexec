@@ -1,10 +1,12 @@
 """Manifest build/sign/ref + bedrock enforcement (asexec schema)."""
 
 import pytest
+from pydantic import ValidationError
 
-from asexec import PREDICATE_TYPE, SCHEMA_VERSION, keys, manifest
+from asexec import PREDICATE_TYPE, SCHEMA_VERSION, drand, keys, manifest
 from asexec.canonical import signing_input
 from asexec.errors import ManifestError
+from asexec.models import Ceiling, Signature
 
 
 def _target():
@@ -107,11 +109,47 @@ def test_postreg_requires_fulfills():
         manifest.sign(body, priv, pub)
 
 
+@pytest.mark.parametrize(
+    "change",
+    [
+        pytest.param({"chain_hash": None}, id="null-is-not-a-default"),
+        pytest.param({"round": "1000"}, id="no-coercion"),
+        pytest.param({"signature": "zz"}, id="signature-not-hex"),
+        pytest.param({"signature": "CD"}, id="signature-uppercase"),
+        pytest.param({"randomness": "e f"}, id="randomness-spaced"),
+        pytest.param({"extra": 1}, id="no-extra-fields"),
+    ],
+)
+def test_writer_floor_rejects_what_it_would_not_write(change):
+    """The writer gates what it writes: no coercion, no None-as-default, no stray field, and
+    hex only as lowercase without whitespace (the spelling exact comparisons expect)."""
+    floor = {"floor_type": "drand", "chain_hash": drand.QUICKNET_HASH, "round": 1,
+             "signature": "cd", **change}  # fmt: skip
+    with pytest.raises(ValidationError):
+        manifest.build_prereg(_target(), due=DUE, subject=_subj(), floor=floor)
+
+
+@pytest.mark.parametrize("field", ["nonce", "pubkey", "response"])
+@pytest.mark.parametrize("value", ["AB", "a b"], ids=["uppercase", "spaced"])
+def test_writer_ceiling_rejects_non_lowercase_hex(field, value):
+    ceiling = {"ceiling_type": "roughtime", "witness_id": "w", "nonce": "ab", "pubkey": "ab",
+               "response": "ab", "midpoint": 1.0, "radius": 1.0, field: value}  # fmt: skip
+    with pytest.raises(ValidationError):
+        Ceiling(**ceiling)
+
+
+@pytest.mark.parametrize("field", ["pubkey", "sig"])
+def test_writer_signature_rejects_non_lowercase_hex(field):
+    signature = {"keyid": "k", "pubkey": "ab", "sig": "ab", field: "AB"}
+    with pytest.raises(ValidationError):
+        Signature(**signature)
+
+
 def test_floor_lands_in_anchor_and_ref_stable_across_ceiling():
     priv, pub = keys.generate()
     floor = {
         "floor_type": "drand",
-        "chain_hash": "ab",
+        "chain_hash": drand.QUICKNET_HASH,
         "round": 1,
         "signature": "cd",
         "randomness": "ef",

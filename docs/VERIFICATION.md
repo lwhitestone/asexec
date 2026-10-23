@@ -1,7 +1,9 @@
 # Verification catalog
 
 Reference for every test accepted by `asexec verify --tests`. Authoritative implementation:
-`src/asexec/verifier.py`. Describes 0.3.15.
+`src/asexec/verifier.py`. Structural requirements (types and shapes) are implemented as the
+input models in `src/asexec/models.py`; everything else, and every verdict, is in the
+verifier and the modules it calls.
 
 ```
 asexec verify <manifest|dir>... --tests <name>[,<name>...] [--artifacts <dir>]
@@ -18,6 +20,11 @@ paths from the envelope root, e.g. `payload.anchor.floor.round`, `signature.keyi
 `payload.phase == "postreg"`. `ref(m)` is `sha-256:<hex>` over the canonical bytes of
 `m.payload`.
 
+**Hex.** A value required to be hex is a string that `bytes.fromhex` accepts: an even
+number of hex digits in either case, with ASCII whitespace allowed around and between bytes. Where a
+requirement compares a value to a computed digest (ceiling #2, floor #4), the comparison is
+exact against the lowercase hex of the digest.
+
 **Result.** Each requested test yields exactly one of `PASS` / `FAIL`. There is no third
 value and no error state. Malformed input is never an exception: it is a failure of the
 tests that examine it.
@@ -30,12 +37,17 @@ tests that examine it.
 - A test passes iff **all** of its *Passes when all* requirements hold for **every** manifest
   or commitment that has the *Examines* properties, and at least one such manifest or
   commitment exists.
+- A property is **absent** iff its key is missing or its value is `null`. Any other value,
+  including `{}`, `[]`, `""`, `false` and `0`, is present. A property whose path runs
+  through a present non-object (e.g. `payload.anchor` is `[]`) is present, and malformed.
 - (\*) If no provided manifest or commitment has the examined properties, the test is
   vacuous and is judged `FAIL`. One that lacks them is not examined and cannot fail the
   test; it also does not count toward passing.
 - Verification is offline.
-- A file that cannot be read, is not a JSON object, or contains a duplicate JSON key at any
-  level is malformed: it fails `BDR`, and no other test examines it.
+- A file is **malformed** if it cannot be read, is not a JSON object, contains a duplicate
+  JSON key at any level, lacks an object `payload` or `signature`, or its
+  `signature.pubkey` and `signature.sig` are not both hex. It fails `BDR`, and no other test
+  examines it: it joins no commitment, so it is neither counted nor rejected.
 
 ## Summary
 
@@ -44,7 +56,7 @@ tests that examine it.
 | [`BDR`](#bdr) | `payload`<br>`signature.pubkey`<br>`signature.sig`<br>`signature.keyid` | file is well-formed JSON<br>`signature.sig` verifies over `payload`<br>`signature.keyid` derives from `signature.pubkey` |
 | [`ceiling`](#ceiling) | `ceiling.ceiling_type`<br>`ceiling.nonce`<br>`ceiling.witness_id`<br>`ceiling.pubkey`<br>`ceiling.response`<br>`payload` | `ceiling.ceiling_type` is `roughtime`<br>`ceiling.nonce` equals `ref(payload)`<br>`ceiling.witness_id` has a pinned key<br>`ceiling.pubkey`, if present, equals the pinned key<br>`ceiling.response` verifies against the pinned key |
 | [`chain`](#chain) | `payload.phase`<br>`payload.fulfills`<br>`payload.prev_hash`<br>`signature.pubkey`<br>`signature.sig`<br>`signature.keyid` | exactly one counted postreg has no `payload.prev_hash`<br>every other `payload.prev_hash` is the `ref` of a counted postreg<br>no `ref` is the `payload.prev_hash` of more than one counted postreg |
-| [`content`](#content) | `payload.subject[].name`<br>`payload.subject[].digest`<br>`payload.hash_alg`<br>`--artifacts` | each `subject[]` entry is well-formed<br>`payload.hash_alg` is available<br>`name` resolves inside `--artifacts`<br>the artifact exists and is readable<br>recomputed digest equals `digest[hash_alg]` |
+| [`content`](#content) | `payload.subject`<br>`payload.subject[].name`<br>`payload.subject[].digest`<br>`payload.hash_alg`<br>`--artifacts` | `payload.subject` is a non-empty array of well-formed entries<br>`payload.hash_alg` is available<br>`name` resolves inside `--artifacts`<br>the artifact exists and is readable<br>recomputed digest equals `digest[hash_alg]` |
 | [`floor`](#floor) | `payload.anchor.floor.floor_type`<br>`payload.anchor.floor.chain_hash`<br>`payload.anchor.floor.round`<br>`payload.anchor.floor.signature`<br>`payload.anchor.floor.randomness` | `floor_type` is `drand`<br>`chain_hash` is pinned<br>`randomness`, if present, equals `sha256(signature)`<br>`signature` BLS-verifies for `round` under the pinned key |
 | [`keyconsist`](#keyconsist) | `payload.phase`<br>`payload.fulfills`<br>`signature.pubkey`<br>`signature.sig`<br>`signature.keyid` | every validly signed postreg referencing the prereg has the prereg's `signature.keyid` |
 
@@ -147,13 +159,15 @@ detectable.
 Subject digests recomputed from the original artifacts.
 
 **Examines (\*)**
+- `payload.subject`
 - `payload.subject[].name`
 - `payload.subject[].digest`
 - `payload.hash_alg` (default `sha-256` if absent)
 - `--artifacts`
 
-**Passes when all** (for each `payload.subject[]` entry of each manifest that has one)
-1. `name` is a string and `digest[hash_alg]` is a string.
+**Passes when all** (for each manifest that has a `payload.subject`, and each of its entries)
+1. `payload.subject` is a non-empty array, and each entry's `name` is a string and
+   `digest[hash_alg]` is a string.
 2. `hash_alg` is available in this install: `sha-256` always, `blake3` only if installed.
 3. `name` (trailing `/` removed) resolved with symlinks against `--artifacts` is the
    `--artifacts` directory or beneath it. `..` components, absolute names, and symlinks

@@ -33,6 +33,23 @@ MALFORMED_FILES = {
 }
 
 
+def _spaced_upper(hex_str: str) -> str:
+    """The same bytes as ``hex_str``, in uppercase with whitespace between byte pairs."""
+    pairs = [hex_str[i : i + 2].upper() for i in range(0, len(hex_str), 2)]
+    return " ".join(pairs[:4]) + "\n\t" + "".join(pairs[4:])
+
+
+@pytest.mark.parametrize("field", ["pubkey", "sig"])
+def test_BDR__pass__2_hex_accepts_either_case_and_whitespace(scenario, field):
+    """BDR #2: hex is what bytes.fromhex accepts (Conventions, Hex), case and spacing aside."""
+
+    def respell(envelope):
+        envelope["signature"][field] = _spaced_upper(envelope["signature"][field])
+
+    scenario.tamper("postreg0", respell)
+    assert scenario.code() == PASS
+
+
 @pytest.mark.parametrize("raw", MALFORMED_FILES.values(), ids=MALFORMED_FILES.keys())
 def test_BDR__fail__1_well_formed_file(scenario, raw):
     """BDR #1: the file is a JSON object, with payload and signature."""
@@ -41,15 +58,13 @@ def test_BDR__fail__1_well_formed_file(scenario, raw):
 
 
 def test_BDR__fail__1_no_duplicate_keys(scenario):
-    """BDR #1: no duplicate JSON keys (otherwise the last would silently win)."""
+    """BDR #1: no duplicate JSON keys. The repeat has the same value, so the payload would
+    verify if either copy were accepted: only the duplicate itself can fail it."""
     raw = scenario.read("prereg")
-    dup = raw.replace('"phase": "prereg"', '"phase": "prereg", "phase": "postreg"', 1)
+    dup = raw.replace('"phase": "prereg"', '"phase": "prereg", "phase": "prereg"', 1)
     assert dup != raw
     scenario.add_raw("dup", dup)
-    report = scenario.verify()
-    assert report["code"] == FAIL
-    dup_path = next(m for m in report["manifests"] if m["path"].endswith("dup.json"))
-    assert "duplicate" in dup_path["signature"]["errors"][0]
+    assert scenario.code() == FAIL
 
 
 def test_BDR__fail__2_signature_covers_payload(scenario):

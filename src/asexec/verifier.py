@@ -69,9 +69,20 @@ import os
 import time
 from typing import Any
 
+from pydantic import ValidationError
+
 from . import drand, hashing, keys, manifest
 from .canonical import signing_input
 from .errors import VerificationError
+from .models import (
+    CeilingInput,
+    DueInput,
+    EnvelopeInput,
+    FloorInput,
+    LinkInput,
+    SubjectEntryInput,
+    SubjectInput,
+)
 
 # The canonical grammar version for the verify code. Independent of the
 # schema/PAE versions - it versions the *code format*, not the signed bytes.
@@ -140,79 +151,118 @@ def parse_tests(spec: str) -> list[str]:
     return [t for t in TEST_CATALOG if t in names]
 
 
-def _parse_due(due: Any) -> tuple[float | None, bool]:
-    """Parse a ``due`` value to ``(epoch_seconds, naive)``.
+def _parse_due(raw: Any) -> tuple[bool, float | None, bool]:
+    """Parse a ``due`` value to ``(present, epoch_seconds, naive)``.
 
     A timezone-less value is read as UTC so the result never depends on the
-    verifier's local timezone; ``naive`` flags it. ``(None, False)`` if ``due``
-    is not a parseable ISO-8601 string.
+    verifier's local timezone; ``naive`` flags it. ``epoch_seconds`` is None if
+    ``due`` is absent (missing or null) or not a parseable ISO-8601 string.
     """
-    if not isinstance(due, str):
-        return None, False
+    try:
+        due = DueInput.model_validate({"due": raw}).due
+    except ValidationError:
+        return True, None, False
+    if due is None:
+        return False, None, False
     try:
         dt = datetime.datetime.fromisoformat(due.replace("Z", "+00:00"))
     except ValueError:
-        return None, False
+        return True, None, False
     naive = dt.tzinfo is None
     if naive:
         dt = dt.replace(tzinfo=datetime.UTC)
-    return dt.timestamp(), naive
+    return True, dt.timestamp(), naive
+
+
+def _lookup(obj: Any, *path: str) -> tuple[bool, Any]:
+    """``(present, value)`` of the property at ``path`` under ``obj`` (Run rules).
+
+    A property is absent iff its key is missing or its value is null. Any other
+    value is present, and so examined. A non-object on the way makes the property
+    present, as that non-object, so it fails its input model.
+    """
+    for key in path:
+        if not isinstance(obj, dict):
+            return True, obj
+        obj = obj.get(key)
+        if obj is None:
+            return False, None
+    return True, obj
 
 
 def verify_signature(mani: dict[str, Any]) -> dict[str, Any]:
     """The bedrock check for a single manifest: signature + keyid."""
     out: dict[str, Any] = {"signature_ok": False, "keyid_ok": False, "errors": []}
     try:
-        body = manifest.get_body(mani)
-        sigblock = mani["signature"]
-        pub = bytes.fromhex(sigblock["pubkey"])
-        sig = bytes.fromhex(sigblock["sig"])
+        envelope = EnvelopeInput.model_validate(mani)  # BDR #1, #2 (shape)
+    except ValidationError as e:
+        out["errors"].append(f"malformed: {_describe(e)}")
+        return out
+    try:
+        body, sigblock = envelope.payload, envelope.signature
+        pub = bytes.fromhex(sigblock.pubkey)
+        sig = bytes.fromhex(sigblock.sig)
         out["signature_ok"] = keys.verify(pub, signing_input(body), sig)
-        out["keyid_ok"] = keys.keyid_for(pub) == sigblock.get("keyid")
-        out["keyid"] = sigblock.get("keyid")
+        out["keyid_ok"] = keys.keyid_for(pub) == sigblock.keyid
+        out["keyid"] = sigblock.keyid
         out["phase"] = body.get("phase")
         out["ref"] = manifest.ref(body)
-    except Exception as e:  # malformed manifest
+    except Exception as e:  # e.g. a payload with no canonical form
         out["errors"].append(f"malformed: {e}")
     return out
 
 
+def _describe(error: ValidationError) -> str:
+    """A one-line summary of a ``ValidationError``: each failing path and its message."""
+    return "; ".join(
+        f"{'.'.join(str(p) for p in e['loc']) or '(value)'}: {e['msg']}" for e in error.errors()
+    )
+
+
+def _invalid(error: ValidationError, type_field: str) -> dict[str, Any]:
+    """The record for a slice that failed its input model. A wrong ``<x>_type`` is
+    ``unsupported`` (an unknown kind of witness), anything else ``invalid``."""
+    unsupported = any(e["loc"] == (type_field,) for e in error.errors())
+    return {"status": "unsupported" if unsupported else "invalid", "error": _describe(error)}
+
+
 def verify_floor(body: dict[str, Any]) -> dict[str, Any]:
     """Verify the drand freshness floor at ``body.anchor.floor`` (if present)."""
-    anchor = body.get("anchor")
-    floor = anchor.get("floor") if isinstance(anchor, dict) else anchor
-    if not floor:
+    present, floor = _lookup(body, "anchor", "floor")
+    if not present:
         return {"status": "absent"}
-    if not isinstance(floor, dict):
-        return {"status": "invalid", "error": "malformed anchor.floor"}
     try:
-        return drand.verify_floor(floor)
-    except Exception as e:  # a signed-but-malformed floor must fail, not crash
-        return {"status": "invalid", "error": f"malformed anchor.floor: {e}"}
+        parsed = FloorInput.model_validate(floor)  # floor #1-#4 (shape)
+    except ValidationError as e:
+        return _invalid(e, "floor_type")
+    return drand.verify_floor(parsed)  # floor #4 equality, #5 BLS; never raises
 
 
-def verify_ceiling(mani: dict[str, Any]) -> dict[str, Any]:
+def verify_ceiling(
+    mani: dict[str, Any], servers: dict[str, dict[str, object]] | None = None
+) -> dict[str, Any]:
     """Verify the envelope-level ceiling witness (if present).
 
     Two conditions: (1) the witness signature verifies against a pinned key,
     and (2) the witness's nonce binds to THIS manifest (nonce == ref(payload)).
-    Delegates the witness cryptography to the ``roughtime`` module; the nonce
-    binding is checked here.
+    Called only for a manifest that passed ``verify_signature``. Delegates the
+    binding, the pin lookup in ``servers`` (default: the pinned
+    ``roughtime.SERVERS``) and the witness cryptography to the ``roughtime`` module.
     """
-    ceiling = manifest.get_ceiling(mani)
-    if not ceiling:
+    present, ceiling = _lookup(mani, "ceiling")
+    if not present:
         return {"status": "absent"}
     try:
-        body = manifest.get_body(mani)
-        expected_nonce = manifest.ref(body)
-    except Exception as e:
-        return {"status": "invalid", "error": f"malformed manifest: {e}"}
+        parsed = CeilingInput.model_validate(ceiling)  # ceiling #1, #3-#5 (shape)
+    except ValidationError as e:
+        return _invalid(e, "ceiling_type")
     from . import roughtime
 
-    try:
-        return roughtime.verify_ceiling(ceiling, expected_nonce)
+    try:  # ceiling #2 binding, #3 pin lookup, #4 equality, #5 response
+        expected_nonce = manifest.ref(mani["payload"])
+        return roughtime.verify_ceiling(parsed, expected_nonce, servers)
     except Exception as e:  # an unsigned, attacker-shaped envelope field must not crash verify
-        return {"status": "invalid", "error": f"malformed ceiling: {e}"}
+        return {"status": "invalid", "error": str(e)}
 
 
 def _resolve_inside(artifacts_dir: str, name: str) -> str | None:
@@ -226,14 +276,15 @@ def _resolve_inside(artifacts_dir: str, name: str) -> str | None:
 
 
 def _verify_subject_item(item: Any, alg: Any, artifacts_dir: str) -> dict[str, Any]:
+    label = str(item.get("name") if isinstance(item, dict) else item)[:80]
+    if not isinstance(alg, str):  # content #2: no install has a non-string algorithm
+        return {"name": label, "ok": False, "reason": f"algorithm unavailable: {alg!r}"}
     try:
-        name = item["name"]
-        expected = item.get("digest", {}).get(alg)
-        if not isinstance(name, str) or not isinstance(expected, str):
-            return {"name": str(name), "ok": False, "reason": "malformed subject entry"}
-    except Exception:
-        return {"name": str(item)[:80], "ok": False, "reason": "malformed subject entry"}
-    if not isinstance(alg, str) or alg not in hashing.available_algorithms():
+        entry = SubjectEntryInput.model_validate(item, context={"hash_alg": alg})  # content #1
+    except ValidationError:
+        return {"name": label, "ok": False, "reason": "malformed subject entry"}
+    name, expected = entry.name, entry.digest[alg]
+    if alg not in hashing.available_algorithms():
         return {"name": name, "ok": False, "reason": f"algorithm unavailable: {alg!r}"}
     path = _resolve_inside(artifacts_dir, name)
     if path is None:
@@ -251,23 +302,34 @@ def _verify_subject_item(item: Any, alg: Any, artifacts_dir: str) -> dict[str, A
 def verify_content(body: dict[str, Any], artifacts_dir: str | None) -> dict[str, Any]:
     if not artifacts_dir:
         return {"status": "skipped", "reason": "no artifacts provided"}
-    subject = body.get("subject")
-    if not subject:
+    present, subject = _lookup(body, "subject")
+    if not present:
         return {"status": "skipped", "reason": "manifest has no subject"}
-    if not isinstance(subject, list):
+    try:
+        SubjectInput.validate_python(subject)  # content #1 (an array of entries)
+    except ValidationError:
         return {
             "status": "mismatch",
             "entries": [{"name": "(subject)", "ok": False, "reason": "malformed subject"}],
         }
-    alg = body.get("hash_alg", hashing.DEFAULT_ALG)
+    present, alg = _lookup(body, "hash_alg")
+    alg = alg if present else hashing.DEFAULT_ALG
     entries = [_verify_subject_item(item, alg, artifacts_dir) for item in subject]
     return {"status": "ok" if all(e["ok"] for e in entries) else "mismatch", "entries": entries}
 
 
 def verify_paths(
-    paths: list[str], tests: list[str], artifacts_dir: str | None = None, now: float | None = None
+    paths: list[str],
+    tests: list[str],
+    artifacts_dir: str | None = None,
+    now: float | None = None,
+    servers: dict[str, dict[str, object]] | None = None,
 ) -> dict[str, Any]:
-    """Load, verify, group, evaluate the requested tests, and build the code."""
+    """Load, verify, group, evaluate the requested tests, and build the code.
+
+    ``servers`` is the pinned Roughtime witness map for ``ceiling`` (default:
+    ``roughtime.SERVERS``).
+    """
     now = time.time() if now is None else now
     files = _expand(paths)
 
@@ -288,7 +350,7 @@ def verify_paths(
             body = {}
         clean = sig.get("errors") == []
         floor = verify_floor(body) if clean else {"status": "absent"}
-        ceiling = verify_ceiling(mani) if clean else {"status": "absent"}
+        ceiling = verify_ceiling(mani, servers) if clean else {"status": "absent"}
         content = verify_content(body, artifacts_dir) if clean else {"status": "skipped"}
         if ceiling.get("status") == "verified":
             ceiling_trust.append(
@@ -308,7 +370,10 @@ def verify_paths(
             "content": content,
         }
         manifests_report.append(rec)
-        if body.get("phase") == "prereg" and sig.get("ref"):
+        if not clean:
+            continue  # malformed: no other test examines it, so it joins no commitment
+        links = LinkInput.model_validate({k: body[k] for k in LinkInput.model_fields if k in body})
+        if links.phase == "prereg" and sig.get("ref"):
             preregs[sig["ref"]] = {
                 "ref": sig["ref"],
                 "keyid": sig.get("keyid"),
@@ -316,27 +381,28 @@ def verify_paths(
                 "receipts": [],
                 "rejected_receipts": [],
             }
-        elif body.get("phase") == "postreg":
-            receipts.append((sig.get("ref"), body, sig))
+        elif links.phase == "postreg":
+            receipts.append((sig.get("ref"), links, sig))
 
     notarization_only = []
-    for rref, body, sig in receipts:
-        target = body.get("fulfills")
-        if isinstance(target, str) and target in preregs:
-            pr = preregs[target]
-            entry = {"ref": rref, "prev_hash": _link_value(body), "keyid": sig.get("keyid")}
+    for rref, links, sig in receipts:
+        if links.fulfills in preregs:
+            pr = preregs[links.fulfills]
+            entry = {"ref": rref, "prev_hash": links.prev_hash, "keyid": sig.get("keyid")}
             reason = _get_postreg_rejection_reason(sig, pr)
             if reason:
                 pr["rejected_receipts"].append({**entry, "reason": reason})
             else:
                 pr["receipts"].append(entry)
         else:
-            notarization_only.append({"ref": rref, "fulfills": target, "keyid": sig.get("keyid")})
+            notarization_only.append(
+                {"ref": rref, "fulfills": links.fulfills, "keyid": sig.get("keyid")}
+            )
 
     commitments = []
     for pr in preregs.values():
-        state = _commitment_state(pr, now)
-        _, due_naive = _parse_due(pr.get("due"))
+        due_present, due_ts, due_naive = _parse_due(pr.get("due"))
+        state = _commitment_state(pr, now, due_present, due_ts)
         chain_ok, chain_note = _check_chain(pr["receipts"])
         key_consistent = not any(
             r["reason"].startswith("signed by a different key") for r in pr["rejected_receipts"]
@@ -454,55 +520,43 @@ def _build_code(tests: list[str], results: dict[str, dict[str, Any]]) -> str:
 
 def _get_postreg_rejection_reason(sig: dict[str, Any], prereg: dict[str, Any]) -> str | None:
     """Why a postreg that references ``prereg`` does not count toward fulfilling
-    it, or None if it counts: validly signed by the prereg's own key."""
-    if sig.get("errors") or not (sig.get("signature_ok") and sig.get("keyid_ok")):
+    it, or None if it counts: validly signed by the prereg's own key. Only a
+    well-formed postreg gets here (a malformed one joins no commitment)."""
+    if not (sig.get("signature_ok") and sig.get("keyid_ok")):
         return "invalid signature"
     if sig.get("keyid") != prereg["keyid"]:
         return "signed by a different key than the pre-registration"
     return None
 
 
-def _commitment_state(pr: dict[str, Any], now: float) -> str:
+def _commitment_state(
+    pr: dict[str, Any], now: float, due_present: bool, due_ts: float | None
+) -> str:
     if pr["receipts"]:
         return "fulfilled"
-    due = pr.get("due")
-    if not due:
+    if not due_present:
         return "open"  # no deadline declared -> cannot elapse
-    due_ts, _naive = _parse_due(due)
     if due_ts is None:
         return "invalid-due"
     return "elapsed-no-receipt" if now >= due_ts else "open"
 
 
-# A prev_hash that is present but not a string can never match a receipt's ref, so it is
-# recorded as this dangling marker: it reads as a gap, never as a root.
-_MALFORMED_PREV = "(malformed prev_hash)"
-
-
-def _link_value(body: dict[str, Any]) -> str | None:
-    """``body.prev_hash`` as a string link, ``None`` if absent, or the dangling marker."""
-    prev = body.get("prev_hash")
-    if prev is None or isinstance(prev, str):
-        return prev
-    return _MALFORMED_PREV
-
-
 def _check_chain(receipts: list[dict[str, Any]]):
-    """A prev_hash chain: exactly one root (prev_hash null), each other points
+    """A prev_hash chain: exactly one root (no prev_hash), each other points
     to a present receipt, and no receipt has more than one successor (a single
     linear chain: no forks, no cycles)."""
     if not receipts:
         return True, "no receipts"
     refs = {r["ref"] for r in receipts}
-    roots = [r for r in receipts if not r["prev_hash"]]
+    roots = [r for r in receipts if r["prev_hash"] is None]
     if len(roots) != 1:
         return False, f"expected exactly one chain root, found {len(roots)}"
     successors: dict[Any, int] = {}
     for r in receipts:
         prev = r["prev_hash"]
-        if prev and prev not in refs:
+        if prev is not None and prev not in refs:
             return False, "a receipt's prev_hash points to a missing receipt (gap)"
-        if prev:
+        if prev is not None:
             successors[prev] = successors.get(prev, 0) + 1
     if any(n > 1 for n in successors.values()):
         return False, "a receipt has more than one successor (fork)"

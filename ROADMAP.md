@@ -151,6 +151,8 @@ format-breaking changes are batched here.
 - Subject `name` carries a relative path (not a basename) plus optional
   `role: input | output`, so `continuity` can match inputs.
 - `final`, `expected_runs` (for `complete`).
+- Strict hex: lowercase, no whitespace (`^(?:[0-9a-f]{2})*$`), replacing today's
+  `bytes.fromhex` leniency.
 - Decide at implementation time whether any of this changes the documented
   meaning of an existing test name; if so, bump to `asexec-verify/2`.
 

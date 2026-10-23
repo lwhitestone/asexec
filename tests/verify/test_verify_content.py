@@ -46,10 +46,25 @@ def test_content__pass__all(scenario):
 )
 def test_content__fail__1_entry_is_well_formed(scenario, entry):
     """content #1: name is a string and digest[hash_alg] is a string."""
-    scenario.mutate("prereg", lambda body: body.update(subject=[entry]))
+    scenario.set("prereg", "payload.subject", [entry])
     report = scenario.verify("content")
     assert report["code"] == FAIL
     assert _entry_reasons(report) == ["malformed subject entry"]
+
+
+@pytest.mark.parametrize("subject", [[], "x", {}], ids=["empty-list", "string", "object"])
+def test_content__fail__1_subject_is_a_non_empty_array(scenario, subject):
+    """content #1: a present payload.subject is a non-empty array."""
+    scenario.set("prereg", "payload.subject", subject)
+    assert scenario.code("content") == FAIL
+
+
+def test_content__pass__2_null_hash_alg_is_absent(scenario):
+    """content #2: a null hash_alg is absent, so it defaults to sha-256. (The writer would
+    refuse to sign a subject without hash_alg; a signer need not use the writer.)"""
+    scenario.mutate_all(lambda body: body.update(hash_alg=None))
+    scenario.skip_writer_gate()
+    assert scenario.code("content") == PASS
 
 
 def test_content__fail__2_hash_alg_is_available(scenario):
@@ -63,6 +78,15 @@ def test_content__fail__2_hash_alg_is_available(scenario):
     report = scenario.verify("content")
     assert report["code"] == FAIL
     assert _entry_reasons(report) == ["algorithm unavailable: 'blake9'"]
+
+
+def test_content__fail__2_hash_alg_is_a_string(scenario):
+    """content #2: a non-string hash_alg is no algorithm this install has."""
+    scenario.mutate_all(lambda body: body.update(hash_alg=5))
+    scenario.skip_writer_gate()
+    report = scenario.verify("content")
+    assert report["code"] == FAIL
+    assert set(_entry_reasons(report)) == {"algorithm unavailable: 5"}
 
 
 @pytest.mark.parametrize("case", ["dotdot", "absolute", "dotdot-inside", "symlink"])
@@ -127,9 +151,14 @@ def test_content__fail__vacuous_no_artifacts_provided(scenario):
     assert report["results"]["content"]["applicable"] == 0
 
 
-def test_content__fail__vacuous_no_manifest_has_a_subject(scenario):
-    """content (*): with --artifacts but no manifest carrying a subject, nothing is examined."""
-    scenario.mutate_all(lambda body: (body.pop("subject"), body.pop("hash_alg")))
+@pytest.mark.parametrize("absent", ["missing", "null"])
+def test_content__fail__vacuous_no_manifest_has_a_subject(scenario, absent):
+    """content (*): with --artifacts but no manifest carrying a subject (missing or null),
+    nothing is examined."""
+    if absent == "missing":
+        scenario.mutate_all(lambda body: (body.pop("subject"), body.pop("hash_alg")))
+    else:
+        scenario.mutate_all(lambda body: body.update(subject=None))
     report = scenario.verify("content")
     assert report["code"] == FAIL
     assert report["results"]["content"]["applicable"] == 0

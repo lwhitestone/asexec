@@ -8,6 +8,7 @@ import pytest
 
 from asexec import keys, roughtime
 from asexec.errors import VerificationError
+from asexec.models import CeilingInput
 
 
 # --------------------------------------------------------------------------- #
@@ -163,7 +164,9 @@ def test_wrong_nonce_does_not_root(make_server):
 def test_verify_ceiling_ok(make_server, ceiling_for):
     nonce_hex = hashlib.sha256(b"m").hexdigest()
     lt_pub, sign_response = make_server()
-    ceiling = ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response)
+    ceiling = CeilingInput.model_validate(
+        ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response)
+    )
     res = roughtime.verify_ceiling(
         ceiling, "sha-256:" + nonce_hex, servers={"synthetic": {"pubkey": lt_pub}}
     )
@@ -174,7 +177,9 @@ def test_verify_ceiling_ok(make_server, ceiling_for):
 def test_verify_ceiling_nonce_must_bind(make_server, ceiling_for):
     nonce_hex = hashlib.sha256(b"m").hexdigest()
     lt_pub, sign_response = make_server()
-    ceiling = ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response)
+    ceiling = CeilingInput.model_validate(
+        ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response)
+    )
     res = roughtime.verify_ceiling(
         ceiling, "sha-256:" + "aa" * 32, servers={"synthetic": {"pubkey": lt_pub}}
     )
@@ -185,7 +190,9 @@ def test_verify_ceiling_nonce_must_bind(make_server, ceiling_for):
 def test_verify_ceiling_unpinned_witness(make_server, ceiling_for):
     nonce_hex = hashlib.sha256(b"m").hexdigest()
     lt_pub, sign_response = make_server()
-    ceiling = ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response)
+    ceiling = CeilingInput.model_validate(
+        ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response)
+    )
     res = roughtime.verify_ceiling(ceiling, "sha-256:" + nonce_hex, servers={})
     assert res["status"] == "unpinned"
 
@@ -193,7 +200,9 @@ def test_verify_ceiling_unpinned_witness(make_server, ceiling_for):
 def test_verify_ceiling_pubkey_must_match_pin(make_server, ceiling_for):
     nonce_hex = hashlib.sha256(b"m").hexdigest()
     lt_pub, sign_response = make_server()
-    ceiling = ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response)
+    ceiling = CeilingInput.model_validate(
+        ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response)
+    )
     _other_priv, other_pub = keys.generate()
     res = roughtime.verify_ceiling(
         ceiling, "sha-256:" + nonce_hex, servers={"synthetic": {"pubkey": other_pub}}
@@ -268,7 +277,8 @@ def test_fetch_ceiling_happy_path(monkeypatch, make_server):
     assert roughtime.parse_message(sent)["NONC"] == nonce
     # the returned record round-trips through the offline verifier
     monkeypatch.setitem(roughtime.SERVERS, "s0", {"pubkey": lt_pub})
-    assert roughtime.verify_ceiling(got, "sha-256:" + nonce.hex())["status"] == "verified"
+    parsed = CeilingInput.model_validate(got)
+    assert roughtime.verify_ceiling(parsed, "sha-256:" + nonce.hex())["status"] == "verified"
 
 
 def test_fetch_ceiling_strips_udp_framing(monkeypatch, make_server, wire):
