@@ -1,6 +1,7 @@
 # asexec - AsExecuted
 
-**Pre-registered attestations for AI executions. Tamper-evident and independently verifiable.**
+**Pre-registered attestations for AI executions: tamper-evident, non-repudiable, and
+independently verifiable.**
 
 **How it works in a nutshell:**
 
@@ -45,17 +46,19 @@ in the form of `asexec verify` providing a code regarding the checks applied.
 Every `verify` run checks [`BDR`](./docs/VERIFICATION.md#bdr) and renders the state of each
 commitment:
 
-- **Integrity.** A manifest (pre-registration or post-registration) was not altered after
-  signing, and was signed by the key its `keyid` names.
+- **Integrity and non-repudiation.** A manifest (pre-registration or post-registration) was
+  not altered after signing, and was signed by the private key whose public key its `keyid`
+  names, so the holder of that key cannot later deny signing it.
 - **What was committed to.** Every manifest carries a `target`, and every post-registration
   names the pre-registration it `fulfills`.
 - **Commitment state.** Each pre-registration is rendered as `fulfilled`, `open`,
   `elapsed-no-receipt` or `invalid-due`; a post-registration whose pre-registration was not
   provided is `notarization-only`. A post-registration counts toward fulfilling a
-  pre-registration only if it is validly signed by that pre-registration's key. The declared
-  deadline (`due`) is *displayed and used to tell `open` from `elapsed-no-receipt`*, but
-  `asexec` does **not** check that a post-registration was created before `due`; that check
-  (`timely`) arrives in 0.4.0.
+  pre-registration only if it is validly signed by that pre-registration's private key.
+  Silence is on the record too: a pre-registration with no counted post-registration reads
+  `elapsed-no-receipt` once its deadline (`due`) passes. But `asexec` does **not** yet check
+  that a post-registration was created before `due`, so a late one still turns it
+  `fulfilled`; that check (`timely`) arrives in 0.4.0.
 
 ### What `asexec` can prove (optional fields and tests)
 
@@ -80,9 +83,12 @@ test:
 
 ### What `asexec` cannot prove
 
-- **Who signed.** A key is pseudonymous: `asexec` proves which key signed, not whose it is.
-  The optional [identity check](#identity-optional-domain-control-check-no-ca) ties a key to
-  a domain, outside `verify`.
+- **Who signed.** Non-repudiation stops at the key. A key pair is pseudonymous: `asexec`
+  proves which private key signed, not whose it is, so a signer can still claim "that's not
+  my key" or "my key was stolen". The optional
+  [identity check](#identity-optional-domain-control-check-no-ca) ties a public key to a
+  domain, outside `verify`; a ceiling witness shows a manifest existed before any claimed
+  theft. There is no key revocation (see [Keys](#keys)).
 - **Provenance.** Content hashes prove a transcript wasn't altered; they do not prove it is the
   output of the named harness+model (asserted by the signer, not re-executed).
 - **Completeness.** It renders only the manifests you give it; it cannot prove a lab pre-registered
