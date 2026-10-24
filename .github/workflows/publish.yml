@@ -124,7 +124,11 @@ jobs:
         run: |
           ver="${GITHUB_REF_NAME#v}"
           for attempt in $(seq 1 30); do
+            # --refresh-package: re-fetch asexec's index page on every attempt. Without it
+            # uv reuses the page cached on the first attempt (cacheable for minutes), so a
+            # job that asked a moment before the upload was listed never sees it.
             if uv pip install --python "$RUNNER_TEMP/venv/bin/python" --no-deps \
+                --refresh-package asexec \
                 --default-index https://test.pypi.org/simple/ "asexec==${ver}"; then
               exit 0
             fi
