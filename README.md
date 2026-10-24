@@ -139,10 +139,6 @@ asexec verify preregistration.json postregistration.json \
     --tests BDR,content,chain,keyconsist --artifacts .
 ```
 
-`--due` must carry an explicit UTC offset or `Z` (`2099-01-01T00:00:00Z`); a timezone-less
-deadline is rejected. `--fulfills` and `--prev` take an existing manifest file or a literal
-`sha-256:<64 hex>` ref; anything else is an error.
-
 For a detailed look at parameters and options, see: `asexec --help`.
 
 ### Verification output
