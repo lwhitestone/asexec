@@ -51,8 +51,8 @@ tests that examine it.
 
 ## Output
 
-`asexec verify` prints a report for people to read, then the code. Only the code line and
-the exit status are stable to script against. The report's wording may change, except for
+`asexec verify` prints a report for people to read, then the code, then when the run
+happened. Only the code line and the exit status are stable to script against. The report's wording may change, except for
 the reasons this document lists.
 
 | Block | Printed | Shows |
@@ -62,8 +62,8 @@ the reasons this document lists.
 | `=== notarization-only … ===` | if any | Each postreg whose `payload.fulfills` matches no provided prereg. |
 | `=== tests ===` | always | One line per requested test: its result and a short reason. |
 | `=== ceiling trust … ===` | if a ceiling verified | Which witness you are trusting, and for what time. |
-| `=== what this does NOT prove ===` | always | The same fixed list on every run. |
-| code, then `DISCLAIMER:` | always | The [code](#conventions), and a reminder that a quoted code proves nothing until you reproduce it. |
+| code | always | The [code](#conventions). |
+| `Verified at <time>` | always | When the run happened, in UTC to the second: the moment commitment states were judged against. Not part of the code. |
 
 Exit status is `0` if every token in the code is `PASS`, else `2`. Commitment states never
 affect either: a run can show `ELAPSED-NO-RECEIPT` and still exit `0`.
@@ -88,15 +88,8 @@ $ asexec verify prereg.json postreg-1.json postreg-2.json --tests BDR,chain,keyc
   ✓ chain=PASS  (1/1 chain(s) ok)
   ✓ keyconsist=PASS  (1/1 commitment(s) ok)
 
-=== what this does NOT prove ===
-  - PROVENANCE: content hashes prove a transcript was not ALTERED; …
-  - COMPLETENESS: this renders only the manifests provided. …
-  - FLOOR = FRESHNESS, NOT 'PRE': …
-  - CEILING = A DIFFERENT TRUST CLASS: …
-  - IDENTITY: a key is pseudonymous. …
-
 asexec-verify/1 BDR=PASS chain=PASS keyconsist=PASS
-DISCLAIMER: this code is only meaningful if reproduced - …
+Verified at 2026-12-31T23:59:59Z
 ```
 
 ## Summary
@@ -163,13 +156,14 @@ $ asexec verify prereg.json --tests BDR
 }
 ```
 
-Output (abridged), exit status `0`:
+Output (from `=== tests ===` on), exit status `0`:
 
 ```
 === tests ===
   ✓ BDR=PASS  (1/1 manifest(s) ok)
-…
+
 asexec-verify/1 BDR=PASS
+Verified at 2026-12-31T23:59:59Z
 ```
 
 ---
@@ -228,14 +222,18 @@ $ asexec verify prereg.json --tests BDR,ceiling
 }
 ```
 
-Output (abridged), exit status `0`:
+Output (from `=== tests ===` on), exit status `0`:
 
 ```
 === tests ===
   ✓ BDR=PASS  (1/1 manifest(s) ok)
   ✓ ceiling=PASS  (1/1 ceiling(s) ok)
-…
+
+=== ceiling trust (what you are accepting) ===
+  - prereg.json: ceiling witnessed by int08h-Roughtime at … - you are trusting …
+
 asexec-verify/1 BDR=PASS ceiling=PASS
+Verified at 2026-12-31T23:59:59Z
 ```
 
 ---
@@ -289,14 +287,15 @@ The three files (unexamined fields elided; all three are signed by the same key)
   "signature": { "keyid": "sha-256:fce11965…", … } }
 ```
 
-Output (abridged), exit status `0`:
+Output (from `=== tests ===` on), exit status `0`:
 
 ```
 === tests ===
   ✓ BDR=PASS  (3/3 manifest(s) ok)
   ✓ chain=PASS  (1/1 chain(s) ok)
-…
+
 asexec-verify/1 BDR=PASS chain=PASS
+Verified at 2026-12-31T23:59:59Z
 ```
 
 ---
@@ -361,14 +360,15 @@ elided):
 }
 ```
 
-Output (abridged), exit status `0`:
+Output (from `=== tests ===` on), exit status `0`:
 
 ```
 === tests ===
   ✓ BDR=PASS  (1/1 manifest(s) ok)
   ✓ content=PASS  (1/1 subject(s) ok)
-…
+
 asexec-verify/1 BDR=PASS content=PASS
+Verified at 2026-12-31T23:59:59Z
 ```
 
 ---
@@ -425,14 +425,15 @@ $ asexec verify prereg.json --tests BDR,floor
 }
 ```
 
-Output (abridged), exit status `0`:
+Output (from `=== tests ===` on), exit status `0`:
 
 ```
 === tests ===
   ✓ BDR=PASS  (1/1 manifest(s) ok)
   ✓ floor=PASS  (1/1 floor(s) ok)
-…
+
 asexec-verify/1 BDR=PASS floor=PASS
+Verified at 2026-12-31T23:59:59Z
 ```
 
 ---
@@ -474,14 +475,15 @@ The two files (unexamined fields elided):
   "signature": { "keyid": "sha-256:fce11965…", … } }
 ```
 
-Output (abridged), exit status `0`:
+Output (from `=== tests ===` on), exit status `0`:
 
 ```
 === tests ===
   ✓ BDR=PASS  (2/2 manifest(s) ok)
   ✓ keyconsist=PASS  (1/1 commitment(s) ok)
-…
+
 asexec-verify/1 BDR=PASS keyconsist=PASS
+Verified at 2026-12-31T23:59:59Z
 ```
 
 ---
@@ -537,5 +539,5 @@ own block, since they have no prereg to sit under.
 existing code. Changing the documented meaning of an existing name bumps the code grammar
 (`asexec-verify/N`).
 
-The statements a passing code does not support are printed with every `verify` run and
-summarized in the [README](../README.md#what-does-asexec-prove).
+What a passing code does not establish is stated under each test (*Does not establish*)
+and summarized in the [README](../README.md#what-does-asexec-prove).

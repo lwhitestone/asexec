@@ -339,12 +339,8 @@ def cmd_verify(args) -> int:
         for line in report["ceiling_trust"]:
             print(f"  - {line}")
 
-    print("\n=== what this does NOT prove ===")
-    for nc in report["non_claims"]:
-        print(f"  - {nc}")
-
     print(f"\n{report['code']}")
-    print(f"DISCLAIMER: {report['disclaimer']}")
+    print(f"Verified at {report['verified_at']}")
     return 0 if report["ok"] else 2
 
 
