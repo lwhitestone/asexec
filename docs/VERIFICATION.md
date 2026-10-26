@@ -49,6 +49,56 @@ tests that examine it.
   `signature.pubkey` and `signature.sig` are not both hex. It fails `BDR`, and no other test
   examines it: it joins no commitment, so it is neither counted nor rejected.
 
+## Output
+
+`asexec verify` prints a report for people to read, then the code. Only the code line and
+the exit status are stable to script against. The report's wording may change, except for
+the reasons this document lists.
+
+| Block | Printed | Shows |
+|---|---|---|
+| `=== manifests ===` | always | One line per file: `✓` if `BDR`'s signature and keyid conditions hold (else `✗`), the path, `payload.phase` and `signature.keyid`. Indented beneath: why a malformed file is malformed, and one line each for a floor, a ceiling and content hashes when the manifest has them. |
+| `=== commitments ===` | always | One entry per prereg: its [state](#commitment-states), `ref`, `due`, the number of counted postregs, a chain problem if any, and each rejected postreg with its reason. |
+| `=== notarization-only … ===` | if any | Each postreg whose `payload.fulfills` matches no provided prereg. |
+| `=== tests ===` | always | One line per requested test: its result and a short reason. |
+| `=== ceiling trust … ===` | if a ceiling verified | Which witness you are trusting, and for what time. |
+| `=== what this does NOT prove ===` | always | The same fixed list on every run. |
+| code, then `DISCLAIMER:` | always | The [code](#conventions), and a reminder that a quoted code proves nothing until you reproduce it. |
+
+Exit status is `0` if every token in the code is `PASS`, else `2`. Commitment states never
+affect either: a run can show `ELAPSED-NO-RECEIPT` and still exit `0`.
+
+**Example.** The three files from the [`chain` example](#chain), checked with
+`BDR`, `chain` and `keyconsist`. Hashes are shortened with `…`.
+
+```console
+$ asexec verify prereg.json postreg-1.json postreg-2.json --tests BDR,chain,keyconsist
+=== manifests ===
+✓ prereg.json  [prereg]  keyid=sha-256:fce11965…
+✓ postreg-1.json  [postreg]  keyid=sha-256:fce11965…
+✓ postreg-2.json  [postreg]  keyid=sha-256:fce11965…
+
+=== commitments ===
+  [FULFILLED] prereg sha-256:6556ea33…
+    due          : (none declared)
+    postregs     : 2
+
+=== tests ===
+  ✓ BDR=PASS  (3/3 manifest(s) ok)
+  ✓ chain=PASS  (1/1 chain(s) ok)
+  ✓ keyconsist=PASS  (1/1 commitment(s) ok)
+
+=== what this does NOT prove ===
+  - PROVENANCE: content hashes prove a transcript was not ALTERED; …
+  - COMPLETENESS: this renders only the manifests provided. …
+  - FLOOR = FRESHNESS, NOT 'PRE': …
+  - CEILING = A DIFFERENT TRUST CLASS: …
+  - IDENTITY: a key is pseudonymous. …
+
+asexec-verify/1 BDR=PASS chain=PASS keyconsist=PASS
+DISCLAIMER: this code is only meaningful if reproduced - …
+```
+
 ## Summary
 
 | Test | Examines (\*) | Passes when all |
@@ -449,7 +499,8 @@ and is never counted toward fulfillment or `chain`.
 
 ## Commitment states
 
-Rendered in the human report, one per prereg. Never part of the verify code.
+One per prereg, shown in the `=== commitments ===` block of the report (see
+[Output](#output)). Never part of the verify code, and never affects the exit status.
 
 | State | Condition |
 |---|---|
@@ -462,6 +513,22 @@ Rendered in the human report, one per prereg. Never part of the verify code.
 A `payload.due` without a UTC offset or `Z` is read as UTC, never in the verifier's local
 timezone, and is flagged in the report. Timeliness (a postreg created before `due`) is not
 checked in this version.
+
+**Example** (`fulfilled`). A prereg signed with `--due 2099-01-01T00:00:00Z`, and two
+chained postregs as in the [`chain` example](#chain):
+
+```
+=== commitments ===
+  [FULFILLED] prereg sha-256:bebbfbb1…
+    due          : 2099-01-01T00:00:00Z
+    postregs     : 2
+```
+
+Each entry is the state in capitals and the prereg's `ref`, then `due` (or `(none
+declared)`) and the number of counted postregs. Problems follow as `✗` lines: a `due`
+without a timezone, an unparseable `due`, a chain problem (on the `postregs` line), or a
+rejected postreg and why it does not count. `notarization-only` postregs are listed in their
+own block, since they have no prereg to sit under.
 
 ## Not in this version
 
