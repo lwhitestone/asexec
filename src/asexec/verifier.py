@@ -102,32 +102,6 @@ TEST_CATALOG: tuple[str, ...] = (
 # meaningful asexec verification, so `verify` requires it explicitly.
 REQUIRED_TEST = "BDR"
 
-DISCLAIMER = (
-    "this code is only meaningful if reproduced - do not treat a quoted code "
-    "as proof. Real verification = run this tool against the files and get "
-    "this code yourself."
-)
-
-NON_CLAIMS = [
-    "PROVENANCE: content hashes prove a transcript was not ALTERED; they do NOT "
-    "prove it is the output of the named harness+model (asserted by the signer, "
-    "not re-executed).",
-    "COMPLETENESS: this renders only the manifests provided. It cannot prove a "
-    "lab pre-registered every eval it should have (selective pre-registration).",
-    "FLOOR = FRESHNESS, NOT 'PRE': a drand floor proves a manifest was created "
-    "NO EARLIER THAN a public moment (anti-precomputation). It does NOT prove "
-    "the pre-registration preceded the run - on its own it cannot bound "
-    "backdating.",
-    "CEILING = A DIFFERENT TRUST CLASS: an optional ceiling witness (Roughtime) "
-    "proves creation NO LATER THAN time T, but only by trusting the named "
-    "signer(s) to be honest about time - a signature-witness trust, NOT the "
-    "trustless proof-of-work of an OTS/Bitcoin ceiling. Without a ceiling, the "
-    "'pre' is SOCIAL (the witnessed public repo), not cryptographic.",
-    "IDENTITY: a key is pseudonymous. Binding it to a real entity is a separate "
-    "check (see 'asexec identity'); absence of that binding is not proof of who "
-    "signed.",
-]
-
 
 def parse_tests(spec: str) -> list[str]:
     """Parse a ``--tests`` string into a validated, de-duplicated list.
@@ -328,7 +302,8 @@ def verify_paths(
     """Load, verify, group, evaluate the requested tests, and build the code.
 
     ``servers`` is the pinned Roughtime witness map for ``ceiling`` (default:
-    ``roughtime.SERVERS``).
+    ``roughtime.SERVERS``). ``now`` (default: the current time) is the moment commitment
+    states are judged at, and is reported as ``verified_at``.
     """
     now = time.time() if now is None else now
     files = _expand(paths)
@@ -431,9 +406,13 @@ def verify_paths(
         "code": code,
         "ok": ok,
         "ceiling_trust": ceiling_trust,
-        "non_claims": NON_CLAIMS,
-        "disclaimer": DISCLAIMER,
+        "verified_at": _utc_timestamp(now),
     }
+
+
+def _utc_timestamp(epoch: float) -> str:
+    """``epoch`` as ISO-8601 UTC to the second, e.g. ``2026-10-25T14:03:12Z``."""
+    return datetime.datetime.fromtimestamp(epoch, datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _tally(units: list[bool], nowhere_reason: str, fail_noun: str) -> dict[str, Any]:

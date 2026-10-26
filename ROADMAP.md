@@ -208,6 +208,10 @@ Runtime today is 13 packages; `py_ecc` alone roots 10 (`eth-utils`,
   `int08h-Roughtime` capture (baked as an offline fixture). The other three were
   unreachable during capture (UDP egress, not a known format mismatch), so their interop is
   expected but unproven; `--ceiling` fails safe if a server's variant differs.
+- **Opt-in verifier signatures.** Let a verifier sign the verify code and report time with
+  their own key, so a published result shows who reproduced it. Opt-in, because anyone
+  with the same inputs gets the same code, so a verifier's identity matters less than a
+  practitioner's.
 - **Process (not releases):** team/customer usage after dogfooding; a
   verification website as a *separate* repo, buildable by anyone from the
   spec alone.

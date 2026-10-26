@@ -2,13 +2,14 @@
 
 import json
 import os
+import re
 import runpy
 import stat
 import sys
 
 import pytest
 
-from asexec import cli, drand, identity, keys, manifest, roughtime
+from asexec import cli, drand, identity, keys, manifest, roughtime, verifier
 from asexec.errors import NetworkError
 
 REF = "sha-256:" + "ab" * 32
@@ -310,6 +311,18 @@ def test_verify_prints_content_ok(tmp_path, key, capsys):
     capsys.readouterr()
     assert run("verify", out, "--tests", "BDR,content", "--artifacts", art) == 0
     assert "content hashes ok" in capsys.readouterr().out
+
+
+def test_verify_ends_with_code_then_time(prereg, capsys):
+    assert run("verify", prereg, "--tests", "BDR") == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[-2] == "asexec-verify/1 BDR=PASS"
+    assert re.fullmatch(r"Verified at \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", lines[-1])
+
+
+def test_verify_report_records_when_states_were_judged(prereg):
+    report = verifier.verify_paths([prereg], ["BDR"], now=0)
+    assert report["verified_at"] == "1970-01-01T00:00:00Z"
 
 
 def test_verify_prints_notarization_only(tmp_path, key, prereg, capsys):
