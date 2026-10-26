@@ -89,7 +89,7 @@ $ asexec verify prereg.json postreg-1.json postreg-2.json --tests BDR,chain,keyc
   ✓ keyconsist=PASS  (1/1 commitment(s) ok)
 
 asexec-verify/1 BDR=PASS chain=PASS keyconsist=PASS
-Verified at 2026-10-26T04:51:39Z
+Verified at 2026-12-31T23:59:59Z
 ```
 
 ## Summary
@@ -163,7 +163,7 @@ Output (from `=== tests ===` on), exit status `0`:
   ✓ BDR=PASS  (1/1 manifest(s) ok)
 
 asexec-verify/1 BDR=PASS
-Verified at 2026-10-26T04:51:39Z
+Verified at 2026-12-31T23:59:59Z
 ```
 
 ---
@@ -233,7 +233,7 @@ Output (from `=== tests ===` on), exit status `0`:
   - prereg.json: ceiling witnessed by int08h-Roughtime at … - you are trusting …
 
 asexec-verify/1 BDR=PASS ceiling=PASS
-Verified at 2026-10-26T04:51:39Z
+Verified at 2026-12-31T23:59:59Z
 ```
 
 ---
@@ -295,7 +295,7 @@ Output (from `=== tests ===` on), exit status `0`:
   ✓ chain=PASS  (1/1 chain(s) ok)
 
 asexec-verify/1 BDR=PASS chain=PASS
-Verified at 2026-10-26T04:51:39Z
+Verified at 2026-12-31T23:59:59Z
 ```
 
 ---
@@ -368,7 +368,7 @@ Output (from `=== tests ===` on), exit status `0`:
   ✓ content=PASS  (1/1 subject(s) ok)
 
 asexec-verify/1 BDR=PASS content=PASS
-Verified at 2026-10-26T04:51:39Z
+Verified at 2026-12-31T23:59:59Z
 ```
 
 ---
@@ -433,7 +433,7 @@ Output (from `=== tests ===` on), exit status `0`:
   ✓ floor=PASS  (1/1 floor(s) ok)
 
 asexec-verify/1 BDR=PASS floor=PASS
-Verified at 2026-10-26T04:51:39Z
+Verified at 2026-12-31T23:59:59Z
 ```
 
 ---
@@ -483,7 +483,7 @@ Output (from `=== tests ===` on), exit status `0`:
   ✓ keyconsist=PASS  (1/1 commitment(s) ok)
 
 asexec-verify/1 BDR=PASS keyconsist=PASS
-Verified at 2026-10-26T04:51:39Z
+Verified at 2026-12-31T23:59:59Z
 ```
 
 ---
