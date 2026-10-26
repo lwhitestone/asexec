@@ -87,7 +87,40 @@ Bedrock. Mandatory in every run.
 **Vacuous reason:** `no manifests to verify`.
 
 **Does not establish:** who signed (internal consistency only); that `payload` is a
-well-formed asexec body (any signed JSON passes).
+well-formed asexec body (any validly signed object `payload` passes, whatever it holds).
+
+**Example** (all requirements pass)
+
+```console
+$ asexec verify prereg.json --tests BDR
+```
+
+`prereg.json`:
+
+```jsonc
+{
+  "payload": {
+    "schema_version": "asexec",
+    "predicateType": "https://asexec.dev/manifest",
+    "phase": "prereg",
+    "target": "model m via provider p"
+  },
+  "signature": {
+    "pubkey": "2ab02c86…",
+    "sig": "fbeac09c…",
+    "keyid": "sha-256:fce11965…"
+  }
+}
+```
+
+Output (abridged), exit status `0`:
+
+```
+=== tests ===
+  ✓ BDR=PASS  (1/1 manifest(s) ok)
+…
+asexec-verify/1 BDR=PASS
+```
 
 ---
 
@@ -123,6 +156,38 @@ Roughtime witness: the manifest was created no later than time T.
 not proof-of-work. Interop is proven for `int08h-Roughtime` and expected, not proven, for
 the other pinned servers.
 
+**Example** (all requirements pass)
+
+```console
+$ asexec verify prereg.json --tests BDR,ceiling
+```
+
+`prereg.json` (unexamined fields elided):
+
+```jsonc
+{
+  "payload": { … },                              // ref(payload) = sha-256:6556ea33…
+  "signature": { … },
+  "ceiling": {
+    "ceiling_type": "roughtime",
+    "nonce": "6556ea33…",                        // = ref(payload), without the prefix
+    "witness_id": "int08h-Roughtime",
+    "pubkey": "016e6e02…",                       // the pinned int08h key
+    "response": "06000000400000006000…"
+  }
+}
+```
+
+Output (abridged), exit status `0`:
+
+```
+=== tests ===
+  ✓ BDR=PASS  (1/1 manifest(s) ok)
+  ✓ ceiling=PASS  (1/1 ceiling(s) ok)
+…
+asexec-verify/1 BDR=PASS ceiling=PASS
+```
+
 ---
 
 ### `chain`
@@ -151,6 +216,38 @@ A postreg is **counted** for a prereg if it meets the [counting rule](#counting-
 
 **Does not establish:** completeness. Dropping the last postreg(s) of a chain is not
 detectable.
+
+**Example** (all requirements pass)
+
+```console
+$ asexec verify prereg.json postreg-1.json postreg-2.json --tests BDR,chain
+```
+
+The three files (unexamined fields elided; all three are signed by the same key):
+
+```jsonc
+// prereg.json: ref = sha-256:6556ea33…
+{ "payload": { "phase": "prereg", … }, "signature": { "keyid": "sha-256:fce11965…", … } }
+
+// postreg-1.json: ref = sha-256:d2ad5ad7…, the root (no prev_hash)
+{ "payload": { "phase": "postreg", "fulfills": "sha-256:6556ea33…", … },
+  "signature": { "keyid": "sha-256:fce11965…", … } }
+
+// postreg-2.json: links to postreg-1
+{ "payload": { "phase": "postreg", "fulfills": "sha-256:6556ea33…",
+               "prev_hash": "sha-256:d2ad5ad7…", … },
+  "signature": { "keyid": "sha-256:fce11965…", … } }
+```
+
+Output (abridged), exit status `0`:
+
+```
+=== tests ===
+  ✓ BDR=PASS  (3/3 manifest(s) ok)
+  ✓ chain=PASS  (1/1 chain(s) ok)
+…
+asexec-verify/1 BDR=PASS chain=PASS
+```
 
 ---
 
@@ -189,6 +286,41 @@ manifest with a subject)`.
 **Does not establish:** provenance. A match shows the artifact was not altered, not that it
 is the output of the named harness and model.
 
+**Example** (all requirements pass)
+
+```console
+$ asexec verify prereg.json --tests BDR,content --artifacts artifacts
+```
+
+`artifacts/transcript.txt` contains `hello` and a newline. `prereg.json` (unexamined fields
+elided):
+
+```jsonc
+{
+  "payload": {
+    "subject": [
+      {
+        "name": "transcript.txt",
+        "digest": { "sha-256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03" }
+      }
+    ],
+    "hash_alg": "sha-256",
+    …
+  },
+  "signature": { … }
+}
+```
+
+Output (abridged), exit status `0`:
+
+```
+=== tests ===
+  ✓ BDR=PASS  (1/1 manifest(s) ok)
+  ✓ content=PASS  (1/1 subject(s) ok)
+…
+asexec-verify/1 BDR=PASS content=PASS
+```
+
 ---
 
 ### `floor`
@@ -217,6 +349,42 @@ drand beacon: the manifest was created no earlier than time T.
 **Does not establish:** that the pre-registration preceded the run. A floor bounds
 freshness (anti-precomputation), not backdating.
 
+**Example** (all requirements pass)
+
+```console
+$ asexec verify prereg.json --tests BDR,floor
+```
+
+`prereg.json` (unexamined fields elided):
+
+```jsonc
+{
+  "payload": {
+    "anchor": {
+      "floor": {
+        "floor_type": "drand",
+        "chain_hash": "52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971",
+        "round": 33394706,
+        "signature": "9791d98e2e577017…",
+        "randomness": "8442c678de44756b…"       // = sha256(signature)
+      }
+    },
+    …
+  },
+  "signature": { … }
+}
+```
+
+Output (abridged), exit status `0`:
+
+```
+=== tests ===
+  ✓ BDR=PASS  (1/1 manifest(s) ok)
+  ✓ floor=PASS  (1/1 floor(s) ok)
+…
+asexec-verify/1 BDR=PASS floor=PASS
+```
+
 ---
 
 ### `keyconsist`
@@ -238,6 +406,33 @@ Whether a prereg's postregs were signed by the prereg's own key.
 A postreg with an invalid signature is not judged here (it fails `BDR`).
 
 **Vacuous reason:** `requested but no commitment has receipts to key-check`.
+
+**Example** (all requirements pass)
+
+```console
+$ asexec verify prereg.json postreg.json --tests BDR,keyconsist
+```
+
+The two files (unexamined fields elided):
+
+```jsonc
+// prereg.json: ref = sha-256:6556ea33…
+{ "payload": { "phase": "prereg", … }, "signature": { "keyid": "sha-256:fce11965…", … } }
+
+// postreg.json: same keyid as the prereg
+{ "payload": { "phase": "postreg", "fulfills": "sha-256:6556ea33…", … },
+  "signature": { "keyid": "sha-256:fce11965…", … } }
+```
+
+Output (abridged), exit status `0`:
+
+```
+=== tests ===
+  ✓ BDR=PASS  (2/2 manifest(s) ok)
+  ✓ keyconsist=PASS  (1/1 commitment(s) ok)
+…
+asexec-verify/1 BDR=PASS keyconsist=PASS
+```
 
 ---
 
