@@ -165,7 +165,7 @@ above. No broader test program.
 - `complete` + `final` / `expected_runs`: tail-truncation detection; no M1 source needs it yet.
 - `--trust-roots`: the pinned drand and Roughtime set is enough until readers ask to choose their own.
 - Directory hash v2, as a new `hash_alg` label: M1 records hash snapshots, not trees, and a new label leaves v1 digests valid.
-- [JCS (RFC 8785)](https://www.rfc-editor.org/rfc/rfc8785) canonicalization: DSSE verifies the stored bytes, so canonical form no longer matters for verification.
+- [JCS (RFC 8785)](https://www.rfc-editor.org/rfc/rfc8785) canonicalization: DSSE verifies the stored bytes, so canonical form no longer matters for verification (worth adopting for multiple writers to produce byte-identical bodies, and therefore identical refs, from the same data).
 - Phase 1 invariant catalog, property/mutation testing, extra CI matrix: tests are added only when dogfooding or feedback shows a need.
 - Phase 3 dependency reduction (pydantic, blake3, BLS vendoring, Actions pinning): worthwhile, but not needed for M1–M3.
 - Full normative `SPEC.md`: M2 freezes the wire format and vectors; a complete spec can follow adoption.
