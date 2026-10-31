@@ -232,5 +232,10 @@ Kept here so they are not re-litigated:
 | 0.2.0 | Schema rebalance (bedrock vs. optional); drand floor + Roughtime ceiling as distinct anchors; canonical verify code |
 | 0.3.0 | Vocabulary/type realignment: `prereg`/`postreg`, free-form `target`, optional `due`/`declaration`, opt-in floor, `BDR` token, Pydantic-typed construction |
 | 0.3.1 – 0.3.11 | Provenance handoff to hand-curated maintenance; docs polish; ruff, uv, pytest, CI, release scripts; Python ≥ 3.11 |
+| 0.3.12 | Roadmap reset: the version-keyed plan from 0.3.12 on |
 | 0.3.13 | First PyPI release: tag-triggered Trusted Publishing (TestPyPI, then PyPI behind approval); README *Known issues* |
 | 0.3.14 | Soundness patch: a single linear `prev_hash` chain; a postreg counts only if validly signed by the prereg's key; duplicate keys and malformed input fail per file; `content` confined to `--artifacts`; timezone-explicit `due` and an `invalid-due` state; `keygen` never overwrites; fail-loud `--floor` / `--ceiling` / `--fulfills` |
+| 0.3.15 | Verifier and CLI soundness patch; `docs/VERIFICATION.md` catalog of every verify test; Termux development setup |
+| 0.3.16 | Strict input models for the verifier, with "absent means missing or null"; the verify suite becomes a black-box contract test of `VERIFICATION.md`; `chain` and `floor` validation fixes |
+| 0.3.17 | Python 3.12–3.14 (3.11 dropped); README restructured around what `asexec` proves, keys and non-repudiation |
+| 0.3.19 | Verify report drops the printed non-claims and disclaimer and ends with the verification time; `VERIFICATION.md` worked examples and output reference; TestPyPI smoke-test retry fix |
