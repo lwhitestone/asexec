@@ -83,6 +83,56 @@ signature is bound to the payload's type and length. DSSE is the envelope built 
   `signatures` list makes M3 co-signing additive. The cost: a format break, regenerated
   golden vectors, and a payload that must be decoded to be read.
 
+How the pieces relate. Only the body bytes are fixed; the PAE is rebuilt by signer and
+verifier and never stored:
+
+```
+body bytes = {"phase":"prereg","target":"model m via provider p",…}   ← the "exact stored bytes"
+payload    = base64(body bytes)                                       ← what the file holds
+PAE        = "DSSEv1 <len> application/vnd.asexec+json <len> " + body bytes
+sig        = ed25519_sign(private key, PAE)
+ref        = sha-256(body bytes)
+```
+
+```jsonc
+// today (0.3.x)
+{
+  "payloadType": "application/vnd.asexec+json",
+  "payload": { "phase": "prereg", … },           // a JSON object
+  "signature": { "alg": "ed25519", "keyid": "…", "pubkey": "…", "sig": "…" },
+  "ceiling": { … }                               // optional, unsigned
+}
+
+// 0.4.0 (DSSE)
+{
+  "payloadType": "application/vnd.asexec+json",
+  "payload": "eyJwaGFzZSI6InByZXJlZyIs…",        // base64 of the body bytes
+  "signatures": [ { "keyid": "…", "sig": "…" } ]
+}
+```
+
+Rules that follow:
+
+- Decode `payload` with strict base64, so each set of body bytes has one spelling.
+- Read every field the tests check from the verified body bytes, never from another copy in
+  the file.
+- Keep rejecting duplicate JSON keys in the decoded body: parsers disagree on which value
+  wins, so two verifiers could read different fields from the same signed bytes.
+
+Open format decisions:
+
+- **Where the ceiling goes.** DSSE defines only `payloadType`, `payload` and
+  `signatures`, and the ceiling cannot be inside the body (its nonce is the body's own
+  hash). Options: (a) an outer asexec wrapper that holds a standard DSSE envelope plus the
+  unsigned `ceiling`, so DSSE tooling reads the inner envelope untouched and a ceiling can
+  still be attached after signing; (b) the ceiling inside the signed payload, beside the
+  body, which works only if the nonce is `ref` of the body and the witness is fetched
+  before signing, and makes the signed payload something other than the body.
+- **Where the public key goes.** A DSSE signature entry has only `keyid` and `sig`, and
+  `BDR` derives the `keyid` from the public key. Options: the same wrapper as the ceiling
+  (bound to the entry by its `keyid`), inside the signed payload, or supplied from outside
+  the file (`--trusted-keys`, with `signer`).
+
 **Verify**
 
 - `signer`: `--signer` / `--trusted-keys <file>`.
