@@ -73,6 +73,7 @@ from pydantic import ValidationError
 
 from . import drand, hashing, keys, manifest
 from .canonical import signing_input
+from .constants import CODE_VERSION, DEFAULT_HASH_ALG
 from .errors import VerificationError
 from .models import (
     CeilingInput,
@@ -83,10 +84,6 @@ from .models import (
     SubjectEntryInput,
     SubjectInput,
 )
-
-# The canonical grammar version for the verify code. Independent of the
-# schema/PAE versions - it versions the *code format*, not the signed bytes.
-CODE_VERSION = "asexec-verify/1"
 
 # The test catalog, alphabetical (the order names appear in a code).
 TEST_CATALOG: tuple[str, ...] = (
@@ -287,7 +284,7 @@ def verify_content(body: dict[str, Any], artifacts_dir: str | None) -> dict[str,
             "entries": [{"name": "(subject)", "ok": False, "reason": "malformed subject"}],
         }
     present, alg = _lookup(body, "hash_alg")
-    alg = alg if present else hashing.DEFAULT_ALG
+    alg = alg if present else DEFAULT_HASH_ALG
     entries = [_verify_subject_item(item, alg, artifacts_dir) for item in subject]
     return {"status": "ok" if all(e["ok"] for e in entries) else "mismatch", "entries": entries}
 
