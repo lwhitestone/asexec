@@ -4,11 +4,20 @@
 > This file is AI-assisted and is meant as a rough context-setter.
 > Treat AI output with due skepticism.
 
-**Ordering logic:** make the current claims true first; then pin down the
-invariants and test them; then make every format-breaking change in one
-release; then shrink the dependency surface; then freeze the spec. Anything
-that changes signed bytes or verify-code semantics lands *before* the spec
-freeze, so the format people adopt is the format we can stand behind.
+## Milestones
+
+- **M1:** a narrow slice of disclosure promises: one record format tested on two sources (Anthropic's RSP promises; an assessor source TBD), hardened against tampering and repudiation → asexec 0.4.x.
+- **M2:** promises already made in public are seeded into a registry, with in-toto export; the format freezes here → asexec 0.5.0.
+- **M3:** parties sign their own commitments, with assessor co-signing → asexec 0.5.x.
+
+The registry is a separate project, asexec-registry, and is not planned here. Anything not
+needed for M1–M3 moves to 0.6.0 or later. A test is added only once dogfooding or user
+feedback shows it is needed.
+
+**Ordering logic:** make the current claims true first; then make every format-breaking
+change in one release; then freeze the format at M2, after M1 dogfooding. Anything
+that changes signed bytes or verify-code semantics lands *before* the freeze,
+so the format people adopt is the format we can stand behind.
 Distribution (PyPI) is cut early to claim the name, with honest caveats.
 
 ## Versioning
@@ -33,161 +42,80 @@ Distribution (PyPI) is cut early to claim the name, with honest caveats.
 
 ## Version map
 
-| Version | Phase | Theme | Format break? |
-|---|---|---|---|
-| 0.1.0 – 0.3.11 | — | shipped (see *History*) | — |
-| **0.3.13** | Distribution | First PyPI release: tag-triggered trusted publishing; README *Known issues* | no |
-| **0.3.14** | 0 — Soundness | Fix the confirmed soundness bugs; correct README overclaims | no (patch fixes to documented semantics) |
-| *(no release needed)* | 1 — Invariants | Invariant catalog, test audit, golden vectors, property/mutation testing, CI matrix | no |
-| **0.4.0** | 2 — Verify surface | Auditor-facing verify tests + the manifest fields they need; all format fixes batched | **yes** |
-| **0.4.x** | 3 — Dependencies | Drop pydantic and blake3; vendor-or-pin BLS; supply-chain hardening | no (golden vectors must not move) |
-| **0.5.0** | 4 — Spec freeze | `SPEC.md` normative, golden vectors normative, hardened release pipeline | only corrections found while writing the spec |
-| *unversioned* | Later | Per-key index · re-execution mode · cosigners · multi-party · regulatory field | as scheduled |
+| Version | Scope | Milestone |
+|---|---|---|
+| 0.3.x | shipped (current 0.3.19; see *History*) | — |
+| **0.4.0** | slim verify surface + format changes (below) | M1 |
+| **0.4.x** | patches found while dogfooding M1 | M1 |
+| **0.5.0** | format freeze: wire format + golden vectors become normative; `asexec export --in-toto` | M2 |
+| **0.5.x** | `cosign` verify test (additive, since `signatures` is already a list) | M3 |
+| **0.6.0+** | everything deferred (below) | — |
 
 ---
 
-## 0.3.13 — First PyPI release
+## 0.4.0 — M1: Slim verify surface and format changes
 
-The `asexec` name is unclaimed on PyPI while the README already says
-`pip install asexec`. Claim it with a real (alpha) release, not a placeholder.
+**Format**
 
-- Tag-triggered publish workflow (`.github/workflows/publish.yml`) using PyPI
-  Trusted Publishing (OIDC, no long-lived tokens): TestPyPI first, then PyPI
-  behind a protected environment. PEP 740 attestations on by default.
-- README *Known issues* section listing the confirmed Phase 0 findings, so the
-  PyPI page carries the caveats.
-- Version numbers on PyPI can never be reused (even after yank/delete), so the
-  workflow is proven on TestPyPI before the first real upload.
+- DSSE envelope: `payload` is base64 of the exact signed bytes; the PAE prefix is
+  `DSSEv1`; `signatures: [...]` (one entry for now). The verifier checks the stored
+  bytes and never re-canonicalizes. `ref` = digest of the payload bytes.
+- `PREDICATE_TYPE` → a URL the project controls.
+- New optional body field `origin`: `self` | `extracted`. Extracted records carry the
+  source snapshot as a subject (digest + URL) and put the quoted passage in `notes`. Not
+  `provenance`, which already means `asserted` | `reproducible`.
+- Strict lowercase hex.
+- Convention: one prereg per promise. No list-level schema.
 
-## 0.3.14 — Phase 0: Soundness patch
+**PAE vs DSSE.** PAE (pre-authentication encoding) is the rule for which bytes get
+signed: `PAE(type, body) = prefix SP len(type) SP type SP len(body) SP body`, so a
+signature is bound to the payload's type and length. DSSE is the envelope built around it:
+`payloadType`, `payload` as base64 of the exact signed bytes, and a `signatures` list.
 
-Point fixes, each written test-first (a failing test reproducing the bug, then
-the fix). No redesign; anything requiring a format change waits for 0.4.0.
+- **Today (0.3.x):** asexec uses PAE alone, with its own prefix `asexec-PAE/v1`, in a
+  bespoke envelope. `payload` is stored as a JSON object, so signer and verifier must each
+  re-derive the same canonical bytes (sorted keys, compact separators, UTF-8), and `ref`
+  depends on them too. Any difference in serialization (another language's JSON encoder,
+  number formatting, a library change) breaks signatures and refs.
+- **0.4.0:** full DSSE. The verifier checks the stored bytes as they are, so
+  canonicalization no longer matters for verification. The `DSSEv1` prefix lets standard
+  DSSE and in-toto tooling read asexec envelopes (groundwork for M2's export), and the
+  `signatures` list makes M3 co-signing additive. The cost: a format break, regenerated
+  golden vectors, and a payload that must be decoded to be read.
 
-| Finding | Fix |
-|---|---|
-| A forked `prev_hash` chain passes `chain` | Require a single linear chain (each receipt has ≤1 successor) |
-| A postreg by **any** key marks a commitment `fulfilled` | A postreg counts toward fulfillment only if validly signed by the prereg's key; others are rendered separately |
-| A postreg with an **invalid** signature counts toward `fulfilled` | Same as above |
-| README claims a `due` timeliness check that does not exist | Correct the README now; the real check (`timely`) ships in 0.4.0 |
-| README claims tail truncation is detectable | Correct the README; close-out manifests (`final`) ship in 0.4.0 |
-| Duplicate JSON keys are silently accepted (last wins) | Reject on load (`object_pairs_hook`); manifest is malformed → `BDR=FAIL` |
-| Malformed input crashes `verify` (e.g. `JSONDecodeError`) | Malformed manifests are per-file failures, never a crash |
-| `content` follows `../` / absolute subject names out of `--artifacts` | Confine resolution to the artifacts directory; escape → mismatch |
-| Timezone-less `due` is read in the verifier's local TZ | Require an explicit offset/`Z` at sign time; flag naive values at verify time |
-| Unparseable `due` silently renders `open` | Render an explicit `invalid-due` state |
-| `keygen` overwrites an existing key file | `O_EXCL`; refuse unless `--force` |
-| `--floor` / `--ceiling` fetch failure only warns and signs anyway | Fail by default; opt-in `--best-effort` |
-| `--fulfills <typo>` is silently stored as a literal ref | Accept only an existing file or a well-formed `sha-256:<64 hex>` ref |
-| Unknown `hash_alg` (e.g. blake3 not installed) crashes `verify` | Content entry fails with "algorithm unavailable" |
+**Verify**
 
-Also: refresh stale docstrings/comments (`__init__.py`, the Roughtime
-`SERVERS` alpha caveat).
+- `signer`: `--signer` / `--trusted-keys <file>`.
+- `timely`: postreg ceiling ≤ prereg `due`.
+- New commitment state `no-due`, separate from `open`. This changes what `open` means, so
+  the code grammar bumps to `asexec-verify/2`.
+- `--json`: a stable report (the registry reads it).
+- Unknown signed fields are shown as unverified content, never dropped.
 
-## Phase 1 — Invariant catalog and test audit
+**Tests:** golden vectors, regenerated for the DSSE format, plus tests for the items
+above. No broader test program.
 
-The test audit and the code audit are one workstream: decide the invariants,
-then make the test suite exactly that set.
+## 0.5.0 — M2: Format freeze
 
-- **`INVARIANTS.md`**: numbered invariants (I-1…I-n), each mapped to the
-  test(s) that enforce it. Examples: verify never raises on any input; any
-  byte change to a signed body → `BDR=FAIL`; fulfillment requires a valid
-  same-key postreg; a requested test that applies nowhere is `FAIL`; canonical
-  bytes and directory digests are identical across OSes.
-- **Audit**: every existing test maps to an invariant or is deleted/merged;
-  every invariant without a test gets one.
-- **Golden vectors**: a fixed key + fixed bodies with committed hex for
-  canonical bytes, `ref`, signature, and directory digest. Guards the
-  signed-byte format against accidental drift (and proves Phase 3 changed
-  nothing). Becomes the seed of the spec's test vectors.
-- **Property tests / fuzzing** (`hypothesis`): canonicalization, the Roughtime
-  message parser, `verify_paths` over arbitrary input.
-- **Mutation testing** (`mutmut`) over `verifier`, `canonical`, `hashing`,
-  `manifest`: a surviving mutant is either an untested invariant or dead code.
-- **CLI tests**: exit codes, fail-loud paths, argument validation (`cli.py`
-  currently has only the CI smoke run).
-- **CI**: add Windows + macOS runners (path/dir-hash determinism) and Python
-  3.13/3.14; branch-coverage gate; a job without optional extras.
+- The wire format and the golden vectors become normative.
+- `asexec export --in-toto`.
 
-## 0.4.0 — Phase 2: Verify surface for auditors and governance
+## 0.5.x — M3: Co-signing
 
-Work backwards from what third-party auditors and eval-runner governance need
-to check, then add the manifest fields that make it checkable. All
-format-breaking changes are batched here.
+- `cosign` verify test. Additive: `signatures` is already a list from 0.4.0.
 
-**New verify tests** (ranked):
+## Deferred to 0.6.0+
 
-1. `signer` — `--signer <keyid>` / `--trusted-keys <file>`: manifests are signed
-   by a key the *verifier* chose to trust. Today `BDR` proves only internal
-   consistency, never *who* signed.
-2. `continuity` — postregs keep the prereg's `target`, and every prereg subject
-   reappears in the postreg with the identical digest ("you ran what you
-   pre-registered").
-3. `order` — prereg ceiling < postreg floor: the only *cryptographic* proof of
-   "pre". Buildable from existing anchors; add a CLI shortcut to attach both.
-4. `timely` — postreg ceiling (midpoint + radius) ≤ prereg `due`.
-5. `frame` — bodies conform to this version's schema (known `phase`,
-   `predicateType`, ref formats, TZ-aware `due`); signed-but-unrecognized
-   fields are rendered as *unverified content*, never silently ignored.
-6. `complete` — a close-out postreg (`final: true`) and optional
-   `expected_runs` at prereg make tail truncation detectable (also resolves the
-   PRD's runs-vs-window open question).
-
-**Output / trust surface**
-
-- `--json`: a stable, machine-readable report for CI gates.
-- Trust roots visible: print the pinned drand/Roughtime set (or its hash);
-  `--trust-roots <file>` to let the reader choose which witnesses to trust.
-
-**Format changes**
-
-- `PREDICATE_TYPE` → a URL the project controls (e.g. the repo's `SPEC.md`
-  anchor), replacing `https://asexec.dev/manifest`.
-- Directory hash v2: unambiguous encoding (length-prefixed, or git-tree
-  compatible) — v1 joins `hash  path` lines with `\n`, which a POSIX filename
-  can contain, and sorts by hash rather than path.
-- Canonicalization: adopt RFC 8785 (JCS) or restrict the value domain (no
-  floats/NaN); `json.dumps` behaviour is not a spec.
-- Subject `name` carries a relative path (not a basename) plus optional
-  `role: input | output`, so `continuity` can match inputs.
-- `final`, `expected_runs` (for `complete`).
-- Strict hex: lowercase, no whitespace (`^(?:[0-9a-f]{2})*$`), replacing today's
-  `bytes.fromhex` leniency.
-- Decide at implementation time whether any of this changes the documented
-  meaning of an existing test name; if so, bump to `asexec-verify/2`.
-
-Recommended before finalizing the 0.4.0 format: **dogfood** a few real evals
-through the full cycle (messy harnesses, non-determinism, disclosure-window
-UX). Real transcripts should inform subject roles and the close-out flow.
-
-## 0.4.x — Phase 3: Dependency reduction
-
-Runtime today is 13 packages; `py_ecc` alone roots 10 (`eth-utils`,
-`eth-typing`, `eth-hash`, `cytoolz`, `toolz`, and `pydantic` again via
-`eth-utils`).
-
-- **Drop pydantic**: it gates construction only, and `model_dump` sits on the
-  path to signed bytes (a dependency-driven byte-drift risk). Replace with
-  hand-written validation. Golden vectors must be unchanged.
-- **BLS (`py_ecc`)**: spike vendoring the minimal verify subset (G1/G2
-  decompression *with subgroup checks*, `hash_to_G1`, pairing), tested against
-  official drand vectors. If the subset is too large to own, keep `py_ecc`
-  exact-pinned with a hash-locked install.
-- **Drop the `blake3` extra**: hash-algorithm agility is surface without
-  current demand.
-- **Keep `pynacl`.** Target end state: `pynacl` → `cffi` → `pycparser`.
-- **CI supply chain**: pin all GitHub Actions by commit SHA; least-privilege
-  `permissions:` on every workflow.
-
-## 0.5.0 — Phase 4: Spec freeze
-
-- `SPEC.md` becomes normative: canonical bytes, PAE, `ref`, directory hash,
-  manifest schema, verify-test semantics, code grammar — consolidating what
-  is currently spread across docstrings — with the golden vectors as its
-  conformance suite, so a third party can reimplement the verifier.
-- Release pipeline hardening: reproducible builds (`SOURCE_DATE_EPOCH`),
-  build-provenance attestations, `py.typed`, complete classifiers.
-- Optional dogfood: sign each release's artifact hashes with `asexec postreg`.
+- `continuity` + subject `role` / relative paths: matching runs to their inputs; disclosure promises don't need it.
+- `order`: the cryptographic proof of "pre"; consider bringing it back with M3 co-signing.
+- `complete` + `final` / `expected_runs`: tail-truncation detection; no M1 source needs it yet.
+- `--trust-roots`: the pinned drand and Roughtime set is enough until readers ask to choose their own.
+- Directory hash v2, as a new `hash_alg` label: M1 records hash snapshots, not trees, and a new label leaves v1 digests valid.
+- JCS canonicalization: DSSE verifies the stored bytes, so canonical form no longer matters for verification.
+- Phase 1 invariant catalog, property/mutation testing, extra CI matrix: tests are added only when dogfooding or feedback shows a need.
+- Phase 3 dependency reduction (pydantic, blake3, BLS vendoring, Actions pinning): worthwhile, but not needed for M1–M3.
+- Full normative `SPEC.md`: M2 freezes the wire format and vectors; a complete spec can follow adoption.
+- Release-pipeline hardening (reproducible builds, build provenance): the current trusted-publishing pipeline is adequate for alpha.
 
 ## Later (unversioned until scheduled)
 
@@ -250,3 +178,5 @@ Kept here so they are not re-litigated:
 | 0.2.0 | Schema rebalance (bedrock vs. optional); drand floor + Roughtime ceiling as distinct anchors; canonical verify code |
 | 0.3.0 | Vocabulary/type realignment: `prereg`/`postreg`, free-form `target`, optional `due`/`declaration`, opt-in floor, `BDR` token, Pydantic-typed construction |
 | 0.3.1 – 0.3.11 | Provenance handoff to hand-curated maintenance; docs polish; ruff, uv, pytest, CI, release scripts; Python ≥ 3.11 |
+| 0.3.13 | First PyPI release: tag-triggered Trusted Publishing (TestPyPI, then PyPI behind approval); README *Known issues* |
+| 0.3.14 | Soundness patch: a single linear `prev_hash` chain; a postreg counts only if validly signed by the prereg's key; duplicate keys and malformed input fail per file; `content` confined to `--artifacts`; timezone-explicit `due` and an `invalid-due` state; `keygen` never overwrites; fail-loud `--floor` / `--ceiling` / `--fulfills` |
