@@ -70,15 +70,33 @@ Distribution (PyPI) is cut early to claim the name, with honest caveats.
 - Convention: one prereg per promise. No list-level schema.
 
 **PAE vs DSSE.** PAE (pre-authentication encoding) is the rule for which bytes get
-signed: `PAE(type, body) = prefix SP len(type) SP type SP len(body) SP body`, so a
-signature is bound to the payload's type and length. DSSE is the envelope built around it:
-`payloadType`, `payload` as base64 of the exact signed bytes, and a `signatures` list.
+signed:
 
-- **Today (0.3.x):** asexec uses PAE alone, with its own prefix `asexec-PAE/v1`, in a
-  bespoke envelope. `payload` is stored as a JSON object, so signer and verifier must each
-  re-derive the same canonical bytes (sorted keys, compact separators, UTF-8), and `ref`
-  depends on them too. Any difference in serialization (another language's JSON encoder,
-  number formatting, a library change) breaks signatures and refs.
+```
+PAE(type, body) = prefix SP len(type) SP type SP len(body) SP body
+```
+
+`SP` is a single ASCII space and `len` is the byte length in ASCII decimal. With today's
+prefix, a small body encodes as:
+
+```
+asexec-PAE/v1 27 application/vnd.asexec+json 31 {"phase":"prereg","target":"m"}
+```
+
+The signature therefore covers the payload's type as well as its body, and the length
+fields keep the boundaries unambiguous even when a value contains spaces. PAE is used only
+to sign and verify a signature. `ref` hashes the body bytes without it, and the verify code
+does not contain it: `BDR` checks the signature, and the code reports only that result.
+
+DSSE is the envelope built around PAE: `payloadType`, `payload` as base64 of the exact
+signed bytes, and a `signatures` list.
+
+- **Today (0.3.x):** asexec uses PAE with its own prefix, `asexec-PAE/v1`, but not the DSSE
+  envelope. Canonicalization is a separate step before PAE: `payload` is stored as a JSON
+  object, so signer and verifier must each re-derive the same body bytes (sorted keys,
+  compact separators, UTF-8), and `ref` depends on them too. Any difference in
+  serialization (another language's JSON encoder, number formatting, a library change)
+  breaks signatures and refs.
 - **0.4.0:** full DSSE. The verifier checks the stored bytes as they are, so
   canonicalization no longer matters for verification. The `DSSEv1` prefix lets standard
   DSSE and in-toto tooling read asexec envelopes (groundwork for M2's export), and the
