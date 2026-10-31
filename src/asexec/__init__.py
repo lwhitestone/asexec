@@ -12,7 +12,7 @@ consistency, not who signed or that the pre-registration was complete.
 See the module docstrings and the README for what this does!
 """
 
-__version__ = "0.3.17"
+__version__ = "0.3.19"
 
 SCHEMA_VERSION = "asexec"
 PREDICATE_TYPE = "https://asexec.dev/manifest"
