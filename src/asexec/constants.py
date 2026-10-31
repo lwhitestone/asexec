@@ -3,11 +3,12 @@
 External protocol values (drand's DST, Roughtime's contexts and tags) stay with the code
 that speaks those protocols; asexec does not get to choose them.
 
-``tests/test_constants.py`` pins every value here as a literal and documents what each one
-reaches and how to change it. Read it before editing this file.
+``tests/test_constants.py`` pins every value here as a literal and classifies how each one
+may change. Read it before editing this file.
 """
 
-# Domain-separation prefix for our PAE construction (cf. DSSE's "DSSEv1").
+# First field of the PAE signing input. It ties a signature to this format, so one made
+# for another format can't pass as ours. Standard DSSE uses "DSSEv1" in the same position.
 PAE_PREFIX = b"asexec-PAE/v1"
 
 # Media type of the signed payload (an asexec manifest body).
