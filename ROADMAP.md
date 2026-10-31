@@ -60,6 +60,8 @@ Distribution (PyPI) is cut early to claim the name, with honest caveats.
 - DSSE envelope: `payload` is base64 of the exact signed bytes; the PAE prefix is
   `DSSEv1`; `signatures: [...]` (one entry for now). The verifier checks the stored
   bytes and never re-canonicalizes. `ref` = digest of the payload bytes.
+- The file is an asexec wrapper around that standard envelope: `dsse`, plus the unsigned
+  `ceiling` and `pubkey` (see *Wrapper* below).
 - `PREDICATE_TYPE` → a URL the project controls.
 - New optional body field `origin`: `self` | `extracted`. Extracted records carry the
   source snapshot as a subject (digest + URL) and put the quoted passage in `notes`. Not
@@ -103,11 +105,15 @@ ref        = sha-256(body bytes)
   "ceiling": { … }                               // optional, unsigned
 }
 
-// 0.4.0 (DSSE)
+// 0.4.0 (asexec wrapper around a standard DSSE envelope)
 {
-  "payloadType": "application/vnd.asexec+json",
-  "payload": "eyJwaGFzZSI6InByZXJlZyIs…",        // base64 of the body bytes
-  "signatures": [ { "keyid": "…", "sig": "…" } ]
+  "dsse": {
+    "payloadType": "application/vnd.asexec+json",
+    "payload": "eyJwaGFzZSI6InByZXJlZyIs…",      // base64 of the body bytes
+    "signatures": [ { "keyid": "…", "sig": "…" } ]
+  },
+  "ceiling": { … },                              // optional, unsigned; nonce = ref
+  "pubkey": "…"                                  // unsigned; must derive signatures[0].keyid
 }
 ```
 
@@ -119,19 +125,17 @@ Rules that follow:
 - Keep rejecting duplicate JSON keys in the decoded body: parsers disagree on which value
   wins, so two verifiers could read different fields from the same signed bytes.
 
-Open format decisions:
+**Wrapper.** DSSE defines only `payloadType`, `payload` and `signatures`, so what asexec
+adds sits outside it, in the wrapper:
 
-- **Where the ceiling goes.** DSSE defines only `payloadType`, `payload` and
-  `signatures`, and the ceiling cannot be inside the body (its nonce is the body's own
-  hash). Options: (a) an outer asexec wrapper that holds a standard DSSE envelope plus the
-  unsigned `ceiling`, so DSSE tooling reads the inner envelope untouched and a ceiling can
-  still be attached after signing; (b) the ceiling inside the signed payload, beside the
-  body, which works only if the nonce is `ref` of the body and the witness is fetched
-  before signing, and makes the signed payload something other than the body.
-- **Where the public key goes.** A DSSE signature entry has only `keyid` and `sig`, and
-  `BDR` derives the `keyid` from the public key. Options: the same wrapper as the ceiling
-  (bound to the entry by its `keyid`), inside the signed payload, or supplied from outside
-  the file (`--trusted-keys`, with `signer`).
+- `dsse` is a standard envelope that DSSE and in-toto tooling can lift out and verify
+  unchanged, which keeps the M2 export simple.
+- `ceiling` cannot be inside the body (its nonce is the body's own hash). In the wrapper
+  it can still be attached after signing; it is bound by `nonce == ref` and authenticated
+  by the witness's own signature.
+- `pubkey` needs no signature: `BDR` requires `signatures[0].keyid` to derive from it, so
+  a substituted key fails. With `signer`, `--trusted-keys` additionally decides which
+  keys are accepted.
 
 **Verify**
 
