@@ -15,18 +15,16 @@ from __future__ import annotations
 import json
 import urllib.request
 
+from .constants import IDENTITY_ASSERTION_VERSION, KEY_ALG, WELL_KNOWN_PATH
 from .errors import NetworkError
-
-WELL_KNOWN_PATH = ".well-known/asexec.json"
-_ASSERTION_VERSION = 1
 
 
 def build_wellknown(keyid_pubkey_pairs: list[dict[str, str]], domain: str | None = None) -> dict:
     """Build the ``.well-known/asexec.json`` document a domain publishes."""
     doc: dict = {
-        "asexec_identity_version": _ASSERTION_VERSION,
+        "asexec_identity_version": IDENTITY_ASSERTION_VERSION,
         "keys": [
-            {"alg": "ed25519", "keyid": p["keyid"], "public_key": p["pubkey"]}
+            {"alg": KEY_ALG, "keyid": p["keyid"], "public_key": p["pubkey"]}
             for p in keyid_pubkey_pairs
         ],
     }

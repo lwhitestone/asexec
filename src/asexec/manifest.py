@@ -25,6 +25,7 @@ from typing import Any
 
 from . import keys
 from .canonical import canonical_bytes, signing_input
+from .constants import DEFAULT_HASH_ALG, DIGEST_PREFIX
 from .errors import ManifestError
 from .models import Anchor, Manifest, ManifestBody, Signature
 
@@ -46,8 +47,6 @@ from .models import Anchor, Manifest, ManifestBody, Signature
 _BEDROCK_STRUCTURAL = ("schema_version", "predicateType", "phase")
 _BEDROCK_SEMANTIC = ("target",)
 
-_DEFAULT_HASH_ALG = "sha-256"
-
 
 def _build(
     phase: str,
@@ -67,7 +66,7 @@ def _build(
 ) -> dict[str, Any]:
     """Construct + validate a body via the model, return the plain signed dict."""
     if subject:
-        hash_alg = hash_alg or _DEFAULT_HASH_ALG
+        hash_alg = hash_alg or DEFAULT_HASH_ALG
     else:
         hash_alg = None  # never a dangling algorithm without a subject
     anchor = Anchor(floor=floor) if floor is not None else None
@@ -133,7 +132,7 @@ def ref(body: dict[str, Any]) -> str:
     Computed over the canonical bytes of the body (signature-independent), so
     ``fulfills`` and ``prev_hash`` links are stable regardless of who signed.
     """
-    return "sha-256:" + hashlib.sha256(canonical_bytes(body)).hexdigest()
+    return DIGEST_PREFIX + hashlib.sha256(canonical_bytes(body)).hexdigest()
 
 
 def sign(body: dict[str, Any], private_key: bytes, public_key: bytes) -> dict[str, Any]:

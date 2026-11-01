@@ -14,7 +14,6 @@ See the module docstrings and the README for what this does!
 
 __version__ = "0.3.19"
 
-SCHEMA_VERSION = "asexec"
-PREDICATE_TYPE = "https://asexec.dev/manifest"
+from .constants import PREDICATE_TYPE, SCHEMA_VERSION
 
 __all__ = ["__version__", "SCHEMA_VERSION", "PREDICATE_TYPE"]
