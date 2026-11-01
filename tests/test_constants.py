@@ -4,26 +4,33 @@ The values are written out on purpose. Importing them from ``asexec.constants`` 
 an edit there pass unnoticed, because the code and its test would move together. Do not
 compare against the constants instead, and do not update a literal just to pass a test.
 
-Each identifier is in one of three change classes, named in a comment on its test:
+The rule: add a new version and keep accepting the old ones. Never replace a value in a way
+that makes a published manifest fail. The one planned exception is the 0.4.0 switch to DSSE.
 
-MAJOR ONLY: published manifests stop verifying, and only re-signing can repair them.
-    Needs a major release. Before 1.0.0 a ``0.MINOR`` release stands in for one, as the
-    ``DSSEv1`` switch does in 0.4.0.
+This is not enforced by the code yet. The verifier accepts only one value of each identifier,
+so changing a BREAKS_USERS constant today does break users. Its fallback has to be built
+first, in the same PR; the comment on each test says what that fallback is.
 
-BREAKING: published manifests still verify, but people or tools relying on the value break.
-    Needs at least a ``MINOR`` release, with the break and the required action stated in the
-    release notes.
+Each identifier has exactly one class in ``IMPACT``:
 
-MINOR: only newly written files change, and nothing already published is affected.
-    Needs a ``MINOR`` release, with the change listed in the release notes.
+BREAKS_USERS: without a fallback, a change makes a published manifest fail, or stops an
+    existing key file, published document or tool from working.
+NEW_OUTPUT: only newly written files change, whether or not a fallback exists.
 
 To change an identifier, in one PR:
 
-1. Change ``asexec.constants`` and the literals here.
-2. Update the README, ``docs/VERIFICATION.md`` and any golden vectors.
-3. Regenerate ``FROZEN_MANIFEST`` only for a MAJOR ONLY change. For any other class it must
-   keep passing untouched; if it fails, the change is in the wrong class.
-4. Release it under the class above and the rules in ``ROADMAP.md`` (Versioning).
+1. Build its fallback, if it is BREAKS_USERS. Move it to NEW_OUTPUT if the change then affects
+   only new output.
+2. Change ``asexec.constants`` and the literals here.
+3. Add a frozen manifest for the new version. Never edit or regenerate an existing one: if
+   one fails, the change breaks users.
+4. Update the README, ``docs/VERIFICATION.md`` and any golden vectors.
+5. Release it as a ``MINOR`` (``ROADMAP.md``, Versioning), with this release-note entry:
+
+       Identifier: <name>, <old value> -> <new value>
+       Impact: <class>
+       Affected: <what existing files or tools are touched, or "nothing published">
+       Action: <what users must do, or "none">
 
 The ``test_not_enforced_yet__*`` tests record what verify does not check today. They are not
 requirements: when one fails because enforcement was added, update it and reclassify the
@@ -48,26 +55,69 @@ from asexec import (
 from asexec.canonical import signing_input
 from asexec.verifier import verify_paths
 
-# Signed once with the all-zero seed and then frozen, standing in for a published manifest.
+BREAKS_USERS = "BREAKS_USERS"
+NEW_OUTPUT = "NEW_OUTPUT"
+
+IMPACT = {
+    "PAE_PREFIX": BREAKS_USERS,
+    "PAYLOAD_TYPE": BREAKS_USERS,
+    "DIGEST_PREFIX": BREAKS_USERS,
+    "DEFAULT_HASH_ALG": BREAKS_USERS,
+    "KEY_ALG": BREAKS_USERS,
+    "CODE_VERSION": BREAKS_USERS,
+    "WELL_KNOWN_PATH": BREAKS_USERS,
+    "SCHEMA_VERSION": NEW_OUTPUT,
+    "PREDICATE_TYPE": NEW_OUTPUT,
+    "IDENTITY_ASSERTION_VERSION": NEW_OUTPUT,
+}
+
+# Signed once with the all-zero seed and then frozen, standing in for published manifests.
+FROZEN_KEY = {
+    "alg": "ed25519",
+    "keyid": "sha-256:139e3940e64b5491722088d9a0d741628fc826e09475d341a780acde3c4b8070",
+    "pubkey": "3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29",
+}
 FROZEN_BODY = {"phase": "prereg", "target": "m"}
 FROZEN_MANIFEST = {
     "payloadType": "application/vnd.asexec+json",
     "payload": FROZEN_BODY,
     "signature": {
-        "alg": "ed25519",
-        "keyid": "sha-256:139e3940e64b5491722088d9a0d741628fc826e09475d341a780acde3c4b8070",
-        "pubkey": "3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29",
+        **FROZEN_KEY,
         "sig": "2e993406b7492218b6a366a83fa99ecd53c9385bfb53c0bb00b5981ea83b8098"
         "008837c636d7467eae6d33afb377f62c2a42b4aba74d4e71014b5bf4670e5c05",
     },
 }
+# A subject with no hash_alg, which relies on the verifier's fallback. The digest is of b"x".
+FROZEN_NO_HASH_ALG_MANIFEST = {
+    "payloadType": "application/vnd.asexec+json",
+    "payload": {
+        **FROZEN_BODY,
+        "subject": [
+            {
+                "name": "a.txt",
+                "digest": {
+                    "sha-256": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+                },
+            }
+        ],
+    },
+    "signature": {
+        **FROZEN_KEY,
+        "sig": "e222249eb2257f71248098758c4ce5fa0de8685b9e5304ca8941b107503d65e4"
+        "675eebe8121959eb90d4ba95d85698d18fbd2b5cbb56b7b2a860438fe460ab08",
+    },
+}
+
+
+def _result_tokens(tmp_path, mani, tests, artifacts_dir=None):
+    # Only the result tokens, so that a CODE_VERSION bump does not count as a broken manifest.
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(mani))
+    return verify_paths([str(path)], tests, artifacts_dir=artifacts_dir)["code"].split()[1:]
 
 
 def _bdr_passes(tmp_path, mani):
-    # Only the result token, so that a CODE_VERSION bump does not count as a broken manifest.
-    path = tmp_path / "manifest.json"
-    path.write_text(json.dumps(mani))
-    return verify_paths([str(path)], ["BDR"])["code"].endswith(" BDR=PASS")
+    return _result_tokens(tmp_path, mani, ["BDR"]) == ["BDR=PASS"]
 
 
 def _signed_prereg():
@@ -75,13 +125,27 @@ def _signed_prereg():
     return manifest.sign(manifest.build_prereg("m"), priv, pub)
 
 
-def test_frozen_manifest_still_verifies(tmp_path):
+def test_every_identifier_is_classified():
+    public = {name for name in vars(constants) if name.isupper()}
+    assert public == set(IMPACT)
+
+
+def test_frozen_manifests_still_verify(tmp_path):
     assert _bdr_passes(tmp_path, FROZEN_MANIFEST)
+
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    (artifacts / "a.txt").write_bytes(b"x")
+    assert _result_tokens(
+        tmp_path, FROZEN_NO_HASH_ALG_MANIFEST, ["BDR", "content"], str(artifacts)
+    ) == ["BDR=PASS", "content=PASS"]
 
 
 def test_pae_prefix_and_payload_type():
-    # MAJOR ONLY. Both are in the bytes every signature covers, so changing either
-    # invalidates every published signature. Bump the prefix's /vN or adopt a new prefix.
+    # BREAKS_USERS: both are in the bytes every signature covers, so replacing either fails
+    # every published signature. Refs don't change, because they hash the body without PAE.
+    # Fallback: the verifier accepts a list of known values. Use /v(N+1) for a change to our
+    # own construction, and a new prefix only when adopting another standard (DSSEv1).
     assert constants.PAE_PREFIX == b"asexec-PAE/v1"
     assert constants.PAYLOAD_TYPE == "application/vnd.asexec+json"
     assert signing_input(FROZEN_BODY) == (
@@ -91,9 +155,9 @@ def test_pae_prefix_and_payload_type():
 
 
 def test_digest_prefix():
-    # MAJOR ONLY. Invalidates every published keyid and link. The prefix names a hash, so
-    # changing the hash must change the prefix with it; the label never disagrees with the
-    # digest.
+    # BREAKS_USERS: replacing it fails every published keyid and link.
+    # Fallback: the prefix already names its algorithm, so the verifier chooses the hash from
+    # it. The label must never disagree with the digest.
     assert constants.DIGEST_PREFIX == "sha-256:"
     assert keys.keyid_for(bytes(32)) == (
         "sha-256:66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925"
@@ -104,22 +168,26 @@ def test_digest_prefix():
 
 
 def test_default_hash_alg():
-    # MAJOR ONLY. Verifying ``content`` falls back to this for a subject with no hash_alg, so
-    # changing it fails those published manifests.
+    # BREAKS_USERS: verifying ``content`` falls back to it for a subject with no hash_alg, so
+    # replacing it fails those published manifests.
+    # Fallback: split it in two. The verify fallback stays sha-256 forever, and a new default
+    # affects signing only, which always writes hash_alg.
     assert constants.DEFAULT_HASH_ALG == "sha-256"
     assert hashing.hash_bytes(b"") == hashlib.sha256(b"").hexdigest()
 
 
 def test_key_alg():
-    # MAJOR ONLY. Existing key files stop loading. Changing the string alone does not change
-    # the algorithm: it would label ed25519 signatures as something else, so the signing and
-    # verifying code must change with it.
+    # BREAKS_USERS: existing key files stop loading. Verify is unaffected, but only because it
+    # doesn't read signature.alg. Changing the string alone would mislabel ed25519 signatures.
+    # Fallback: choose the algorithm from signature.alg. That field is unsigned, so rule out
+    # algorithm confusion first.
     assert constants.KEY_ALG == "ed25519"
     assert _signed_prereg()["signature"]["alg"] == "ed25519"
 
 
 def test_code_version():
-    # BREAKING. Anyone reproducing a code compares it byte for byte. Bump /N only if the
+    # BREAKS_USERS: a new tool can't byte-match a published code in the old version.
+    # Fallback: keep the old version available, e.g. ``--code-version 1``. Bump /N only if the
     # grammar or the documented meaning of an existing test name changes; adding a test name
     # needs no bump. Never reuse a number: a code means one thing, permanently.
     assert constants.CODE_VERSION == "asexec-verify/1"
@@ -127,14 +195,15 @@ def test_code_version():
 
 
 def test_well_known_path():
-    # BREAKING. Moving it strands the documents domains have already published. Tell them
-    # what to move in the release notes.
+    # BREAKS_USERS: moving it strands the documents domains have already published.
+    # Fallback: fetch the new path, then the old one.
     assert constants.WELL_KNOWN_PATH == ".well-known/asexec.json"
 
 
 def test_schema_version_and_predicate_type():
-    # MINOR. Written into new signed bodies only (see the test below). SCHEMA_VERSION is
-    # deliberately unversioned, with no parallel v1/v2 numbering.
+    # NEW_OUTPUT: written into new signed bodies only, and verify doesn't compare them (see
+    # below). A ``frame`` test would change that, and move them to BREAKS_USERS.
+    # SCHEMA_VERSION is deliberately unversioned, with no parallel v1/v2 numbering.
     assert constants.SCHEMA_VERSION == SCHEMA_VERSION == "asexec"
     assert constants.PREDICATE_TYPE == PREDICATE_TYPE == "https://asexec.dev/manifest"
     body = manifest.build_prereg("m")
@@ -143,7 +212,7 @@ def test_schema_version_and_predicate_type():
 
 
 def test_identity_assertion_version():
-    # MINOR. Nothing reads the number back. Bump it when the identity document's shape changes.
+    # NEW_OUTPUT: nothing reads the number back. Bump it when the document's shape changes.
     assert constants.IDENTITY_ASSERTION_VERSION == 1
     assert identity.build_wellknown([])["asexec_identity_version"] == 1
 
