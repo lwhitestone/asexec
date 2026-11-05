@@ -40,7 +40,8 @@ from pydantic import (
     model_validator,
 )
 
-from . import PREDICATE_TYPE, SCHEMA_VERSION, drand
+from . import drand
+from .constants import KEY_ALG, PAYLOAD_TYPE, PREDICATE_TYPE, SCHEMA_VERSION
 from .fields import Hex, Link, LowerHex, PinnedChain, StrictInt
 
 # A field the caller may express either as a plain string or as structured JSON.
@@ -260,7 +261,7 @@ class Signature(SignatureInput):
     model_config = ConfigDict(extra="forbid")
     null_is_absent = False
 
-    alg: str = "ed25519"
+    alg: str = KEY_ALG
     keyid: str
     pubkey: LowerHex
     sig: LowerHex
@@ -272,5 +273,5 @@ class Manifest(EnvelopeInput):
 
     null_is_absent = False
 
-    payloadType: str = "application/vnd.asexec+json"
+    payloadType: str = PAYLOAD_TYPE
     signature: Signature

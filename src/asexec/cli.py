@@ -18,9 +18,10 @@ from collections.abc import Callable
 from datetime import datetime
 
 from . import __version__, drand, hashing, identity, keys, manifest, verifier
+from .constants import DEFAULT_HASH_ALG, DIGEST_PREFIX
 from .errors import VerificationError
 
-REF_RE = re.compile(r"sha-256:[0-9a-f]{64}")
+REF_RE = re.compile(re.escape(DIGEST_PREFIX) + r"[0-9a-f]{64}")
 OK = "✓"
 NO = "✗"
 
@@ -235,7 +236,7 @@ def cmd_postreg(args) -> int:
 
     due = _get_due(args) or (prereg_body or {}).get("due")
     declaration = _get_declaration(args) or (prereg_body or {}).get("declaration")
-    hash_alg = args.hash_alg or (prereg_body or {}).get("hash_alg") or hashing.DEFAULT_ALG
+    hash_alg = args.hash_alg or (prereg_body or {}).get("hash_alg") or DEFAULT_HASH_ALG
 
     subject = _build_subject(args.subject, hash_alg)
     body = manifest.build_postreg(
@@ -437,7 +438,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pr.add_argument(
         "--hash-alg",
-        default=hashing.DEFAULT_ALG,
+        default=DEFAULT_HASH_ALG,
         choices=hashing.available_algorithms(),
     )
     pr.add_argument("--notes", help="free-form context (hypothesis/methodology)")

@@ -22,9 +22,8 @@ import os
 from collections.abc import Callable
 from typing import Any
 
+from .constants import DEFAULT_HASH_ALG
 from .errors import HashAlgError
-
-DEFAULT_ALG = "sha-256"
 
 # name -> zero-arg factory returning a fresh hashlib-like object with
 # .update(bytes) and .hexdigest().
@@ -54,13 +53,13 @@ def _new(alg: str):
         ) from None
 
 
-def hash_bytes(data: bytes, alg: str = DEFAULT_ALG) -> str:
+def hash_bytes(data: bytes, alg: str = DEFAULT_HASH_ALG) -> str:
     h = _new(alg)
     h.update(data)
     return h.hexdigest()
 
 
-def hash_file(path: str, alg: str = DEFAULT_ALG, chunk: int = 1 << 20) -> str:
+def hash_file(path: str, alg: str = DEFAULT_HASH_ALG, chunk: int = 1 << 20) -> str:
     h = _new(alg)
     with open(path, "rb") as f:
         for block in iter(lambda: f.read(chunk), b""):
@@ -78,7 +77,7 @@ def _iter_files(root: str):
             yield rel.replace(os.sep, "/"), full
 
 
-def hash_dir(path: str, alg: str = DEFAULT_ALG) -> str:
+def hash_dir(path: str, alg: str = DEFAULT_HASH_ALG) -> str:
     """Hash a directory tree via a sorted manifest of file hashes."""
     lines = []
     for rel, full in _iter_files(path):
@@ -87,14 +86,14 @@ def hash_dir(path: str, alg: str = DEFAULT_ALG) -> str:
     return hash_bytes(manifest, alg)
 
 
-def digest_path(path: str, alg: str = DEFAULT_ALG) -> str:
+def digest_path(path: str, alg: str = DEFAULT_HASH_ALG) -> str:
     """Hash a file or directory, returning a hex digest."""
     if os.path.isdir(path):
         return hash_dir(path, alg)
     return hash_file(path, alg)
 
 
-def build_subject(paths: list[str], alg: str = DEFAULT_ALG) -> list[dict[str, Any]]:
+def build_subject(paths: list[str], alg: str = DEFAULT_HASH_ALG) -> list[dict[str, Any]]:
     """Build the manifest ``subject`` array from a list of paths.
 
     Each entry: ``{"name": <display>, "digest": {alg: hexhash}}``. Directory

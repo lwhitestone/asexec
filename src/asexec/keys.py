@@ -15,14 +15,13 @@ import os
 
 import nacl.signing
 
+from .constants import DIGEST_PREFIX, KEY_ALG
 from .errors import AsexecError
-
-KEY_ALG = "ed25519"
 
 
 def keyid_for(public_key: bytes) -> str:
     """Stable key identifier: ``sha-256:<hex of sha256(pubkey)>``."""
-    return "sha-256:" + hashlib.sha256(public_key).hexdigest()
+    return DIGEST_PREFIX + hashlib.sha256(public_key).hexdigest()
 
 
 def generate() -> tuple[bytes, bytes]:
