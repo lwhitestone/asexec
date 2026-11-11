@@ -15,16 +15,16 @@ from __future__ import annotations
 import json
 import urllib.request
 
-from .constants import IDENTITY_ASSERTION_VERSION, KEY_ALG, WELL_KNOWN_PATH
+from .constants import IDENTITY_DOCUMENT_VERSION, IDENTITY_WELL_KNOWN_PATH, SIGNING_KEY_ALG
 from .errors import NetworkError
 
 
 def build_wellknown(keyid_pubkey_pairs: list[dict[str, str]], domain: str | None = None) -> dict:
     """Build the ``.well-known/asexec.json`` document a domain publishes."""
     doc: dict = {
-        "asexec_identity_version": IDENTITY_ASSERTION_VERSION,
+        "asexec_identity_version": IDENTITY_DOCUMENT_VERSION,
         "keys": [
-            {"alg": KEY_ALG, "keyid": p["keyid"], "public_key": p["pubkey"]}
+            {"alg": SIGNING_KEY_ALG, "keyid": p["keyid"], "public_key": p["pubkey"]}
             for p in keyid_pubkey_pairs
         ],
     }
@@ -41,7 +41,7 @@ def write_wellknown(doc: dict, path: str) -> None:
 
 def fetch_wellknown(domain: str, timeout: int = 10) -> dict:
     """HTTPS GET https://<domain>/.well-known/asexec.json (network; identity-check only)."""
-    url = f"https://{domain.rstrip('/')}/{WELL_KNOWN_PATH}"
+    url = f"https://{domain.rstrip('/')}/{IDENTITY_WELL_KNOWN_PATH}"
     try:
         with urllib.request.urlopen(url, timeout=timeout) as resp:
             return json.load(resp)

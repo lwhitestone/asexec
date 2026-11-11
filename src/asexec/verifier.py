@@ -12,7 +12,7 @@ Output: a canonical plaintext code
 Grammar (spec'd here so any implementation reproduces it byte-for-byte):
 
   - Literal prefix ``asexec-verify/1`` (this versions the code GRAMMAR itself,
-    independent of the schema/PAE versions), then a single ASCII space.
+    independent of the signed-byte format), then a single ASCII space.
   - One ``name=RESULT`` token per requested test, ``RESULT`` in ``{PASS, FAIL}``.
   - Tokens are sorted alphabetically by name and single-space delimited.
 
@@ -73,7 +73,7 @@ from pydantic import ValidationError
 
 from . import drand, hashing, keys, manifest
 from .canonical import signing_input
-from .constants import CODE_VERSION, DEFAULT_HASH_ALG
+from .constants import SUBJECT_DEFAULT_HASH_ALG, VERIFY_CODE_VERSION
 from .errors import VerificationError
 from .models import (
     CeilingInput,
@@ -284,7 +284,7 @@ def verify_content(body: dict[str, Any], artifacts_dir: str | None) -> dict[str,
             "entries": [{"name": "(subject)", "ok": False, "reason": "malformed subject"}],
         }
     present, alg = _lookup(body, "hash_alg")
-    alg = alg if present else DEFAULT_HASH_ALG
+    alg = alg if present else SUBJECT_DEFAULT_HASH_ALG
     entries = [_verify_subject_item(item, alg, artifacts_dir) for item in subject]
     return {"status": "ok" if all(e["ok"] for e in entries) else "mismatch", "entries": entries}
 
@@ -491,7 +491,7 @@ def _evaluate(tests, manifests, commitments, artifacts_dir) -> dict[str, dict[st
 
 def _build_code(tests: list[str], results: dict[str, dict[str, Any]]) -> str:
     tokens = [f"{name}={results[name]['result']}" for name in sorted(tests)]
-    return CODE_VERSION + " " + " ".join(tokens)
+    return VERIFY_CODE_VERSION + " " + " ".join(tokens)
 
 
 def _get_postreg_rejection_reason(sig: dict[str, Any], prereg: dict[str, Any]) -> str | None:

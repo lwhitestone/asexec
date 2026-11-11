@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from asexec import PREDICATE_TYPE, SCHEMA_VERSION, drand, keys, manifest
+from asexec import MANIFEST_PREDICATE_TYPE, MANIFEST_SCHEMA_ID, drand, keys, manifest
 from asexec.canonical import signing_input
 from asexec.errors import ManifestError
 from asexec.models import Ceiling, Signature
@@ -22,10 +22,10 @@ def _subj():
 
 def test_schema_and_predicate_identifiers():
     # Plain, unversioned format identifiers (no parallel v1/v2 numbering scheme).
-    assert SCHEMA_VERSION == "asexec"
-    assert PREDICATE_TYPE == "https://asexec.dev/manifest"
+    assert MANIFEST_SCHEMA_ID == "asexec"
+    assert MANIFEST_PREDICATE_TYPE == "https://asexec.dev/manifest"
     body = manifest.build_prereg(_target(), due=DUE, subject=_subj())
-    assert body["schema_version"] == "asexec"
+    assert body["schema_id"] == "asexec"
     assert body["predicateType"] == "https://asexec.dev/manifest"
     assert body["phase"] == "prereg"
 
@@ -84,8 +84,8 @@ def test_missing_semantic_bedrock_rejected():
     priv, pub = keys.generate()
     # no target (the only semantic bedrock field)
     body = {
-        "schema_version": SCHEMA_VERSION,
-        "predicateType": PREDICATE_TYPE,
+        "schema_id": MANIFEST_SCHEMA_ID,
+        "predicateType": MANIFEST_PREDICATE_TYPE,
         "phase": "prereg",
         "due": DUE,
     }

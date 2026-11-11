@@ -15,13 +15,13 @@ import os
 
 import nacl.signing
 
-from .constants import DIGEST_PREFIX, KEY_ALG
+from .constants import DIGEST_REF_PREFIX, SIGNING_KEY_ALG
 from .errors import AsexecError
 
 
 def keyid_for(public_key: bytes) -> str:
     """Stable key identifier: ``sha-256:<hex of sha256(pubkey)>``."""
-    return DIGEST_PREFIX + hashlib.sha256(public_key).hexdigest()
+    return DIGEST_REF_PREFIX + hashlib.sha256(public_key).hexdigest()
 
 
 def generate() -> tuple[bytes, bytes]:
@@ -40,7 +40,7 @@ def save(private_key: bytes, path: str, *, force: bool = False) -> str:
     kid = keyid_for(pub)
     secret = {
         "version": 1,
-        "alg": KEY_ALG,
+        "alg": SIGNING_KEY_ALG,
         "keyid": kid,
         "private_key": private_key.hex(),
         "public_key": pub.hex(),
@@ -63,7 +63,7 @@ def save(private_key: bytes, path: str, *, force: bool = False) -> str:
         json.dump(
             {
                 "version": 1,
-                "alg": KEY_ALG,
+                "alg": SIGNING_KEY_ALG,
                 "keyid": kid,
                 "public_key": pub.hex(),
             },
@@ -78,7 +78,7 @@ def load_signing_key(path: str) -> tuple[bytes, bytes]:
     """Load a secret key file, returning (private_key, public_key)."""
     with open(path) as f:
         data = json.load(f)
-    if data.get("alg") != KEY_ALG:
+    if data.get("alg") != SIGNING_KEY_ALG:
         raise AsexecError(f"unsupported key alg {data.get('alg')!r}")
     priv = bytes.fromhex(data["private_key"])
     pub = bytes(nacl.signing.SigningKey(priv).verify_key)

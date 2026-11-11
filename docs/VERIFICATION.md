@@ -74,12 +74,12 @@ affect either: a run can show `ELAPSED-NO-RECEIPT` and still exit `0`.
 ```console
 $ asexec verify prereg.json postreg-1.json postreg-2.json --tests BDR,chain,keyconsist
 === manifests ===
-✓ prereg.json  [prereg]  keyid=sha-256:fce11965…
-✓ postreg-1.json  [postreg]  keyid=sha-256:fce11965…
-✓ postreg-2.json  [postreg]  keyid=sha-256:fce11965…
+✓ prereg.json  [prereg]  keyid=sha-256:fbffcddd…
+✓ postreg-1.json  [postreg]  keyid=sha-256:fbffcddd…
+✓ postreg-2.json  [postreg]  keyid=sha-256:fbffcddd…
 
 === commitments ===
-  [FULFILLED] prereg sha-256:6556ea33…
+  [FULFILLED] prereg sha-256:2f4f6ac7…
     due          : (none declared)
     postregs     : 2
 
@@ -143,15 +143,15 @@ $ asexec verify prereg.json --tests BDR
 ```jsonc
 {
   "payload": {
-    "schema_version": "asexec",
+    "schema_id": "asexec",
     "predicateType": "https://asexec.dev/manifest",
     "phase": "prereg",
     "target": "model m via provider p"
   },
   "signature": {
-    "pubkey": "2ab02c86…",
-    "sig": "fbeac09c…",
-    "keyid": "sha-256:fce11965…"
+    "pubkey": "4adcfe2a…",
+    "sig": "97950443…",
+    "keyid": "sha-256:fbffcddd…"
   }
 }
 ```
@@ -210,11 +210,11 @@ $ asexec verify prereg.json --tests BDR,ceiling
 
 ```jsonc
 {
-  "payload": { … },                              // ref(payload) = sha-256:6556ea33…
+  "payload": { … },                              // ref(payload) = sha-256:2f4f6ac7…
   "signature": { … },
   "ceiling": {
     "ceiling_type": "roughtime",
-    "nonce": "6556ea33…",                        // = ref(payload), without the prefix
+    "nonce": "2f4f6ac7…",                        // = ref(payload), without the prefix
     "witness_id": "int08h-Roughtime",
     "pubkey": "016e6e02…",                       // the pinned int08h key
     "response": "06000000400000006000…"
@@ -274,17 +274,17 @@ $ asexec verify prereg.json postreg-1.json postreg-2.json --tests BDR,chain
 The three files (unexamined fields elided; all three are signed by the same key):
 
 ```jsonc
-// prereg.json: ref = sha-256:6556ea33…
-{ "payload": { "phase": "prereg", … }, "signature": { "keyid": "sha-256:fce11965…", … } }
+// prereg.json: ref = sha-256:2f4f6ac7…
+{ "payload": { "phase": "prereg", … }, "signature": { "keyid": "sha-256:fbffcddd…", … } }
 
-// postreg-1.json: ref = sha-256:d2ad5ad7…, the root (no prev_hash)
-{ "payload": { "phase": "postreg", "fulfills": "sha-256:6556ea33…", … },
-  "signature": { "keyid": "sha-256:fce11965…", … } }
+// postreg-1.json: ref = sha-256:059020b4…, the root (no prev_hash)
+{ "payload": { "phase": "postreg", "fulfills": "sha-256:2f4f6ac7…", … },
+  "signature": { "keyid": "sha-256:fbffcddd…", … } }
 
 // postreg-2.json: links to postreg-1
-{ "payload": { "phase": "postreg", "fulfills": "sha-256:6556ea33…",
-               "prev_hash": "sha-256:d2ad5ad7…", … },
-  "signature": { "keyid": "sha-256:fce11965…", … } }
+{ "payload": { "phase": "postreg", "fulfills": "sha-256:2f4f6ac7…",
+               "prev_hash": "sha-256:059020b4…", … },
+  "signature": { "keyid": "sha-256:fbffcddd…", … } }
 ```
 
 Output (from `=== tests ===` on), exit status `0`:
@@ -467,12 +467,12 @@ $ asexec verify prereg.json postreg.json --tests BDR,keyconsist
 The two files (unexamined fields elided):
 
 ```jsonc
-// prereg.json: ref = sha-256:6556ea33…
-{ "payload": { "phase": "prereg", … }, "signature": { "keyid": "sha-256:fce11965…", … } }
+// prereg.json: ref = sha-256:2f4f6ac7…
+{ "payload": { "phase": "prereg", … }, "signature": { "keyid": "sha-256:fbffcddd…", … } }
 
 // postreg.json: same keyid as the prereg
-{ "payload": { "phase": "postreg", "fulfills": "sha-256:6556ea33…", … },
-  "signature": { "keyid": "sha-256:fce11965…", … } }
+{ "payload": { "phase": "postreg", "fulfills": "sha-256:2f4f6ac7…", … },
+  "signature": { "keyid": "sha-256:fbffcddd…", … } }
 ```
 
 Output (from `=== tests ===` on), exit status `0`:
@@ -521,7 +521,7 @@ chained postregs as in the [`chain` example](#chain):
 
 ```
 === commitments ===
-  [FULFILLED] prereg sha-256:bebbfbb1…
+  [FULFILLED] prereg sha-256:86078561…
     due          : 2099-01-01T00:00:00Z
     postregs     : 2
 ```
@@ -534,10 +534,10 @@ own block, since they have no prereg to sit under.
 
 ## Not in this version
 
-`signer`, `continuity`, `order`, `timely`, `frame` and `complete` are planned for 0.4.0
-(see [`ROADMAP.md`](../ROADMAP.md)). Adding a test name never changes the meaning of an
-existing code. Changing the documented meaning of an existing name bumps the code grammar
-(`asexec-verify/N`).
+`signer` and `timely` are planned for 0.4.0, and `continuity`, `order` and `complete` are
+deferred to 0.6.0 or later (see [`ROADMAP.md`](../ROADMAP.md)). Adding a test name never
+changes the meaning of an existing code. From 0.4.0, changing the documented meaning of an
+existing name bumps the code grammar (`asexec-verify/N`); 0.4.0 itself keeps `/1`.
 
 What a passing code does not establish is stated under each test (*Does not establish*)
 and summarized in the [README](../README.md#what-does-asexec-prove).
