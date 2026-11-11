@@ -505,6 +505,10 @@ A postreg that references `R` but fails 2 or 3 is **rejected**. It is listed und
 its reason (`invalid signature`, or `signed by a different key than the pre-registration`),
 and is never counted toward fulfillment or `chain`.
 
+A manifest is identified by its `ref`. Copies of a postreg, with the same `ref` and
+`signature.keyid`, are one receipt: counted, rejected or notarization-only once, however
+many are provided. Preregs with the same `ref` are one commitment.
+
 ## Commitment states
 
 One per prereg, shown in the `=== commitments ===` block of the report (see

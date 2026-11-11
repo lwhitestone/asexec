@@ -75,3 +75,44 @@ def test_counting_rule__rejected_postreg_never_counts_toward_chain(scenario):
     scenario.add_postreg("intruder", transcript="transcript1.txt")  # a second root, other key
     scenario.sign_with("intruder", keys.generate())
     assert scenario.code("chain") == "asexec-verify/1 BDR=PASS chain=PASS"
+
+
+# --- copies: a manifest is identified by its ref ------------------------------------ #
+
+
+def test_counting_rule__copies_of_a_postreg_are_one_receipt(scenario):
+    """Copies (same ref and keyid) count once, so they make no second root for chain."""
+    scenario.add_raw("copy", scenario.read("postreg0"))
+    report = scenario.verify("chain", "keyconsist")
+    assert report["code"] == "asexec-verify/1 BDR=PASS chain=PASS keyconsist=PASS"
+    assert len(_commitment(report)["receipts"]) == 3
+
+
+def test_counting_rule__copies_of_a_prereg_are_one_commitment(scenario):
+    scenario.add_raw("copy", scenario.read("prereg"))
+    report = scenario.verify("chain")
+    assert report["code"] == "asexec-verify/1 BDR=PASS chain=PASS"
+    assert len(_commitment(report)["receipts"]) == 3
+
+
+def test_counting_rule__copies_of_a_rejected_postreg_are_rejected_once(scenario):
+    scenario.sign_with("postreg0", keys.generate())
+    scenario.add_raw("copy", scenario.read("postreg0"))
+    assert len(_commitment(scenario.verify())["rejected_receipts"]) == 1
+
+
+def test_counting_rule__copies_of_a_notarization_only_postreg_are_listed_once(scenario):
+    scenario.drop("prereg")
+    scenario.add_raw("copy", scenario.read("postreg0"))
+    assert len(scenario.verify()["notarization_only"]) == 3
+
+
+def test_counting_rule__same_body_by_two_other_keys_is_two_rejections(scenario):
+    """Copies must share the keyid too: each other signer is rejected in its own right."""
+    scenario.sign_with("postreg0", keys.generate())
+    first = scenario.read("postreg0")
+    scenario.sign_with("postreg0", keys.generate())
+    scenario.add_raw("first", first)
+    (rejected_a, rejected_b) = _commitment(scenario.verify())["rejected_receipts"]
+    assert rejected_a["ref"] == rejected_b["ref"]
+    assert rejected_a["keyid"] != rejected_b["keyid"]

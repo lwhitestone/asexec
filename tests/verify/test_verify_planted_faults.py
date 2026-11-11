@@ -198,25 +198,3 @@ def test_fault__nan_in_the_body_is_valid_json(tmp_path):
     assert _run(tmp_path, d.sign(d.with_field(d.PREREG, "notes", float("nan"))))["code"] == (
         PREFIX + "BDR=PASS"
     )
-
-
-# --- the same manifest supplied twice --------------------------------------------- #
-
-
-def test_fault__identical_prereg_files_are_one_commitment(tmp_path):
-    pre, post = _pair(d.PREREG)
-    report = _run(tmp_path, pre, pre, post, tests=TESTS_LINKED)
-    assert report["code"] == PREFIX + "BDR=PASS chain=PASS keyconsist=PASS"
-    assert len(report["commitments"]) == 1
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="an identical postreg supplied twice counts twice and becomes a second root, so "
-    "chain fails, while an identical prereg is merged; VERIFICATION.md defines neither",
-)
-def test_fault__identical_postreg_files_count_once(tmp_path):
-    pre, post = _pair(d.PREREG)
-    report = _run(tmp_path, pre, post, post, tests=TESTS_LINKED)
-    assert report["code"] == PREFIX + "BDR=PASS chain=PASS keyconsist=PASS"
-    assert len(report["commitments"][0]["receipts"]) == 1
