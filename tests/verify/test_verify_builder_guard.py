@@ -13,8 +13,8 @@ import pytest
 from asexec import manifest
 from asexec.verifier import verify_paths
 
-TESTS = ["BDR", "chain", "content", "floor", "keyconsist"]
-ALL_PASS = "asexec-verify/1 BDR=PASS chain=PASS content=PASS floor=PASS keyconsist=PASS"
+TESTS = ["BDR", "chain", "content", "floor", "keyconsist"]  # sorted, as a code lists them
+ALL_PASS = "asexec-verify/1 " + " ".join(f"{name}=PASS" for name in TESTS)
 
 
 def _built(raw):
