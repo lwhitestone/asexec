@@ -21,9 +21,9 @@ paths from the envelope root, e.g. `payload.anchor.floor.round`, `signature.keyi
 `m.payload`.
 
 **Hex.** A value required to be hex is a string that `bytes.fromhex` accepts: an even
-number of hex digits in either case, with ASCII whitespace allowed around and between bytes. Where a
-requirement compares a value to a computed digest (ceiling #2, floor #4), the comparison is
-exact against the lowercase hex of the digest.
+number of hex digits in either case, with ASCII whitespace allowed around and between bytes. Content
+#6 compares the bytes a digest's hex decodes to, so any such spelling matches. Ceiling #2
+and floor #4 compare exactly against the lowercase hex of the digest.
 
 **JSON.** Valid JSON is what Python's `json.load` accepts (so `NaN` and `Infinity` are
 allowed), nested at most 64 deep: each array or object adds a level, and the outermost
@@ -319,15 +319,15 @@ Subject digests recomputed from the original artifacts.
 
 **Passes when all** (for each manifest that has a `payload.subject`, and each of its entries)
 1. `payload.subject` is a non-empty array, and each entry's `name` is a string and
-   `digest[hash_alg]` is a string.
+   `digest[hash_alg]` is hex.
 2. `hash_alg` is available in this install: `sha-256` always, `blake3` only if installed.
 3. `name` (trailing `/` removed) resolved with symlinks against `--artifacts` is the
    `--artifacts` directory or beneath it. `..` components, absolute names, and symlinks
    that point outside fail here.
 4. The resolved path exists.
 5. The resolved path is readable.
-6. The recomputed digest of the file or directory under `hash_alg` equals
-   `digest[hash_alg]`.
+6. The recomputed digest of the file or directory under `hash_alg` equals the bytes of
+   `digest[hash_alg]`, in either hex case.
 
 **Vacuous reason:** `requested but no content could be checked (need --artifacts and a
 manifest with a subject)`.

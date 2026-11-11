@@ -63,18 +63,6 @@ def test_fault__subject_entry_without_a_digest(tmp_path):
     assert _content_reasons(report) == ["malformed subject entry"]
 
 
-def test_fault__subject_digest_in_uppercase_hex(tmp_path):
-    """Digests compare as strings (content #6), so uppercase hex of the right bytes fails."""
-    upper = d.DIGESTS["harness/"].upper()
-    report = _run(
-        tmp_path,
-        d.sign(d.with_field(d.PREREG, "subject.0.digest.sha-256", upper)),
-        tests=("BDR", "content"),
-    )
-    assert report["code"] == PREFIX + "BDR=PASS content=FAIL"
-    assert _content_reasons(report) == ["digest mismatch"]
-
-
 # --- fields the writer would never write ----------------------------------------- #
 
 

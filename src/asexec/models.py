@@ -115,7 +115,7 @@ class CeilingInput(InputModel):
 
 class SubjectEntryInput(InputModel):
     """One ``payload.subject[]`` entry (content #1). Must be validated with
-    ``context={"hash_alg": ...}``: ``digest[hash_alg]`` must be a string."""
+    ``context={"hash_alg": ...}``: ``digest[hash_alg]`` must be hex."""
 
     name: str  # content #1
     digest: dict[str, Any]  # content #1
@@ -135,6 +135,7 @@ class SubjectEntryInput(InputModel):
         alg = info.context["hash_alg"]
         if not isinstance(alg, str) or not isinstance(self.digest.get(alg), str):
             raise ValueError("digest[hash_alg] is not a string")
+        bytes.fromhex(self.digest[alg])  # a ValueError here: digest[hash_alg] is not hex
         return self
 
 

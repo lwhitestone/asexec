@@ -266,7 +266,7 @@ def _verify_subject_item(item: Any, alg: Any, artifacts_dir: str) -> dict[str, A
         actual = hashing.digest_path(path, alg)
     except OSError as e:
         return {"name": name, "ok": False, "reason": f"artifact unreadable: {e.strerror or e}"}
-    ok = actual == expected
+    ok = bytes.fromhex(actual) == bytes.fromhex(expected)  # content #6: any hex spelling
     return {"name": name, "ok": ok, **({} if ok else {"expected": expected, "actual": actual})}
 
 
