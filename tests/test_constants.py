@@ -26,7 +26,8 @@ To change an identifier, in one PR:
 3. Add a frozen manifest for the new version. From 0.4.0, never edit or regenerate an existing
    one: if one fails, the change breaks users.
 4. Update the README, ``docs/VERIFICATION.md`` and any golden vectors.
-5. Release it as a ``MINOR`` (``ROADMAP.md``, Versioning), with this release-note entry:
+5. Release it as a ``MINOR`` (``ROADMAP.md``, Versioning), or before 0.4.0 as a ``PATCH``, with
+   this release-note entry:
 
        Identifier: <name>, <old value> -> <new value>
        Impact: <class>

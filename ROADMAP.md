@@ -29,6 +29,8 @@ Distribution (PyPI) is cut early to claim the name, with honest caveats.
     line with *already documented* semantics (e.g. `chain` rejecting forks,
     which its docstring always claimed) is a `PATCH`, called out in the
     release notes.
+  - **Until `0.4.0`:** a `MINOR` change may ship as a `0.3.x` `PATCH` instead, with the break
+    called out in the release notes. From `0.4.0`, it needs a `MINOR`.
 - **Identifiers baked into signed bytes.** `SIGNING_PAE_VERSION` (`asexec-PAE/v1`) and
   `MANIFEST_PAYLOAD_TYPE` are in the signing input, and `MANIFEST_SCHEMA_ID` and
   `MANIFEST_PREDICATE_TYPE` are written into the signed body. Changing any of them is a
