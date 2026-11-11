@@ -179,21 +179,11 @@ def test_fault__payload_not_an_object(tmp_path, payload):
     assert _run(tmp_path, env)["code"] == PREFIX + "BDR=FAIL"
 
 
-def _nested_junk(depth):
-    """A signed prereg plus an unsigned envelope field nested ``depth`` arrays deep."""
-    return json.dumps(d.sign(d.PREREG))[:-1] + ', "junk": ' + "[" * depth + "]" * depth + "}"
-
-
-def test_fault__nested_unsigned_field_is_not_examined(tmp_path):
-    assert _run(tmp_path, _nested_junk(500))["code"] == PREFIX + "BDR=PASS"
-
-
-def test_fault__very_deep_file_returns_a_code(tmp_path):
-    """Verify never raises on it, but the verdict depends on where the file is verified:
-    the JSON parser gives up past its recursion limit (fixed before Python 3.14, the C stack
-    size from 3.14), and then the valid file is judged malformed."""
-    code = _run(tmp_path, _nested_junk(100_000))["code"]
-    assert code in (PREFIX + "BDR=PASS", PREFIX + "BDR=FAIL")
+def test_fault__very_deep_file_fails_BDR_everywhere(tmp_path):
+    """100,000 levels: rejected before parsing, so the code is the same on every Python
+    version and machine (the parser's own limit is not)."""
+    raw = json.dumps(d.sign(d.PREREG))[:-1] + ', "junk": ' + "[" * 100_000 + "]" * 100_000 + "}"
+    assert _run(tmp_path, raw)["code"] == PREFIX + "BDR=FAIL"
 
 
 def test_fault__body_with_no_canonical_form_fails_BDR(tmp_path):

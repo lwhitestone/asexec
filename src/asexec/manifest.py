@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any
 
 from . import keys
@@ -208,15 +209,40 @@ def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return out
 
 
+# The deepest a manifest file may nest arrays and objects (the outermost object is 1).
+# Manifests nest about 5 deep. A deeper file is rejected before it is parsed, so no
+# parser, model or encoder ever reaches its recursion limit: those limits differ between
+# Python versions and machines, and would make the same file verify differently.
+MAX_NESTING_DEPTH = 64
+
+# A JSON string (skipped, so brackets inside one don't count) or a bracket.
+_STRING_OR_BRACKET = re.compile(r'"(?:[^"\\]|\\.)*"|[\[\]{}]', re.DOTALL)
+
+
+def _check_nesting(text: str) -> None:
+    depth = 0
+    for match in _STRING_OR_BRACKET.finditer(text):
+        token = match.group()
+        if token in ("[", "{"):
+            depth += 1
+            if depth > MAX_NESTING_DEPTH:
+                raise ManifestError(f"nested more than {MAX_NESTING_DEPTH} deep")
+        elif token in ("]", "}"):
+            depth -= 1
+
+
 def load(path: str) -> dict[str, Any]:
     """Load a manifest file.
 
     Raises ``ManifestError`` for anything that is not a JSON object with unique
-    keys; ``OSError`` / ``UnicodeDecodeError`` / ``json.JSONDecodeError`` may
-    also propagate (callers that must not crash catch them).
+    keys, nested at most ``MAX_NESTING_DEPTH`` deep; ``OSError`` /
+    ``UnicodeDecodeError`` / ``json.JSONDecodeError`` may also propagate (callers
+    that must not crash catch them).
     """
     with open(path, encoding="utf-8") as f:
-        data = json.load(f, object_pairs_hook=_reject_duplicate_keys)
+        text = f.read()
+    _check_nesting(text)
+    data = json.loads(text, object_pairs_hook=_reject_duplicate_keys)
     if not isinstance(data, dict):
         raise ManifestError("manifest must be a JSON object")
     return data

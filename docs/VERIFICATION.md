@@ -25,6 +25,11 @@ number of hex digits in either case, with ASCII whitespace allowed around and be
 requirement compares a value to a computed digest (ceiling #2, floor #4), the comparison is
 exact against the lowercase hex of the digest.
 
+**JSON.** Valid JSON is what Python's `json.load` accepts (so `NaN` and `Infinity` are
+allowed), nested at most 64 deep: each array or object adds a level, and the outermost
+object is level 1. A deeper file is malformed, so every supported Python version reads a
+file the same way.
+
 **Result.** Each requested test yields exactly one of `PASS` / `FAIL`. There is no third
 value and no error state. Malformed input is never an exception: it is a failure of the
 tests that examine it.
@@ -44,8 +49,8 @@ tests that examine it.
   vacuous and is judged `FAIL`. One that lacks them is not examined and cannot fail the
   test; it also does not count toward passing.
 - Verification is offline.
-- A file is **malformed** if it cannot be read, is not a JSON object, contains a duplicate
-  JSON key at any level, lacks an object `payload` or `signature`, or its
+- A file is **malformed** if it cannot be read, is not a JSON object, nests more than 64
+  deep, contains a duplicate JSON key at any level, lacks an object `payload` or `signature`, or its
   `signature.pubkey` and `signature.sig` are not both hex. It fails `BDR`, and no other test
   examines it: it joins no commitment, so it is neither counted nor rejected.
 
@@ -121,7 +126,8 @@ Bedrock. Mandatory in every run.
 - `signature.keyid`
 
 **Passes when all**
-1. The file is a JSON object with no duplicate keys, containing `payload` and `signature`.
+1. The file is a JSON object, nested at most 64 deep, with no duplicate keys, containing
+   `payload` and `signature`.
 2. `signature.pubkey` and `signature.sig` are hex and `signature.sig` is a valid ed25519
    signature by `signature.pubkey` over the PAE signing input of the canonical bytes of
    `payload`.
