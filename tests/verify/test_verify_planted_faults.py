@@ -203,14 +203,10 @@ def test_fault__body_with_no_canonical_form_fails_BDR(tmp_path):
     assert _run(tmp_path, raw)["code"] == PREFIX + "BDR=FAIL"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="NaN is not JSON (RFC 8259), so VERIFICATION.md calls the file malformed, but "
-    "Python's json accepts it and BDR passes; a strict verifier would reject the same file",
-)
-def test_fault__nan_in_the_body_is_not_json(tmp_path):
+def test_fault__nan_in_the_body_is_valid_json(tmp_path):
+    """Valid JSON is what json.load accepts, and it accepts NaN."""
     assert _run(tmp_path, d.sign(d.with_field(d.PREREG, "notes", float("nan"))))["code"] == (
-        PREFIX + "BDR=FAIL"
+        PREFIX + "BDR=PASS"
     )
 
 

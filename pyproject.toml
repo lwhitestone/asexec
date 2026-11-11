@@ -38,6 +38,7 @@ Issues = "https://github.com/lwhitestone/asexec/issues"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = ["end_to_end: drives the CLI and the production writer end to end"]
 
 [tool.ruff]
 line-length = 100
