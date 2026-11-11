@@ -536,8 +536,8 @@ own block, since they have no prereg to sit under.
 
 `signer` and `timely` are planned for 0.4.0, and `continuity`, `order` and `complete` are
 deferred to 0.6.0 or later (see [`ROADMAP.md`](../ROADMAP.md)). Adding a test name never
-changes the meaning of an existing code. Changing the documented meaning of an existing name
-bumps the code grammar (`asexec-verify/N`).
+changes the meaning of an existing code. From 0.4.0, changing the documented meaning of an
+existing name bumps the code grammar (`asexec-verify/N`); 0.4.0 itself keeps `/1`.
 
 What a passing code does not establish is stated under each test (*Does not establish*)
 and summarized in the [README](../README.md#what-does-asexec-prove).

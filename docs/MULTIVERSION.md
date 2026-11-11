@@ -15,7 +15,7 @@ change does.
 ## Goal
 
 - A manifest signed by `0.4.0` or later gets the same verify result from every later release.
-- Manifests from `0.3.x` are out of scope. They verify with a `0.3.x` release.
+- Manifests from `0.3.x` are out of scope and not supported.
 - An older verifier can't understand a newer format. It must fail clearly rather than
   misread the manifest, and users upgrade to verify it.
 
@@ -84,12 +84,13 @@ Names are from [`constants.py`](../src/asexec/constants.py).
 
 ## Verify codes
 
-A published code should stay reproducible, but a new tool printing `asexec-verify/3` can't
-byte-match a published `asexec-verify/2` code. So `verify` keeps every grammar shipped since
-`0.4.0`, which itself bumps the grammar to `/2`; `/1` belongs to `0.3.x` and is out of scope.
+A published code should stay reproducible, but a new tool printing `asexec-verify/2` can't
+byte-match a published `asexec-verify/1` code. So `verify` keeps every grammar shipped since
+`0.4.0`, starting with `/1`. Codes printed by `0.3.x` also say `/1`, but they follow the
+earlier meanings and are out of scope.
 
 ```bash
-asexec verify prereg.json --tests BDR --code-version 2
+asexec verify prereg.json --tests BDR --code-version 1
 ```
 
 Without the flag it prints the newest grammar. Because a bump can also mean a test's documented

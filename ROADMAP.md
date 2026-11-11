@@ -39,11 +39,13 @@ Distribution (PyPI) is cut early to claim the name, with honest caveats.
 - **The verify-code grammar is versioned separately** (`asexec-verify/N`). The
   promise that "a code means exactly one thing, permanently" holds only if this
   rule holds: **if the documented meaning of an existing test name changes, the
-  grammar version bumps.** Adding a new test name does not require a bump.
+  grammar version bumps.** Adding a new test name does not require a bump. The rule applies
+  from `0.4.0`, which keeps `asexec-verify/1` and fixes its meaning. Codes printed by `0.3.x`
+  also say `/1` but aren't covered.
 - **Backward compatibility starts at `0.4.0`.** Until then, any release may change the
   schema, signed-byte format, verifier output, or CLI without a migration path. From
   `0.4.0`, manifests stay verifiable: a format change adds a new format version and keeps
-  accepting the old ones. Manifests from `0.3.x` verify with a `0.3.x` release.
+  accepting the old ones. Manifests from `0.3.x` are not supported.
   See [`docs/MULTIVERSION.md`](docs/MULTIVERSION.md) for the verifier design, which isn't
   built yet.
   `1.0.0` is deliberately unassigned; no trigger is defined.
@@ -174,13 +176,18 @@ adds sits outside it, in the wrapper:
 
 - `signer`: `--signer` / `--trusted-keys <file>`.
 - `timely`: postreg ceiling ≤ prereg `due`.
-- New commitment state `no-due`, separate from `open`. This changes what `open` means, so
-  the code grammar bumps to `asexec-verify/2`.
+- New commitment state `no-due`, separate from `open`. This changes what `open` means, but
+  the code grammar stays `asexec-verify/1`, because the bump rule starts at `0.4.0`.
 - `--json`: a stable report (the registry reads it).
 - Unknown signed fields are shown as unverified content, never dropped.
 
 **Tests:** golden vectors, regenerated for the DSSE format, plus tests for the items
 above. No broader test program.
+
+**Release:** once `0.4.0` is on PyPI, yank every `0.3.x` release, so a plain
+`pip install asexec` never picks unsupported alpha code. Yank rather than delete, because
+deletion is permanent and gains nothing. Yank reason: "pre-0.4.0 alpha, unsupported; use
+>=0.4.0".
 
 ## 0.5.0 — M2: Format freeze
 

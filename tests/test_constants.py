@@ -191,7 +191,7 @@ def test_verify_code_version():
     # BREAKS_USERS: a new tool can't byte-match a published code in the old version.
     # Fallback: keep the old version available through ``--code-version``. Bump /N only if the
     # grammar or the documented meaning of an existing test name changes; adding a test name
-    # needs no bump. Never reuse a number: a code means one thing, permanently.
+    # needs no bump. From 0.4.0, never change what a number means; 0.4.0 keeps /1.
     assert constants.VERIFY_CODE_VERSION == "asexec-verify/1"
     assert verify_paths([], ["BDR"])["code"].startswith("asexec-verify/1 ")
 
