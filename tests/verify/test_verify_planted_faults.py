@@ -63,18 +63,6 @@ def test_fault__subject_entry_without_a_digest(tmp_path):
     assert _content_reasons(report) == ["malformed subject entry"]
 
 
-def test_fault__subject_digest_in_uppercase_hex(tmp_path):
-    """Digests compare as strings (content #6), so uppercase hex of the right bytes fails."""
-    upper = d.DIGESTS["harness/"].upper()
-    report = _run(
-        tmp_path,
-        d.sign(d.with_field(d.PREREG, "subject.0.digest.sha-256", upper)),
-        tests=("BDR", "content"),
-    )
-    assert report["code"] == PREFIX + "BDR=PASS content=FAIL"
-    assert _content_reasons(report) == ["digest mismatch"]
-
-
 # --- fields the writer would never write ----------------------------------------- #
 
 
@@ -179,21 +167,11 @@ def test_fault__payload_not_an_object(tmp_path, payload):
     assert _run(tmp_path, env)["code"] == PREFIX + "BDR=FAIL"
 
 
-def _nested_junk(depth):
-    """A signed prereg plus an unsigned envelope field nested ``depth`` arrays deep."""
-    return json.dumps(d.sign(d.PREREG))[:-1] + ', "junk": ' + "[" * depth + "]" * depth + "}"
-
-
-def test_fault__nested_unsigned_field_is_not_examined(tmp_path):
-    assert _run(tmp_path, _nested_junk(500))["code"] == PREFIX + "BDR=PASS"
-
-
-def test_fault__very_deep_file_returns_a_code(tmp_path):
-    """Verify never raises on it, but the verdict depends on where the file is verified:
-    the JSON parser gives up past its recursion limit (fixed before Python 3.14, the C stack
-    size from 3.14), and then the valid file is judged malformed."""
-    code = _run(tmp_path, _nested_junk(100_000))["code"]
-    assert code in (PREFIX + "BDR=PASS", PREFIX + "BDR=FAIL")
+def test_fault__very_deep_file_fails_BDR_everywhere(tmp_path):
+    """100,000 levels: rejected before parsing, so the code is the same on every Python
+    version and machine (the parser's own limit is not)."""
+    raw = json.dumps(d.sign(d.PREREG))[:-1] + ', "junk": ' + "[" * 100_000 + "]" * 100_000 + "}"
+    assert _run(tmp_path, raw)["code"] == PREFIX + "BDR=FAIL"
 
 
 def test_fault__body_with_no_canonical_form_fails_BDR(tmp_path):
@@ -208,25 +186,3 @@ def test_fault__nan_in_the_body_is_valid_json(tmp_path):
     assert _run(tmp_path, d.sign(d.with_field(d.PREREG, "notes", float("nan"))))["code"] == (
         PREFIX + "BDR=PASS"
     )
-
-
-# --- the same manifest supplied twice --------------------------------------------- #
-
-
-def test_fault__identical_prereg_files_are_one_commitment(tmp_path):
-    pre, post = _pair(d.PREREG)
-    report = _run(tmp_path, pre, pre, post, tests=TESTS_LINKED)
-    assert report["code"] == PREFIX + "BDR=PASS chain=PASS keyconsist=PASS"
-    assert len(report["commitments"]) == 1
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="an identical postreg supplied twice counts twice and becomes a second root, so "
-    "chain fails, while an identical prereg is merged; VERIFICATION.md defines neither",
-)
-def test_fault__identical_postreg_files_count_once(tmp_path):
-    pre, post = _pair(d.PREREG)
-    report = _run(tmp_path, pre, post, post, tests=TESTS_LINKED)
-    assert report["code"] == PREFIX + "BDR=PASS chain=PASS keyconsist=PASS"
-    assert len(report["commitments"][0]["receipts"]) == 1

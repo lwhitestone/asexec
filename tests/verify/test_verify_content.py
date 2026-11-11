@@ -40,12 +40,19 @@ def test_content__pass__all(scenario):
         {"name": 3, "digest": {"sha-256": "00"}},
         {"name": "harness/", "digest": {"sha-256": 5}},
         {"name": "harness/", "digest": {}},
+        {"name": "harness/", "digest": {"sha-256": "zz"}},
         3,
     ],
-    ids=["name-not-string", "digest-not-string", "digest-missing-for-alg", "entry-not-object"],
+    ids=[
+        "name-not-string",
+        "digest-not-string",
+        "digest-missing-for-alg",
+        "digest-not-hex",
+        "entry-not-object",
+    ],
 )
 def test_content__fail__1_entry_is_well_formed(scenario, entry):
-    """content #1: name is a string and digest[hash_alg] is a string."""
+    """content #1: name is a string and digest[hash_alg] is hex."""
     scenario.set("prereg", "payload.subject", [entry])
     report = scenario.verify("content")
     assert report["code"] == FAIL
@@ -140,6 +147,17 @@ def test_content__fail__6_digest_equals_recomputed(scenario, target):
     assert all(
         "expected" in e for m in report["manifests"] for e in m["content"]["entries"] if not e["ok"]
     )
+
+
+def test_content__pass__6_digest_hex_accepts_either_case_and_whitespace(scenario):
+    """content #6: the digest's bytes are compared, so any hex spelling of them matches."""
+
+    def respell(body):
+        digest = body["subject"][0]["digest"]["sha-256"].upper()
+        body["subject"][0]["digest"]["sha-256"] = digest[:8] + " " + digest[8:]
+
+    scenario.mutate_all(respell)
+    assert scenario.code("content") == PASS
 
 
 def test_content__fail__vacuous_no_artifacts_provided(scenario):

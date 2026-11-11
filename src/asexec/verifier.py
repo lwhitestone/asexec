@@ -266,7 +266,7 @@ def _verify_subject_item(item: Any, alg: Any, artifacts_dir: str) -> dict[str, A
         actual = hashing.digest_path(path, alg)
     except OSError as e:
         return {"name": name, "ok": False, "reason": f"artifact unreadable: {e.strerror or e}"}
-    ok = actual == expected
+    ok = bytes.fromhex(actual) == bytes.fromhex(expected)  # content #6: any hex spelling
     return {"name": name, "ok": ok, **({} if ok else {"expected": expected, "actual": actual})}
 
 
@@ -356,19 +356,23 @@ def verify_paths(
         elif links.phase == "postreg":
             receipts.append((sig.get("ref"), links, sig))
 
-    notarization_only = []
+    # A manifest is identified by its ref, so a copy (same ref and keyid) of one already
+    # listed adds nothing: the same ref is the same body, links and all. Preregs are keyed
+    # by ref above.
+    notarization_only: list[dict[str, Any]] = []
     for rref, links, sig in receipts:
         if links.fulfills in preregs:
             pr = preregs[links.fulfills]
             entry = {"ref": rref, "prev_hash": links.prev_hash, "keyid": sig.get("keyid")}
             reason = _get_postreg_rejection_reason(sig, pr)
             if reason:
-                pr["rejected_receipts"].append({**entry, "reason": reason})
+                _add_once(pr["rejected_receipts"], {**entry, "reason": reason})
             else:
-                pr["receipts"].append(entry)
+                _add_once(pr["receipts"], entry)
         else:
-            notarization_only.append(
-                {"ref": rref, "fulfills": links.fulfills, "keyid": sig.get("keyid")}
+            _add_once(
+                notarization_only,
+                {"ref": rref, "fulfills": links.fulfills, "keyid": sig.get("keyid")},
             )
 
     commitments = []
@@ -405,6 +409,11 @@ def verify_paths(
         "ceiling_trust": ceiling_trust,
         "verified_at": _utc_timestamp(now),
     }
+
+
+def _add_once(entries: list[dict[str, Any]], entry: dict[str, Any]) -> None:
+    if entry not in entries:
+        entries.append(entry)
 
 
 def _utc_timestamp(epoch: float) -> str:

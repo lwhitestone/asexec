@@ -67,6 +67,30 @@ def test_BDR__fail__1_no_duplicate_keys(scenario):
     assert scenario.code() == FAIL
 
 
+def _with_unsigned_nesting(raw: str, levels: int) -> str:
+    """``raw`` (an envelope, nested 1 deep at its top) plus an unsigned field ``levels``
+    arrays deep, so the file nests ``1 + levels`` deep."""
+    return raw.rstrip()[:-1] + ', "junk": ' + "[" * levels + "]" * levels + "}"
+
+
+def test_BDR__pass__1_nesting_at_the_limit(scenario):
+    """BDR #1: a file nested exactly 64 deep is well-formed."""
+    scenario.add_raw("deep", _with_unsigned_nesting(scenario.read("prereg"), 63))
+    assert scenario.code() == PASS
+
+
+def test_BDR__pass__1_brackets_inside_strings_do_not_nest(scenario):
+    """BDR #1: only arrays and objects nest; brackets in a string, escaped quote and all, don't."""
+    scenario.set("prereg", "payload.notes", '\\"' + "[{" * 100)
+    assert scenario.code() == PASS
+
+
+def test_BDR__fail__1_nested_at_most_64_deep(scenario):
+    """BDR #1: a file nested 65 deep is malformed, even where the extra level is unsigned."""
+    scenario.add_raw("deep", _with_unsigned_nesting(scenario.read("prereg"), 64))
+    assert scenario.code() == FAIL
+
+
 def test_BDR__fail__2_signature_covers_payload(scenario):
     """BDR #2: sig verifies over payload. A payload altered after signing fails."""
 

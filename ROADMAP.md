@@ -80,7 +80,6 @@ Distribution (PyPI) is cut early to claim the name, with honest caveats.
 - New optional body field `origin`: `self` | `extracted`. Extracted records carry the
   source snapshot as a subject (digest + URL) and put the quoted passage in `notes`. Not
   `provenance`, which already means `asserted` | `reproducible`.
-- Strict lowercase hex.
 - Subjects are files only, because directory hash v1 is ambiguous. Signing refuses a directory
   subject, and `content` fails one, so a hand-built manifest can't rely on the old hash. Remove
   `hash_dir`.

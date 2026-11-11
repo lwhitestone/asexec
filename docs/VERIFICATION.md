@@ -21,9 +21,14 @@ paths from the envelope root, e.g. `payload.anchor.floor.round`, `signature.keyi
 `m.payload`.
 
 **Hex.** A value required to be hex is a string that `bytes.fromhex` accepts: an even
-number of hex digits in either case, with ASCII whitespace allowed around and between bytes. Where a
-requirement compares a value to a computed digest (ceiling #2, floor #4), the comparison is
-exact against the lowercase hex of the digest.
+number of hex digits in either case, with ASCII whitespace allowed around and between bytes. Content
+#6 compares the bytes a digest's hex decodes to, so any such spelling matches. Ceiling #2
+and floor #4 compare exactly against the lowercase hex of the digest.
+
+**JSON.** Valid JSON is what Python's `json.load` accepts (so `NaN` and `Infinity` are
+allowed), nested at most 64 deep: each array or object adds a level, and the outermost
+object is level 1. A deeper file is malformed, so every supported Python version reads a
+file the same way.
 
 **Result.** Each requested test yields exactly one of `PASS` / `FAIL`. There is no third
 value and no error state. Malformed input is never an exception: it is a failure of the
@@ -44,8 +49,8 @@ tests that examine it.
   vacuous and is judged `FAIL`. One that lacks them is not examined and cannot fail the
   test; it also does not count toward passing.
 - Verification is offline.
-- A file is **malformed** if it cannot be read, is not a JSON object, contains a duplicate
-  JSON key at any level, lacks an object `payload` or `signature`, or its
+- A file is **malformed** if it cannot be read, is not a JSON object, nests more than 64
+  deep, contains a duplicate JSON key at any level, lacks an object `payload` or `signature`, or its
   `signature.pubkey` and `signature.sig` are not both hex. It fails `BDR`, and no other test
   examines it: it joins no commitment, so it is neither counted nor rejected.
 
@@ -121,7 +126,8 @@ Bedrock. Mandatory in every run.
 - `signature.keyid`
 
 **Passes when all**
-1. The file is a JSON object with no duplicate keys, containing `payload` and `signature`.
+1. The file is a JSON object, nested at most 64 deep, with no duplicate keys, containing
+   `payload` and `signature`.
 2. `signature.pubkey` and `signature.sig` are hex and `signature.sig` is a valid ed25519
    signature by `signature.pubkey` over the PAE signing input of the canonical bytes of
    `payload`.
@@ -313,15 +319,15 @@ Subject digests recomputed from the original artifacts.
 
 **Passes when all** (for each manifest that has a `payload.subject`, and each of its entries)
 1. `payload.subject` is a non-empty array, and each entry's `name` is a string and
-   `digest[hash_alg]` is a string.
+   `digest[hash_alg]` is hex.
 2. `hash_alg` is available in this install: `sha-256` always, `blake3` only if installed.
 3. `name` (trailing `/` removed) resolved with symlinks against `--artifacts` is the
    `--artifacts` directory or beneath it. `..` components, absolute names, and symlinks
    that point outside fail here.
 4. The resolved path exists.
 5. The resolved path is readable.
-6. The recomputed digest of the file or directory under `hash_alg` equals
-   `digest[hash_alg]`.
+6. The recomputed digest of the file or directory under `hash_alg` equals the bytes of
+   `digest[hash_alg]`, in either hex case.
 
 **Vacuous reason:** `requested but no content could be checked (need --artifacts and a
 manifest with a subject)`.
@@ -498,6 +504,10 @@ A postreg `P` **counts** toward prereg `R` iff all hold:
 A postreg that references `R` but fails 2 or 3 is **rejected**. It is listed under `R` with
 its reason (`invalid signature`, or `signed by a different key than the pre-registration`),
 and is never counted toward fulfillment or `chain`.
+
+A manifest is identified by its `ref`. Copies of a postreg, with the same `ref` and
+`signature.keyid`, are one receipt: counted, rejected or notarization-only once, however
+many are provided. Preregs with the same `ref` are one commitment.
 
 ## Commitment states
 
