@@ -185,6 +185,13 @@ def test_fault__deeply_nested_file_fails_BDR_without_raising(tmp_path):
     assert _run(tmp_path, raw)["code"] == PREFIX + "BDR=FAIL"
 
 
+def test_fault__body_with_no_canonical_form_fails_BDR(tmp_path):
+    """A lone surrogate escape is valid JSON but has no UTF-8 form, so no canonical bytes."""
+    raw = json.dumps(d.sign(d.PREREG)).replace('"notes": "prereg"', '"notes": "\\ud800"')
+    assert "\\ud800" in raw
+    assert _run(tmp_path, raw)["code"] == PREFIX + "BDR=FAIL"
+
+
 @pytest.mark.xfail(
     strict=True,
     reason="NaN is not JSON (RFC 8259), so VERIFICATION.md calls the file malformed, but "
