@@ -32,7 +32,9 @@ Several documented failure modes of one item share a parametrized test.
 Tests are black-box: they build inputs, run ``verify_paths``, and assert what the doc
 defines (verdicts, the code, documented reasons). Invalid inputs are written as the
 doc's dotted property paths (``scenario.set(name, "payload.anchor.floor.round", "1000")``),
-never through the verifier's own models.
+never through the verifier's own models. Nor are they built by the production writer:
+bodies start from the plain dicts in ``tests/manifest_data.py`` and are signed there, so
+any body can be signed, as anyone with a key could.
 
 Cross-cutting files use ``test_counting_rule__...``, ``test_state__<state>__...``,
 ``test_due__...`` and, in run rules, ``test_tests_arg__``, ``test_code__``, ``test_run__``
@@ -47,30 +49,15 @@ second of BLS math each time ``verify_paths`` runs.
 from __future__ import annotations
 
 import copy
+import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+import manifest_data as data
 import pytest
 
-from asexec import drand, hashing, keys, manifest
-from asexec.canonical import signing_input
 from asexec.verifier import verify_paths
-
-TARGET = {"kind": "api", "provider": "anthropic", "model_id": "m", "endpoint": ""}
-DUE = "2099-01-01T00:00:00Z"
-
-# Real quicknet round 1000 (fetched once; verification is offline).
-REAL_FLOOR = {
-    "floor_type": "drand",
-    "chain_hash": drand.QUICKNET_HASH,
-    "round": 1000,
-    "signature": (
-        "b44679b9a59af2ec876b1a6b1ad52ea9b1615fc3982b19576350f93447cb1125"
-        "e342b73a8dd2bacbe47e4b6b63ed5e39"
-    ),
-    "randomness": "fe290beca10872ef2fb164d2aa4442de4566183ec51c56ff3cd603d930e54fdd",
-}
 
 WITNESS_ID = "synthetic"
 _AUTO = object()
@@ -100,14 +87,13 @@ class Scenario:
         self.manifest_dir = tmp_path / "manifests"
         self.manifest_dir.mkdir()
         self.artifacts = tmp_path / "artifacts"
-        (self.artifacts / "harness").mkdir(parents=True)
-        (self.artifacts / "harness" / "eval.py").write_text("def run():\n    return 42\n")
-        for i in range(3):
-            (self.artifacts / f"transcript{i}.txt").write_text(f"run {i}: score=0.{i}\n")
+        for rel, text in data.ARTIFACTS.items():
+            (self.artifacts / rel).parent.mkdir(parents=True, exist_ok=True)
+            (self.artifacts / rel).write_text(text)
         self.outside = tmp_path / "outside.txt"  # a real file beyond --artifacts
         self.outside.write_text("secret\n")
 
-        self.key = keys.generate()
+        self.key = data.TEST_KEY
         self.server_pub, self.sign_response = make_server()
         self.servers = {WITNESS_ID: {"pubkey": self.server_pub}}  # the pinned witnesses
 
@@ -118,7 +104,6 @@ class Scenario:
         self.missing: list[str] = []  # names handed to verify without a file behind them
         self.raw: dict[str, str | bytes] = {}  # extra files written verbatim
         self.dropped: set[str] = set()  # specs derived from but not written
-        self.ungated: set[str] = set()  # specs signed without the writer's signing gate
         self._bodies: dict[str, dict] = {}
 
         self.add_prereg("prereg")
@@ -131,7 +116,7 @@ class Scenario:
 
     # --- declaring manifests ------------------------------------------------ #
     def add_prereg(self, name: str) -> None:
-        self.specs[name] = _Spec("prereg", self._subject(["harness"]))
+        self.specs[name] = _Spec("prereg", self._subject(["harness/"]))
 
     def add_postreg(
         self,
@@ -140,7 +125,7 @@ class Scenario:
         prev: str | None = None,
         transcript: str = "transcript0.txt",
     ) -> None:
-        subject = self._subject([transcript, "harness"])
+        subject = self._subject([transcript, "harness/"])
         self.specs[name] = _Spec("postreg", subject, fulfills=fulfills, prev=prev)
 
     def with_floor(self, name: str = "prereg") -> None:
@@ -161,22 +146,14 @@ class Scenario:
         root (``signature.*``, ``ceiling.*``) is edited after signing. Missing objects on
         the way are created; a numeric segment indexes an array.
         """
-        self._edit(name, path, lambda parent, key: parent.__setitem__(key, value))
+        self._edit(name, path, lambda envelope: data.set_path(envelope, path, value))
 
     def unset(self, name: str, path: str) -> None:
         """Remove the property at a doc-style dotted ``path`` (see ``set``)."""
-        self._edit(name, path, lambda parent, key: parent.pop(key, None))
+        self._edit(name, path, lambda envelope: data.del_path(envelope, path))
 
-    def _edit(self, name: str, path: str, op: Callable[[Any, Any], None]) -> None:
-        parts = [int(k) if k.isdigit() else k for k in path.split(".")]
-
-        def apply(envelope: Any) -> None:
-            obj = envelope
-            for key in parts[:-1]:
-                obj = obj[key] if isinstance(key, int) else obj.setdefault(key, {})
-            op(obj, parts[-1])
-
-        if parts[0] == "payload":
+    def _edit(self, name: str, path: str, apply: Callable[[dict], None]) -> None:
+        if path.split(".")[0] == "payload":
             self.mutate(name, lambda body: apply({"payload": body}))
         else:
             self.tamper(name, apply)
@@ -199,12 +176,6 @@ class Scenario:
         """Edit the envelope after signing (the signature no longer matches)."""
         self.post_sign.setdefault(name, []).append(fn)
 
-    def skip_writer_gate(self, *names: str) -> None:
-        """Sign these manifests (default: all) even if the writer's signing gate would
-        refuse the body, as anyone with a key could. Without this, a refused body fails
-        the test setup loudly instead of being signed by accident."""
-        self.ungated.update(names or self.specs)
-
     def drop(self, name: str) -> None:
         """Do not provide this manifest to verify (others still link to it)."""
         self.dropped.add(name)
@@ -225,12 +196,12 @@ class Scenario:
 
     # --- building ------------------------------------------------------------ #
     def _subject(self, names: list[str]) -> list[dict]:
-        return hashing.build_subject([str(self.artifacts / n) for n in names])
+        return [data.subject_entry(n) for n in names]
 
     def _link(self, target: str | None) -> str | None:
         if target is None or target.startswith("sha-256:"):
             return target
-        return manifest.ref(self._body(target))
+        return data.ref(self._body(target))
 
     def _body(self, name: str) -> dict:
         if name not in self._bodies:
@@ -239,23 +210,15 @@ class Scenario:
 
     def _build_body(self, name: str) -> dict:
         spec = self.specs[name]
-        common = {
-            "due": DUE,
-            "declaration": "all runs in full",
-            "subject": copy.deepcopy(spec.subject),
-            "notes": name,  # makes sibling bodies distinct, so their refs differ
-        }
+        body = copy.deepcopy(data.PREREG if spec.kind == "prereg" else data.POSTREG)
+        body["subject"] = copy.deepcopy(spec.subject)
+        body["notes"] = name  # makes sibling bodies distinct, so their refs differ
+        if spec.kind == "postreg":
+            body["fulfills"] = self._link(spec.fulfills)
+            if spec.prev is not None:
+                body["prev_hash"] = self._link(spec.prev)
         if spec.floor:
-            common["floor"] = copy.deepcopy(REAL_FLOOR)
-        if spec.kind == "prereg":
-            body = manifest.build_prereg(TARGET, **common)
-        else:
-            body = manifest.build_postreg(
-                TARGET,
-                fulfills=self._link(spec.fulfills),
-                prev_hash=self._link(spec.prev),
-                **common,
-            )
+            body["anchor"] = {"floor": copy.deepcopy(data.FLOOR)}
         for fn in spec.mutations:
             fn(body)
         return body
@@ -265,23 +228,21 @@ class Scenario:
         paths = []
         for name in self.specs:
             body = self._body(name)
-            envelope = _sign(
-                body, *self.signers.get(name, self.key), gated=name not in self.ungated
-            )
+            envelope = data.sign(body, self.signers.get(name, self.key))
             record = self.ceilings.get(name)
             if record is not None:
-                nonce_hex = manifest.ref(body).split(":", 1)[-1]
+                nonce_hex = data.ref(body).split(":", 1)[-1]
                 if record is _AUTO:
                     record = self.ceiling_for(
                         nonce_hex, WITNESS_ID, self.server_pub, self.sign_response
                     )
                 else:
                     record = record(nonce_hex)
-                manifest.attach_ceiling(envelope, record)
+                envelope["ceiling"] = record
             for fn in self.post_sign.get(name, []):
                 fn(envelope)
             path = self.manifest_dir / f"{name}.json"
-            manifest.save(envelope, str(path))
+            path.write_text(json.dumps(envelope, indent=2) + "\n")
             if name not in self.dropped:
                 paths.append(str(path))
         for name, content in self.raw.items():
@@ -308,16 +269,6 @@ class Scenario:
 
     def code(self, *tests: str, **kwargs) -> str:
         return self.verify(*tests, **kwargs)["code"]
-
-
-def _sign(body: dict, priv: bytes, pub: bytes, *, gated: bool) -> dict:
-    """Sign with the production writer, or (``gated=False``) by hand, so a junk body its
-    signing gate refuses (e.g. a subject with a null hash_alg) is signed anyway."""
-    if gated:
-        return manifest.sign(body, priv, pub)
-    sig = keys.sign(priv, signing_input(body))
-    signature = {"alg": "ed25519", "keyid": keys.keyid_for(pub), "pubkey": pub.hex()}
-    return {"payload": body, "signature": {**signature, "sig": sig.hex()}}
 
 
 @pytest.fixture
