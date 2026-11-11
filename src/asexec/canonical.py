@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .constants import PAE_PREFIX, PAYLOAD_TYPE
+from .constants import MANIFEST_PAYLOAD_TYPE, SIGNING_PAE_VERSION
 
 
 def canonical_bytes(payload: Any) -> bytes:
@@ -43,7 +43,7 @@ def pae(payload_type: bytes, body: bytes) -> bytes:
     """
     return b" ".join(
         [
-            PAE_PREFIX,
+            SIGNING_PAE_VERSION,
             str(len(payload_type)).encode("ascii"),
             payload_type,
             str(len(body)).encode("ascii"),
@@ -54,4 +54,4 @@ def pae(payload_type: bytes, body: bytes) -> bytes:
 
 def signing_input(payload: Any) -> bytes:
     """The exact bytes to sign/verify for a manifest payload."""
-    return pae(PAYLOAD_TYPE.encode("ascii"), canonical_bytes(payload))
+    return pae(MANIFEST_PAYLOAD_TYPE.encode("ascii"), canonical_bytes(payload))

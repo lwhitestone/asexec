@@ -29,16 +29,22 @@ Distribution (PyPI) is cut early to claim the name, with honest caveats.
     line with *already documented* semantics (e.g. `chain` rejecting forks,
     which its docstring always claimed) is a `PATCH`, called out in the
     release notes.
-- **Identifiers baked into signed bytes.** `SCHEMA_VERSION`, `PREDICATE_TYPE`,
-  and the PAE prefix (`asexec-PAE/v1`) are part of the signing input; changing
-  any of them is a deliberate format break, never incidental.
+- **Identifiers baked into signed bytes.** `SIGNING_PAE_VERSION` (`asexec-PAE/v1`) and
+  `MANIFEST_PAYLOAD_TYPE` are in the signing input, and `MANIFEST_SCHEMA_ID` and
+  `MANIFEST_PREDICATE_TYPE` are written into the signed body. Changing any of them is a
+  deliberate format change, never incidental. The full list, and how each may change, is
+  in [`tests/test_constants.py`](tests/test_constants.py).
 - **The verify-code grammar is versioned separately** (`asexec-verify/N`). The
   promise that "a code means exactly one thing, permanently" holds only if this
   rule holds: **if the documented meaning of an existing test name changes, the
   grammar version bumps.** Adding a new test name does not require a bump.
-- **No backward-compatibility guarantee before `1.0.0`.** Any pre-1.0 release
-  may change the schema, signed-byte format, verifier output, or CLI without a
-  migration path. `1.0.0` is deliberately unassigned; no trigger is defined.
+- **Backward compatibility starts at `0.4.0`.** Until then, any release may change the
+  schema, signed-byte format, verifier output, or CLI without a migration path. From
+  `0.4.0`, manifests stay verifiable: a format change adds a new format version and keeps
+  accepting the old ones. Manifests from `0.3.x` verify with a `0.3.x` release.
+  See [`docs/MULTIVERSION.md`](docs/MULTIVERSION.md) for the verifier design, which isn't
+  built yet.
+  `1.0.0` is deliberately unassigned; no trigger is defined.
 
 ## Version map
 
@@ -62,11 +68,18 @@ Distribution (PyPI) is cut early to claim the name, with honest caveats.
   bytes and never re-canonicalizes. `ref` = digest of the payload bytes.
 - The file is an asexec wrapper around that standard envelope: `dsse`, plus the unsigned
   `ceiling` and `pubkey` (see *Wrapper* below).
-- `PREDICATE_TYPE` → a URL the project controls.
+- `MANIFEST_PREDICATE_TYPE` → a URL the project controls.
+- Body field `schema_version` is now `schema_id`, since its value has no version in it.
+  (Done ahead of 0.4.0.)
+- `dsse.payloadType` selects the format version, and unknown values fail `BDR`
+  ([`docs/MULTIVERSION.md`](docs/MULTIVERSION.md)).
 - New optional body field `origin`: `self` | `extracted`. Extracted records carry the
   source snapshot as a subject (digest + URL) and put the quoted passage in `notes`. Not
   `provenance`, which already means `asserted` | `reproducible`.
 - Strict lowercase hex.
+- Subjects are files only, because directory hash v1 is ambiguous. Signing refuses a directory
+  subject, and `content` fails one, so a hand-built manifest can't rely on the old hash. Remove
+  `hash_dir`.
 - Convention: one prereg per promise. No list-level schema.
 
 **PAE vs DSSE.** PAE (pre-authentication encoding) is the rule for which bytes get
@@ -182,7 +195,7 @@ above. No broader test program.
 - `order`: the cryptographic proof of "pre"; consider bringing it back with M3 co-signing.
 - `complete` + `final` / `expected_runs`: tail-truncation detection; no M1 source needs it yet.
 - `--trust-roots`: the pinned drand and Roughtime set is enough until readers ask to choose their own.
-- Directory hash v2, as a new `hash_alg` label: M1 records hash snapshots, not trees, and a new label leaves v1 digests valid.
+- Directory subjects, with an unambiguous hash covering entry types, symlink targets, the executable bit and empty directories: M1 records hash snapshots, not trees.
 - [JCS (RFC 8785)](https://www.rfc-editor.org/rfc/rfc8785) canonicalization: DSSE verifies the stored bytes, so canonical form no longer matters for verification (worth adopting for multiple writers to produce byte-identical bodies, and therefore identical refs, from the same data).
 - Phase 1 invariant catalog, property/mutation testing, extra CI matrix: tests are added only when dogfooding or feedback shows a need.
 - Phase 3 dependency reduction (pydantic, blake3, BLS vendoring, Actions pinning): worthwhile, but not needed for M1–M3.

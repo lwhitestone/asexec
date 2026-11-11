@@ -41,7 +41,12 @@ from pydantic import (
 )
 
 from . import drand
-from .constants import KEY_ALG, PAYLOAD_TYPE, PREDICATE_TYPE, SCHEMA_VERSION
+from .constants import (
+    MANIFEST_PAYLOAD_TYPE,
+    MANIFEST_PREDICATE_TYPE,
+    MANIFEST_SCHEMA_ID,
+    SIGNING_KEY_ALG,
+)
 from .fields import Hex, Link, LowerHex, PinnedChain, StrictInt
 
 # A field the caller may express either as a plain string or as structured JSON.
@@ -206,8 +211,8 @@ class ManifestBody(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
 
     # structural bedrock - the format frame
-    schema_version: str = SCHEMA_VERSION
-    predicateType: str = PREDICATE_TYPE
+    schema_id: str = MANIFEST_SCHEMA_ID
+    predicateType: str = MANIFEST_PREDICATE_TYPE
     phase: str
 
     # semantic bedrock - WHAT was committed to (the only mandatory claim)
@@ -261,7 +266,7 @@ class Signature(SignatureInput):
     model_config = ConfigDict(extra="forbid")
     null_is_absent = False
 
-    alg: str = KEY_ALG
+    alg: str = SIGNING_KEY_ALG
     keyid: str
     pubkey: LowerHex
     sig: LowerHex
@@ -273,5 +278,5 @@ class Manifest(EnvelopeInput):
 
     null_is_absent = False
 
-    payloadType: str = PAYLOAD_TYPE
+    payloadType: str = MANIFEST_PAYLOAD_TYPE
     signature: Signature

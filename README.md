@@ -70,7 +70,7 @@ test:
 - **Chain** (`prev_hash`; [`chain`](./docs/VERIFICATION.md#chain)). The post-registrations of a
   commitment form a single linear chain: one root, no gaps, no forks. *Dropping the last
   post-registration(s) of a chain is **not** detectable yet; close-out manifests (`final`)
-  arrive in 0.4.0.*
+  are deferred to 0.6.0 or later.*
 - **Key consistency** ([`keyconsist`](./docs/VERIFICATION.md#keyconsist)). Every validly
   signed post-registration of a commitment uses the pre-registration's key.
 - **Created no earlier than** (`anchor.floor`; [`floor`](./docs/VERIFICATION.md#floor)). A
@@ -180,7 +180,7 @@ practitioner's call.
 {
   "payloadType": "application/vnd.asexec+json",
   "payload": {                                       // required: the signed body
-    "schema_version": "asexec",                      // required
+    "schema_id": "asexec",                           // required
     "predicateType": "https://asexec.dev/manifest",  // required
     "phase": "prereg",                               // required: prereg | postreg
     "target": "claude-opus-4-8 via the anthropic API", // required: text or JSON
@@ -226,7 +226,7 @@ practitioner's call.
 {
   "payloadType": "application/vnd.asexec+json",
   "payload": {                                       // required: the signed body
-    "schema_version": "asexec",                      // required
+    "schema_id": "asexec",                           // required
     "predicateType": "https://asexec.dev/manifest",  // required
     "phase": "postreg",                              // required: prereg | postreg
     "target": "claude-opus-4-8 via the anthropic API", // required: text or JSON
@@ -363,20 +363,23 @@ Designed by Luke Whitestone. Check out my other projects at: **[lukewhitest.one]
 **Alpha.** [`ROADMAP.md`](./ROADMAP.md) has the release history, what is planned, and what is
 explicitly not.
 
-> **No backward-compatibility guarantee before `1.0.0`.** This is pre-1.0 alpha: any release
-> may change the manifest schema, the signed-byte format, the verifier output, or the CLI
-> without a migration path — manifests signed by an older build may stop verifying against a
-> newer one. (0.2.0 rebalanced the schema in a breaking way by design.) Stability begins at
-> `1.0.0`, which is neither defined nor planned yet.
+> **Backward compatibility starts at `0.4.0`.** Until then, this is alpha: any release may
+> change the manifest schema, the signed-byte format, the verifier output, or the CLI without
+> a migration path — manifests signed by an older build may stop verifying against a newer
+> one. (0.2.0 rebalanced the schema in a breaking way by design.) From `0.4.0`, manifests stay
+> verifiable: a format change adds a new format version and keeps accepting the old ones.
+> Manifests from `0.3.x` verify with a `0.3.x` release. The verifier support for this is
+> [designed](./docs/MULTIVERSION.md) but not built yet.
 
 ## Known issues
 
-Where `asexec` deviates from the [verification contract](./docs/VERIFICATION.md) (fixes
-arrive in 0.4.0):
+Where `asexec` deviates from the [verification contract](./docs/VERIFICATION.md) (`0.4.0`
+closes this by accepting only files as subjects):
 
 - **Directory hashes (v1) are ambiguous**, so `content` can pass for a different tree: a
-  filename containing a newline can make two trees hash identically, and symlinks inside a
-  directory are skipped silently.
+  filename containing a newline can make two trees hash identically, and symlinks, empty
+  directories and executable bits inside a directory aren't covered. Use file subjects, such
+  as an archive of the directory, for anything that matters.
 
 ## License
 
