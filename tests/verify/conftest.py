@@ -14,6 +14,7 @@ One file per catalog test, plus one per cross-cutting section of the doc::
     test_verify_commitment_states.py ## Commitment states
     test_verify_run_rules.py         ## Conventions (Result, Code, Run rules)
     test_verify_doc_coverage.py      every numbered item above has a fail test
+    test_verify_planted_faults.py    inputs the writer cannot produce (no Scenario)
 
 Within a catalog-test file the tests appear in this order, and are named::
 
