@@ -1,4 +1,9 @@
-"""CLI behavior: fail-loud paths, argument validation, exit codes (all offline)."""
+"""CLI behavior: fail-loud paths, argument validation, exit codes (all offline).
+
+End-to-end tests: each drives ``cli.main``, and the ``verify`` tests build their input with
+``asexec prereg``/``postreg`` and the production writer on purpose, to check the whole round
+trip. Verify's contract is tested on raw data in ``tests/verify/``.
+"""
 
 import json
 import os
@@ -11,6 +16,8 @@ import pytest
 
 from asexec import cli, drand, identity, keys, manifest, roughtime
 from asexec.errors import NetworkError
+
+pytestmark = pytest.mark.end_to_end
 
 REF = "sha-256:" + "ab" * 32
 

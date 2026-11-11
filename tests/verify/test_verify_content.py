@@ -63,7 +63,6 @@ def test_content__pass__2_null_hash_alg_is_absent(scenario):
     """content #2: a null hash_alg is absent, so it defaults to sha-256. (The writer would
     refuse to sign a subject without hash_alg; a signer need not use the writer.)"""
     scenario.mutate_all(lambda body: body.update(hash_alg=None))
-    scenario.skip_writer_gate()
     assert scenario.code("content") == PASS
 
 
@@ -83,7 +82,6 @@ def test_content__fail__2_hash_alg_is_available(scenario):
 def test_content__fail__2_hash_alg_is_a_string(scenario):
     """content #2: a non-string hash_alg is no algorithm this install has."""
     scenario.mutate_all(lambda body: body.update(hash_alg=5))
-    scenario.skip_writer_gate()
     report = scenario.verify("content")
     assert report["code"] == FAIL
     assert set(_entry_reasons(report)) == {"algorithm unavailable: 5"}
