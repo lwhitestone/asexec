@@ -229,6 +229,26 @@ def test_not_enforced_yet__schema_id_and_predicate_type(tmp_path):
     assert _bdr_passes(tmp_path, FROZEN_MANIFEST)
 
 
+def test_not_enforced_yet__pre_rename_schema_version(tmp_path):
+    # Signed by v0.3.19, before schema_version was renamed to schema_id. It still passes only
+    # because verify doesn't compare the field; 0.3.x manifests are outside the 0.4.0 promise.
+    mani = {
+        "payloadType": "application/vnd.asexec+json",
+        "payload": {
+            "phase": "prereg",
+            "predicateType": "https://asexec.dev/manifest",
+            "schema_version": "asexec",
+            "target": "m",
+        },
+        "signature": {
+            **FROZEN_KEY,
+            "sig": "211dd45eb0d0f91d90457d5c9b59c96b52bdaaa7fe7cbba55283a47abd81eaf5"
+            "0314098c20f821cedc782f7f73d7717be33de6f81b1da48e4116efe46d52ae09",
+        },
+    }
+    assert _bdr_passes(tmp_path, mani)
+
+
 def test_not_enforced_yet__envelope_payload_type(tmp_path):
     mani = copy.deepcopy(FROZEN_MANIFEST)
     mani["payloadType"] = "application/something-else"
