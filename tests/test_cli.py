@@ -327,6 +327,12 @@ def test_verify_ends_with_code_then_time(prereg, capsys):
     assert re.fullmatch(r"Verified at \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", lines[-1])
 
 
+def test_verify_prints_each_commitments_signer(key, prereg, capsys):
+    _, pub = keys.load_signing_key(key)
+    run("verify", prereg, "--tests", "BDR")
+    assert f"    signer       : {keys.keyid_for(pub)}\n" in capsys.readouterr().out
+
+
 def test_verify_prints_notarization_only(tmp_path, key, prereg, capsys):
     post = tmp_path / "po.json"
     assert run("postreg", "--key", key, "--target", "t", "--fulfills", REF, "--out", post) == 0

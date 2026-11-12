@@ -305,7 +305,10 @@ def verify_paths(
     now = time.time() if now is None else now
     files = _expand(paths)
 
-    preregs: dict[str, Any] = {}  # ref -> record
+    # (ref, keyid) -> record. A commitment is a prereg's ref and its signer: the body holds
+    # no key, so the same body signed by two keys is two commitments, never one whose key
+    # depends on which file was read last.
+    preregs: dict[tuple[str, Any], Any] = {}
     receipts = []
     manifests_report = []
     ceiling_trust = []
@@ -346,7 +349,7 @@ def verify_paths(
             continue  # malformed: no other test examines it, so it joins no commitment
         links = LinkInput.model_validate({k: body[k] for k in LinkInput.model_fields if k in body})
         if links.phase == "prereg" and sig.get("ref"):
-            preregs[sig["ref"]] = {
+            preregs[(sig["ref"], sig.get("keyid"))] = {
                 "ref": sig["ref"],
                 "keyid": sig.get("keyid"),
                 "due": body.get("due"),
@@ -357,18 +360,20 @@ def verify_paths(
             receipts.append((sig.get("ref"), links, sig))
 
     # A manifest is identified by its ref, so a copy (same ref and keyid) of one already
-    # listed adds nothing: the same ref is the same body, links and all. Preregs are keyed
-    # by ref above.
+    # listed adds nothing: the same ref is the same body, links and all. A postreg counts
+    # toward the commitment of its ref whose signer it shares; one that counts toward none
+    # is rejected under every commitment of that ref.
     notarization_only: list[dict[str, Any]] = []
     for rref, links, sig in receipts:
-        if links.fulfills in preregs:
-            pr = preregs[links.fulfills]
+        candidates = [pr for (ref, _keyid), pr in preregs.items() if ref == links.fulfills]
+        if candidates:
             entry = {"ref": rref, "prev_hash": links.prev_hash, "keyid": sig.get("keyid")}
-            reason = _get_postreg_rejection_reason(sig, pr)
-            if reason:
-                _add_once(pr["rejected_receipts"], {**entry, "reason": reason})
+            reasons = [_get_postreg_rejection_reason(sig, pr) for pr in candidates]
+            if None in reasons:
+                _add_once(candidates[reasons.index(None)]["receipts"], entry)
             else:
-                _add_once(pr["receipts"], entry)
+                for pr, reason in zip(candidates, reasons, strict=True):
+                    _add_once(pr["rejected_receipts"], {**entry, "reason": reason})
         else:
             _add_once(
                 notarization_only,

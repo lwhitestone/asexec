@@ -63,7 +63,7 @@ the reasons this document lists.
 | Block | Printed | Shows |
 |---|---|---|
 | `=== manifests ===` | always | One line per file: `✓` if `BDR`'s signature and keyid conditions hold (else `✗`), the path, `payload.phase` and `signature.keyid`. Indented beneath: why a malformed file is malformed, and one line each for a floor, a ceiling and content hashes when the manifest has them. |
-| `=== commitments ===` | always | One entry per prereg: its [state](#commitment-states), `ref`, `due`, the number of counted postregs, a chain problem if any, and each rejected postreg with its reason. |
+| `=== commitments ===` | always | One entry per commitment (a prereg's `ref` and signer): its [state](#commitment-states), `ref`, signer keyid, `due`, the number of counted postregs, a chain problem if any, and each rejected postreg with its reason. |
 | `=== notarization-only … ===` | if any | Each postreg whose `payload.fulfills` matches no provided prereg. |
 | `=== tests ===` | always | One line per requested test: its result and a short reason. |
 | `=== ceiling trust … ===` | if a ceiling verified | Which witness you are trusting, and for what time. |
@@ -85,6 +85,7 @@ $ asexec verify prereg.json postreg-1.json postreg-2.json --tests BDR,chain,keyc
 
 === commitments ===
   [FULFILLED] prereg sha-256:2f4f6ac7…
+    signer       : sha-256:fbffcddd…
     due          : (none declared)
     postregs     : 2
 
@@ -446,7 +447,7 @@ Verified at 2026-12-31T23:59:59Z
 
 ### `keyconsist`
 
-Whether a prereg's postregs were signed by the prereg's own key.
+Whether a commitment's postregs were signed by its own key.
 
 **Examines (\*)**
 - `payload.phase`
@@ -455,10 +456,10 @@ Whether a prereg's postregs were signed by the prereg's own key.
 - `signature.sig`
 - `signature.keyid`
 
-**Passes when all** (for each prereg referenced by at least one postreg, counted or not)
-1. Every postreg whose `payload.fulfills` equals `ref(prereg)` and whose signature is valid
-   (the `BDR` signature and keyid conditions) has `signature.keyid` equal to the
-   prereg's `signature.keyid`.
+**Passes when all** (for each commitment referenced by at least one postreg, counted or not)
+1. Every postreg whose `payload.fulfills` equals the commitment's `ref` and whose signature
+   is valid (the `BDR` signature and keyid conditions) has the `signature.keyid` of a
+   provided prereg with that `ref`.
 
 A postreg with an invalid signature is not judged here (it fails `BDR`).
 
@@ -496,22 +497,28 @@ Verified at 2026-12-31T23:59:59Z
 
 ## Counting rule
 
-A postreg `P` **counts** toward prereg `R` iff all hold:
+A **commitment** is a prereg's `ref` together with its signer, `signature.keyid`. The body
+holds no key, so the same body signed by two keys has one `ref` but is two commitments, each
+judged on its own.
+
+A postreg `P` **counts** toward the commitment of prereg `R` iff all hold:
 1. `P.payload.phase == "postreg"` and `P.payload.fulfills == ref(R)`.
 2. `P` meets the `BDR` signature and keyid conditions.
 3. `P.signature.keyid == R.signature.keyid`.
 
-A postreg that references `R` but fails 2 or 3 is **rejected**. It is listed under `R` with
-its reason (`invalid signature`, or `signed by a different key than the pre-registration`),
-and is never counted toward fulfillment or `chain`.
+A postreg whose `payload.fulfills` equals `ref(R)` but that counts toward no commitment with
+that `ref` is **rejected**. It is listed under each such commitment with its reason
+(`invalid signature`, or `signed by a different key than the pre-registration`), and is
+never counted toward fulfillment or `chain`.
 
 A manifest is identified by its `ref`. Copies of a postreg, with the same `ref` and
 `signature.keyid`, are one receipt: counted, rejected or notarization-only once, however
-many are provided. Preregs with the same `ref` are one commitment.
+many are provided. Copies of a prereg, with the same `ref` and `signature.keyid`, are one
+commitment.
 
 ## Commitment states
 
-One per prereg, shown in the `=== commitments ===` block of the report (see
+One per commitment, shown in the `=== commitments ===` block of the report (see
 [Output](#output)). Never part of the verify code, and never affects the exit status.
 
 | State | Condition |
@@ -532,12 +539,13 @@ chained postregs as in the [`chain` example](#chain):
 ```
 === commitments ===
   [FULFILLED] prereg sha-256:86078561…
+    signer       : sha-256:fbffcddd…
     due          : 2099-01-01T00:00:00Z
     postregs     : 2
 ```
 
-Each entry is the state in capitals and the prereg's `ref`, then `due` (or `(none
-declared)`) and the number of counted postregs. Problems follow as `✗` lines: a `due`
+Each entry is the state in capitals and the prereg's `ref`, then its signer's keyid, `due`
+(or `(none declared)`) and the number of counted postregs. Problems follow as `✗` lines: a `due`
 without a timezone, an unparseable `due`, a chain problem (on the `postregs` line), or a
 rejected postreg and why it does not count. `notarization-only` postregs are listed in their
 own block, since they have no prereg to sit under.

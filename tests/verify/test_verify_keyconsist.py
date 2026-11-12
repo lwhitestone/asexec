@@ -24,6 +24,18 @@ def test_keyconsist__pass__1_invalid_signature_is_not_judged_here(scenario):
     assert scenario.code("keyconsist") == "asexec-verify/1 BDR=FAIL keyconsist=PASS"
 
 
+def test_keyconsist__pass__1_postreg_by_another_signer_of_the_same_ref(scenario):
+    """keyconsist #1: a postreg by the signer of another provided prereg with the same ref
+    belongs to that signer's commitment, so it is no failure of this one."""
+    other = keys.generate()
+    scenario.add_prereg("prereg_b")
+    scenario.mutate("prereg_b", lambda body: body.update(notes="prereg"))  # the same body
+    scenario.sign_with("prereg_b", other)
+    scenario.sign_with("postreg2", other)
+    scenario.link("postreg2", fulfills="prereg_b", prev=None)
+    assert scenario.code("keyconsist") == PASS
+
+
 def test_keyconsist__fail__1_valid_postreg_has_prereg_keyid(scenario):
     """keyconsist #1: a validly signed postreg by another key fails."""
     scenario.sign_with("postreg1", keys.generate())
