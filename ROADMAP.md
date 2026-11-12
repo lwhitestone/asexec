@@ -6,13 +6,26 @@
 
 ## Milestones
 
-- **M1:** a narrow slice of disclosure promises: one record format tested on two sources (Anthropic's RSP promises; an assessor source TBD), hardened against tampering and repudiation → asexec 0.4.x.
-- **M2:** promises already made in public are seeded into a registry, with in-toto export; the format freezes here → asexec 0.5.0.
-- **M3:** parties sign their own commitments, with assessor co-signing → asexec 0.5.x.
+- **M1:** one assessor-run vertical, the commit-reveal adequacy test: proof that an
+  assessor fixed its plan, item list and planted counterexamples before the lab's monitor
+  ran, and accounted for every item afterwards → asexec 0.4.x.
+- **M2:** in-toto export, a second claim on the same schema, and live export of per-item
+  statuses to a claim-graph display; the format freezes here → asexec 0.5.0.
+- **M3:** a two-sided pilot (the assessor signs its plan and the lab signs the monitor run),
+  then lab disclosure promises, self-signed and outsider-extracted side by side
+  → asexec 0.5.x.
 
-The registry is a separate project, asexec-registry, and is not planned here. Anything not
-needed for M1–M3 moves to 0.6.0 or later. A test is added only once dogfooding or user
-feedback shows it is needed.
+The adequacy test is the one in Apollo Research's [*Principles for Embedded
+Evaluations*](https://www.apolloresearch.ai/blog/principles-for-embedded-evaluations): to
+back a universal-negative claim ("models never attempted to evade their monitoring"),
+realistic evasion attempts are planted in transcripts and the monitor's catch rate decides
+between *Verified* and *Unrefuted*. Today nothing proves the plants and the plan were fixed
+before the run, or that no item was dropped. asexec reports per-item statuses; verdicts
+belong to the assessor or the display layer, not to asexec.
+
+No registry is planned. asexec-registry is built only if M2 shows that a claim-graph
+display can't show records publicly. Anything not needed for M1–M3 moves to 0.6.0 or
+later. A test is added only once dogfooding or user feedback shows it is needed.
 
 **Ordering logic:** make the current claims true first; then make every format-breaking
 change in one release; then freeze the format at M2, after M1 dogfooding. Anything
@@ -55,10 +68,10 @@ Distribution (PyPI) is cut early to claim the name, with honest caveats.
 | Version | Scope | Milestone |
 |---|---|---|
 | 0.3.x | shipped (current 0.3.19; see *History*) | — |
-| **0.4.0** | slim verify surface + format changes (below) | M1 |
-| **0.4.x** | patches found while dogfooding M1 | M1 |
-| **0.5.0** | format freeze: wire format + golden vectors become normative; `asexec export --in-toto` | M2 |
-| **0.5.x** | `cosign` verify test (additive, since `signatures` is already a list) | M3 |
+| **0.4.0** | slim verify surface + every core format change (below) | M1 |
+| **0.4.x** | the adequacy-test vertical under an experimental `payloadType`: `complete`, `order`, lab run records; patches from dogfooding | M1 |
+| **0.5.0** | format freeze: wire format + golden vectors become normative; `asexec export --in-toto`; second claim | M2 |
+| **0.5.x** | two-sided pilot; lab disclosure promises (`origin`: `self` \| `extracted`) | M3 |
 | **0.6.0+** | everything deferred (below) | — |
 
 ---
@@ -77,13 +90,12 @@ Distribution (PyPI) is cut early to claim the name, with honest caveats.
   (Done ahead of 0.4.0.)
 - `dsse.payloadType` selects the format version, and unknown values fail `BDR`
   ([`docs/MULTIVERSION.md`](docs/MULTIVERSION.md)).
-- New optional body field `origin`: `self` | `extracted`. Extracted records carry the
-  source snapshot as a subject (digest + URL) and put the quoted passage in `notes`. Not
-  `provenance`, which already means `asserted` | `reproducible`.
+- `hash_alg` moves into each subject entry, and the body-level field becomes invalid.
 - Subjects are files only, because directory hash v1 is ambiguous. Signing refuses a directory
   subject, and `content` fails one, so a hand-built manifest can't rely on the old hash. Remove
   `hash_dir`.
-- Convention: one prereg per promise. No list-level schema.
+- Convention: one prereg per commitment (a promise, or an assessment's plan). No
+  list-level schema.
 
 **PAE vs DSSE.** PAE (pre-authentication encoding) is the rule for which bytes get
 signed:
@@ -115,8 +127,9 @@ signed bytes, and a `signatures` list.
   breaks signatures and refs.
 - **0.4.0:** full DSSE. The verifier checks the stored bytes as they are, so
   canonicalization no longer matters for verification. The `DSSEv1` prefix lets standard
-  DSSE and in-toto tooling read asexec envelopes (groundwork for M2's export), and the
-  `signatures` list makes M3 co-signing additive. The cost: a format break, regenerated
+  DSSE and in-toto tooling read asexec envelopes (groundwork for M2's export). The
+  `signatures` list keeps one entry: a second party signs its own record (see *0.4.x*),
+  not the same body. The cost: a format break, regenerated
   golden vectors, and a payload that must be decoded to be read.
 
 How the pieces relate. Only the body bytes are fixed; the PAE is rebuilt by signer and
@@ -177,7 +190,7 @@ adds sits outside it, in the wrapper:
 - `timely`: postreg ceiling ≤ prereg `due`.
 - New commitment state `no-due`, separate from `open`. This changes what `open` means, but
   the code grammar stays `asexec-verify/1`, because the bump rule starts at `0.4.0`.
-- `--json`: a stable report (the registry reads it).
+- `--json`: a stable report (the claim-graph export reads it).
 - Unknown signed fields are shown as unverified content, never dropped.
 
 **Tests:** golden vectors, regenerated for the DSSE format, plus tests for the items
@@ -188,20 +201,73 @@ above. No broader test program.
 deletion is permanent and gains nothing. Yank reason: "pre-0.4.0 alpha, unsupported; use
 >=0.4.0".
 
+## 0.4.x — M1: The adequacy-test vertical
+
+The vertical ships under its own experimental `payloadType` (spelling not decided). That
+format is outside the backward-compatibility promise until 0.5.0 promotes it to a frozen
+one; until then a release may change or drop it, and its manifests then fail `BDR` as an
+unknown format ([`docs/MULTIVERSION.md`](docs/MULTIVERSION.md)). The core format of 0.4.0
+is unaffected.
+
+**Format**
+
+- Prereg (the assessor's commitment, signed before access and before the run): `plan`
+  (an opaque digest), `items` (for example search, experiments, adequacy), a plant-set
+  commitment (salted-hash root and count), `presented_by`, `due`, and a floor and ceiling.
+- Postreg: one per item, chained, with `status` (`reported` | `excluded` | `blocked`) and
+  `evidence` digests. The adequacy item's postreg points at the lab's run record by `ref`.
+- Lab run record: its own envelope, signed by the lab's key, with `attests: <prereg ref>`,
+  the run's output digest, and its own floor and ceiling. It is a new record kind, not a
+  postreg, so the counting rule never puts it under the assessor's commitment, and the lab
+  can't block the assessor's report by withholding a signature.
+- Plant-set root: an unambiguous encoding (length-prefixed leaves, or a Merkle tree with
+  domain separation), specified before anyone commits to a root. Directory hash v1 is the
+  counterexample.
+- Reveal sample: a drand round issued after the run selects which plants are revealed, so
+  the assessor can't pick the published sample.
+- Key list with roles (assessor, lab) at a well-known path: a file convention, not a
+  registry. It feeds `signer`, and `presented_by` must match it; otherwise
+  `presented_by` is an unchecked self-label.
+
+**Verify**
+
+- `complete`: every committed item has a postreg by `due`.
+- `order`: the plant-set commitment's ceiling is before the lab run record's floor.
+- The lab run record is validly signed by a key the key list gives the lab role.
+
+**Tests:** a fault suite, each fault with its expected code: plants swapped after the run;
+an item silently dropped; plants committed after the run; a late item; a silent
+amendment; a record signed with an unpublished key. 0.3.19 catches only the swap. Plus
+one end-to-end worked example: synthetic transcripts, a toy monitor and 40 plants, through
+commit, run, reveal and verify.
+
+**Open until assessors answer:** whether adequacy tests use planted counterexamples today
+(how many, and whether the lab sees them before the run); whether the lab can sign the
+run; whether publishing the plant set teaches evasion, and whether a count plus a random
+sample is enough.
+
 ## 0.5.0 — M2: Format freeze
 
-- The wire format and the golden vectors become normative.
+- The wire format and the golden vectors become normative, including the vertical's
+  format, promoted from experimental.
 - `asexec export --in-toto`.
+- A second claim on the same schema.
+- Live export of per-item statuses (`verify --json`) to a claim-graph display.
+  asexec-registry is built only if that display can't show records publicly.
 
-## 0.5.x — M3: Co-signing
+## 0.5.x — M3: Two-sided pilot, then lab promises
 
-- `cosign` verify test. Additive: `signatures` is already a list from 0.4.0.
+- Pilot with one assessor and one lab: the assessor signs its plan, the lab signs the
+  monitor run.
+- Lab disclosure promises, self-signed and outsider-extracted side by side. New optional
+  body field `origin`: `self` | `extracted`. Extracted records carry the source snapshot as
+  a subject (digest + URL) and put the quoted passage in `notes`. Not `provenance`, which
+  already means `asserted` | `reproducible`.
 
 ## Deferred to 0.6.0+
 
-- `continuity` + subject `role` / relative paths: matching runs to their inputs; disclosure promises don't need it.
-- `order`: the cryptographic proof of "pre"; consider bringing it back with M3 co-signing.
-- `complete` + `final` / `expected_runs`: tail-truncation detection; no M1 source needs it yet.
+- `continuity` + subject `role` / relative paths: matching runs to their inputs; the vertical doesn't need it.
+- `final` / `expected_runs` for tail truncation beyond a declared item list: `complete` covers the vertical, whose items are listed up front.
 - `--trust-roots`: the pinned drand and Roughtime set is enough until readers ask to choose their own.
 - Directory subjects, with an unambiguous hash covering entry types, symlink targets, the executable bit and empty directories: M1 records hash snapshots, not trees.
 - [JCS (RFC 8785)](https://www.rfc-editor.org/rfc/rfc8785) canonicalization: DSSE verifies the stored bytes, so canonical form no longer matters for verification (worth adopting for multiple writers to produce byte-identical bodies, and therefore identical refs, from the same data).
@@ -214,7 +280,8 @@ deletion is permanent and gains nothing. Yank reason: "pre-0.4.0 alpha, unsuppor
 
 - **Per-key public index** (`.well-known/asexec-index.json`) — addresses
   selective *non*-registration, the largest remaining completeness gap.
-  Convention only, no hosting.
+  Convention only, no hosting. (The role key list in 0.4.x is narrower: it lists keys,
+  not records.)
 - **Offline identity check** (`verify --wellknown <archived.json>`) and
   **`--as-of`** for reproducible state rendering.
 - **Re-execution / determinism mode** — must degrade gracefully for
@@ -222,7 +289,8 @@ deletion is permanent and gains nothing. Yank reason: "pre-0.4.0 alpha, unsuppor
 - **Federated cosigner witnesses** — generalize the ceiling to a k-of-n
   `cosign` witness type the reader chooses to trust. Waits for willing
   witnesses.
-- **Multi-party co-signing** at prereg; **structured regulatory
+- **Multi-party co-signing** at prereg (several keys over one body; the vertical doesn't
+  need it, since each party signs its own record); **structured regulatory
   cross-reference** field — add when a concrete need appears.
 - **Roughtime interop beyond int08h.** Keys for four IETF-Roughtime servers are pinned
   from the ecosystem list, but the wire format is reconciled only against a live
