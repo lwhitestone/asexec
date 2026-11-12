@@ -313,6 +313,7 @@ def cmd_verify(args) -> int:
         print("  (no pre-registrations among the provided manifests)")
     for c in report["commitments"]:
         print(f"  [{c['state'].upper()}] prereg {c['ref']}")
+        print(f"    signer       : {c.get('keyid')}")
         print(f"    due          : {c.get('due') or '(none declared)'}")
         if c["due_naive"]:
             print(f"    {NO} due has no timezone; read as UTC (re-sign with an explicit offset)")

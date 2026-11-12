@@ -8,6 +8,7 @@ Observed through the report: ``commitments[].receipts`` / ``rejected_receipts`` 
 """
 
 from asexec import keys
+from asexec.verifier import verify_paths
 
 
 def _commitment(report):
@@ -116,3 +117,66 @@ def test_counting_rule__same_body_by_two_other_keys_is_two_rejections(scenario):
     (rejected_a, rejected_b) = _commitment(scenario.verify())["rejected_receipts"]
     assert rejected_a["ref"] == rejected_b["ref"]
     assert rejected_a["keyid"] != rejected_b["keyid"]
+
+
+# --- a commitment is a prereg's ref and its signer ---------------------------------- #
+
+
+def _second_signer(scenario):
+    """The prereg's exact body signed by another key, with one postreg by that key."""
+    other = keys.generate()
+    scenario.add_prereg("prereg_b")
+    scenario.mutate("prereg_b", lambda body: body.update(notes="prereg"))  # the same body
+    scenario.sign_with("prereg_b", other)
+    scenario.add_postreg("b_post", fulfills="prereg_b", transcript="transcript1.txt")
+    scenario.sign_with("b_post", other)
+    return other
+
+
+def _summary(report):
+    return sorted(
+        (c["ref"], c["keyid"], len(c["receipts"]), len(c["rejected_receipts"]), c["state"])
+        for c in report["commitments"]
+    )
+
+
+def test_counting_rule__same_body_by_two_keys_is_two_commitments(scenario):
+    """Each signer's commitment counts only its own postregs; neither rejects the other's."""
+    other = _second_signer(scenario)
+    report = scenario.verify("chain", "keyconsist")
+    assert report["code"] == "asexec-verify/1 BDR=PASS chain=PASS keyconsist=PASS"
+    (ref_a, key_a, *_), (ref_b, key_b, *_) = _summary(report)
+    assert ref_a == ref_b
+    by_key = {c["keyid"]: c for c in report["commitments"]}
+    assert len(by_key[keys.keyid_for(scenario.key[1])]["receipts"]) == 3
+    assert len(by_key[keys.keyid_for(other[1])]["receipts"]) == 1
+    assert all(c["rejected_receipts"] == [] for c in report["commitments"])
+
+
+def test_counting_rule__commitments_do_not_depend_on_file_order(scenario):
+    _second_signer(scenario)
+    paths = scenario.write()
+    forwards = verify_paths(paths, ["BDR", "chain", "keyconsist"], str(scenario.artifacts))
+    backwards = verify_paths(paths[::-1], ["BDR", "chain", "keyconsist"], str(scenario.artifacts))
+    assert forwards["code"] == backwards["code"]
+    assert _summary(forwards) == _summary(backwards)
+
+
+def test_counting_rule__postreg_by_neither_signer_is_rejected_under_both(scenario):
+    _second_signer(scenario)
+    scenario.sign_with("postreg2", keys.generate())
+    report = scenario.verify("keyconsist")
+    assert report["code"] == "asexec-verify/1 BDR=PASS keyconsist=FAIL"
+    for commitment in report["commitments"]:
+        (rejected,) = commitment["rejected_receipts"]
+        assert rejected["reason"] == "signed by a different key than the pre-registration"
+
+
+def test_counting_rule__invalid_signature_is_rejected_under_both(scenario):
+    _second_signer(scenario)
+    scenario.tamper(
+        "postreg2", lambda envelope: envelope["payload"]["target"].update(model_id="SWAPPED")
+    )
+    for commitment in scenario.verify()["commitments"]:
+        (rejected,) = commitment["rejected_receipts"]
+        assert rejected["reason"] == "invalid signature"
