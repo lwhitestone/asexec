@@ -6,21 +6,22 @@
 
 ## Milestones
 
-- **M1:** the 0.4.0 core format, then an end-to-end test drive on one run-level study: a
-  matrix of runs with pre-registered ablations, committed before the runs and accounted
-  for afterwards. The test drive runs on 0.4.0 betas; the format freezes at
-  0.4.0 → asexec 0.4.0.
-- **M2:** a second claim on the same schema (the adequacy test below, if assessors confirm
-  the need), as the first format version after 0.4.0; in-toto export; and live export of
-  per-item statuses to a claim-graph display → asexec 0.5.0.
+- **M1:** the claim record on the 0.4.0 core format: a P3 claim with a `plan` and an item
+  list, one postreg per item, and the `complete` and `order` tests. A run-level study
+  test-drives it end to end, recorded as a claim whose items are its runs and ablations.
+  The test drive runs on 0.4.0 betas; the format freezes at 0.4.0 → asexec 0.4.0.
+- **M2:** a second claim on the same record, the adequacy test below (if assessors
+  confirm the need), with the plant-set commitment as the first format version after
+  0.4.0; in-toto export; and live export of per-item statuses to a claim-graph display
+  → asexec 0.5.0.
 - **M3:** a two-sided pilot (the assessor signs its plan and the lab signs the monitor run),
   then lab disclosure promises, self-signed and outsider-extracted side by side
-  → asexec 0.5.x.
+  → asexec 0.6.0.
 
-M1 is a test drive, not a schema design. The study first runs on the 0.4.0 core alone,
-with its item list in `declaration`. The fields and tests beyond the core are candidates,
-each tied to the gap it would close, and one goes into 0.4.0 only if the test drive hits
-that gap.
+M1 is designed for P3 and tested on P2. The record's fields take their shapes from the
+adequacy test, so it fits the frozen format without a structural change. The run-level
+study tests how they work in real use; it doesn't set their design. P2 alone needs nothing beyond the core:
+a prereg with its `target`, `declaration` and subjects, and a postreg with the results.
 
 The adequacy test is the one in Apollo Research's [*Principles for Embedded
 Evaluations*](https://www.apolloresearch.ai/blog/principles-for-embedded-evaluations): to
@@ -31,7 +32,7 @@ before the run, or that no item was dropped. asexec reports per-item statuses; v
 belong to the assessor or the display layer, not to asexec.
 
 No registry is planned. asexec-registry is built only if M2 shows that a claim-graph
-display can't show records publicly. Anything not needed for M1–M3 moves to 0.6.0 or
+display can't show records publicly. Anything not needed for M1–M3 moves to 0.7.0 or
 later. A test is added only once dogfooding or user feedback shows it is needed.
 
 **Ordering logic:** make the current claims true first; then make every format-breaking
@@ -80,12 +81,89 @@ Distribution (PyPI) is cut early to claim the name, with honest caveats.
 | Version | Scope | Milestone |
 |---|---|---|
 | 0.3.x | shipped (current 0.3.19; see *History*) | — |
-| **0.4.0b*N*** | slim verify surface + every core format change (below); the run-level test drive; the candidates it shows are needed | M1 |
+| **0.4.0b*N*** | slim verify surface + every core format change (below); the claim record; the run-level test drive | M1 |
 | **0.4.0** | format freeze: wire format + golden vectors become normative | M1 |
 | **0.4.x** | patches; no format changes | — |
 | **0.5.0** | second claim (the adequacy test, if confirmed) as the second format version; `asexec export --in-toto`; display export | M2 |
-| **0.5.x** | two-sided pilot; lab disclosure promises (`origin`: `self` \| `extracted`) | M3 |
-| **0.6.0+** | everything deferred (below) | — |
+| **0.6.0** | two-sided pilot: lab run record; lab disclosure promises (`origin`: `self` \| `extracted`) | M3 |
+| **0.7.0+** | everything deferred (below) | — |
+
+## Promise levels
+
+| Level | Promise | Risk it addresses | Served by |
+|---|---|---|---|
+| P1 | Invocation-level: which model calls count | Cherry-picking the best invocations | Not targeted: too granular, and no public evidence of the risk |
+| P2 | Run-level: one run, its parameters and guardrails, declared before it runs | Re-running on the same data, swapping the grader, or tweaking parameters until the result looks good | The core format: prereg (`target`, `declaration`, subjects) and postreg (results) |
+| P3 | Claim-level: a broader statement, and the evals or evidence that will decide it, declared up front | Dropping or redefining the evidence that didn't support the claim | The claim record (M1), the adequacy test (M2) |
+| P4 | Governance: a recurring disclosure, such as a periodic report | Quietly missing or diluting a promised disclosure | Lab disclosure promises (M3) |
+
+## New properties
+
+No property has a default: an absent optional property is absent, and a required one must
+be present. Body paths are within the decoded `dsse.payload`; envelope paths start at the
+file root. "All" means the property is part of the format at every level.
+
+**0.4.0: core format**
+
+| Property | Stage | Path | Required | Default | Lands | Real use | Level |
+|---|---|---|---|---|---|---|---|
+| `dsse` | all | envelope | required | none | 0.4.0 | M1 | all |
+| `payloadType` | all | `dsse.payloadType` | required | none | 0.4.0 | M1 | all |
+| `payload` (base64 of the body bytes) | all | `dsse.payload` | required | none | 0.4.0 | M1 | all |
+| `signatures` (exactly one entry) | all | `dsse.signatures[]` | required | none | 0.4.0 | M1 | all |
+| `keyid` | all | `dsse.signatures[].keyid` | required | none | 0.4.0 | M1 | all |
+| `sig` | all | `dsse.signatures[].sig` | required | none | 0.4.0 | M1 | all |
+| `pubkey` (unsigned) | all | envelope | required | none | 0.4.0 | M1 | all |
+| `hash_alg` | all | `subject[].hash_alg` | required in each subject entry | none | 0.4.0 | M1 | all |
+
+Changed in 0.4.0: `payloadType` and `payload` move into `dsse`; `signature` is replaced
+by `dsse.signatures[]` and `pubkey`; `ceiling` moves to the wrapper; body-level `hash_alg`
+is removed; `subject[].name` becomes a relative path to one file.
+
+**0.4.0: the claim record**
+
+| Property | Stage | Path | Required | Default | Lands | Real use | Level |
+|---|---|---|---|---|---|---|---|
+| `plan` | prereg | `plan` | optional | none | 0.4.0 | M1 | P2, P3 |
+| `media_type` | prereg | `plan.media_type` | required in `plan` | none | 0.4.0 | M1 | P2, P3 |
+| `digest` | prereg | `plan.digest` | required in `plan` | none | 0.4.0 | M1 | P2, P3 |
+| `label` | prereg | `plan.label` | optional | none | 0.4.0 | M1 | P2, P3 |
+| `items` | prereg | `items[]` | optional; non-empty when present | none | 0.4.0 | M1 | P3 |
+| `id` | prereg | `items[].id` | required in each item; unique within `items` | none | 0.4.0 | M1 | P3 |
+| `kind` (free text, unverified) | prereg | `items[].kind` | optional | none | 0.4.0 | M1 | P3 |
+| `item_id` | postreg | `item_id` | required when the prereg has `items`; refused when it doesn't | none | 0.4.0 | M1 | P3 |
+| `status` (`reported` \| `excluded` \| `blocked`) | postreg | `status` | required with `item_id`; refused without it | none | 0.4.0 | M1 | P3 |
+| `evidence` | postreg | `evidence[]` | optional; non-empty when present | none | 0.4.0 | M1 | P2, P3 |
+| `media_type` | postreg | `evidence[].media_type` | required in each entry | none | 0.4.0 | M1 | P2, P3 |
+| `digest` | postreg | `evidence[].digest` | required in each entry | none | 0.4.0 | M1 | P2, P3 |
+| `uri` | postreg | `evidence[].uri` | optional | none | 0.4.0 | M1 | P2, P3 |
+
+`plan.digest` and `evidence[].digest` take the subject entry's digest form, with its own
+`hash_alg`.
+
+**0.5.0 and later**
+
+| Property | Stage | Path | Required | Default | Lands | Real use | Level |
+|---|---|---|---|---|---|---|---|
+| `commitments.plants` | prereg | `commitments.plants` | optional | none | 0.5.0 | M2 | P3 |
+| `alg` (spelling not decided) | prereg | `commitments.plants.alg` | required in `plants` | none | 0.5.0 | M2 | P3 |
+| `root` | prereg | `commitments.plants.root` | required in `plants` | none | 0.5.0 | M2 | P3 |
+| `count` | prereg | `commitments.plants.count` | required in `plants` | none | 0.5.0 | M2 | P3 |
+| `presented_by` | prereg | `presented_by` | optional | none | 0.5.0 | M2 | P3 |
+| Lab run record (a new `phase` value, not decided) | run record | `phase` | required | none | 0.6.0 | M3 | P3 |
+| `attests` (a prereg's `ref`) | run record | `attests` | required in a run record | none | 0.6.0 | M3 | P3 |
+| `origin` (`self` \| `extracted`) | prereg | `origin` | optional | none | 0.6.0 | M3 | P4 |
+
+Not properties: the reveal sample is chosen by a rule, not a field; and the role key list
+is a file beside the manifests.
+
+**Tests**
+
+| Test | Checks | Lands | Real use | Level |
+|---|---|---|---|---|
+| `complete` | every item in `items` has a counted postreg with its `item_id` by `due` | 0.4.0 | M1 | P3 |
+| `order` | the prereg's ceiling precedes the floor of each of its postregs | 0.4.0 | M1 | P2, P3 |
+| `order`, extended | the plant-set commitment's ceiling precedes the lab run record's floor | 0.6.0 | M3 | P3 |
 
 ---
 
@@ -116,6 +194,8 @@ Distribution (PyPI) is cut early to claim the name, with honest caveats.
     that resolves outside `--artifacts`.
   - The README examples change to match. Nothing is kept for compatibility with
     directory subjects.
+- The claim record: `plan`, `items`, and per-postreg `item_id`, `status` and `evidence`
+  (see *New properties*).
 - Convention: one prereg per commitment (a promise, or an assessment's plan). No
   list-level schema.
 
@@ -212,6 +292,7 @@ adds sits outside it, in the wrapper:
 - `timely`: postreg ceiling ≤ prereg `due`.
 - New commitment state `no-due`, separate from `open`. This changes what `open` means, but
   the code grammar stays `asexec-verify/1`, because the bump rule starts at `0.4.0`.
+- `complete` and `order` (see *New properties*).
 - `--json`: a stable report (the claim-graph export reads it).
 - Unknown signed fields are shown as unverified content, never dropped.
 
@@ -223,48 +304,47 @@ above. No broader test program.
 unsupported code. Yank rather than delete, because deletion is permanent and gains
 nothing. Yank reason: "pre-0.4.0, unsupported; use >=0.4.0".
 
-## 0.4.0 betas — M1: The run-level test drive
+## 0.4.0 betas — M1: The claim record, test-driven
 
 One run-level study, end to end: a matrix of runs (for example, models × harnesses, so
-their effects can be told apart), plus ablations, each committed before any run. The
-study integrates against a 0.4.0 beta. 0.4.0 is released after its first end-to-end dry
-run and before any run meant for publication, so the study's feedback can still change
-the format and its published records are on a supported one.
+their effects can be told apart), plus ablations. It is recorded as a claim: the prereg
+carries the study's `plan` and lists each run and ablation in `items`, and each run gets a
+postreg with its `item_id`, `status` and `evidence`. The study integrates against a 0.4.0
+beta.
+
+The claim record's fields (see *New properties*) are in the first beta, in the adequacy
+test's shapes. The 0.3.19 run of the adequacy test already shows the gaps they close: an
+item silently dropped still showed `[FULFILLED]`, and plants committed after the run
+couldn't be checked.
+
+**Release gate.** 0.4.0 is released after two dry runs on a beta, before any run meant for
+publication:
+1. The run-level study's first end-to-end dry run.
+2. The adequacy-test example, re-run on the beta format: a check that the claim record
+   still fits P3.
 
 The integration (an adapter from the study's runner to asexec) lives in the study's repo,
 not here. Where it hooks in waits on the study's choice of runner.
 
-**Starting point: the 0.4.0 core alone.** One prereg lists the cells and ablations in
-`declaration`, with the harness and its inputs as subjects. Each run gets a postreg,
-chained, with its logs as subjects. Each run fetches a drand round when it starts and uses
-it (for example as its seed), and its postreg carries that round as its floor. (Today
-`--floor` fetches the latest round at signing, so signing needs a way to pass in a round
-fetched earlier.) A reader checks two things by hand: that every listed cell and ablation
-was reported, and that the prereg's ceiling precedes each postreg's floor.
+Each run fetches a drand round when it starts and uses it (for example as its seed), and
+its postreg carries that round as its floor. Today `--floor` fetches the latest round at
+signing, so signing needs a way to pass in a round fetched earlier. `order` bounds a run
+only as tightly as the run's use of that round: a round the run merely records proves
+nothing about when the run started. Using it as a seed lets a re-execution check it.
 
-**Candidates**, each added in a later beta only if the test drive hits its gap. What the
-test drive doesn't need stays out of 0.4.0; added after it, a candidate needs a new format
-version ([`docs/MULTIVERSION.md`](docs/MULTIVERSION.md)).
+**Open for the test drive:** one item per repetition, or a declared count per cell. This
+closes the gap of a cell run n times with only the best run reported. If it needs a
+property, it goes into a later beta.
 
-| Candidate | Gap it closes |
-|---|---|
-| `items` in the prereg; `status` (`reported` \| `excluded` \| `blocked`) and `evidence` digests in each postreg; `complete`: every committed item has a postreg by `due` | A cell or ablation silently dropped; today the reader compares `declaration` with the postregs by hand |
-| `order`: the prereg's ceiling precedes the floor of each of its postregs | The plan was fixed before the runs; today `floor` alone does not establish it ([`docs/VERIFICATION.md`](docs/VERIFICATION.md#floor)) |
-| One item per repetition, or a declared count per cell | A cell run n times and only the best run reported |
-
-`order` bounds a run only as tightly as the run's use of its drand round: a round the run
-merely records proves nothing about when the run started. Using it as a seed lets a
-re-execution check it.
-
-**Tests:** a fault suite for each candidate that ships, each fault with its expected code:
-an item silently dropped; a late item; a silent amendment (an ablation redefined after
-the results); a run whose floor precedes the prereg's ceiling; a record signed with an
-untrusted key. Plus one synthetic worked example in the same shape, a small matrix with
-ablations, through commit, run and verify.
+**Tests:** a fault suite, each fault with its expected code: an item silently dropped; a
+late item; a silent amendment (an ablation redefined after the results); a run whose
+floor precedes the prereg's ceiling; a record signed with an untrusted key. Plus one
+synthetic worked example in the same shape, a small matrix with ablations, through
+commit, run and verify.
 
 ## 0.5.0 — M2: Second claim
 
-- A second claim on the same schema: the commit-reveal adequacy test (below), if
+- A second claim on the same record: the commit-reveal adequacy test (below), if
   assessors confirm the need. If they don't, the next user's claim.
 - The fields it adds make the first format version after 0.4.0, so the multi-version
   verifier ([`docs/MULTIVERSION.md`](docs/MULTIVERSION.md), steps 2 to 4) lands first. Like
@@ -275,44 +355,46 @@ ablations, through commit, run and verify.
 
 **The adequacy test.** The assessor commits, before access and before the lab's monitor
 runs, to its plan and a plant set; the lab's monitor runs over transcripts with the plants
-in them; the assessor then accounts for every item. Beyond the M1 candidates, it needs:
+in them; the assessor then accounts for every item. Beyond the claim record, it needs:
 
-- Prereg fields: `plan` (an opaque digest), a plant-set commitment (salted-hash root and
-  count), and `presented_by`.
+- A plant-set commitment (salted-hash root and count) and `presented_by` in the prereg.
 - Plant-set root: an unambiguous encoding (length-prefixed leaves, or a Merkle tree with
   domain separation), specified before anyone commits to a root. Directory hash v1 is the
   counterexample.
-- Lab run record: its own envelope, signed by the lab's key, with `attests: <prereg ref>`,
-  the run's output digest, and its own floor and ceiling. It is a new record kind, not a
-  postreg, so the counting rule never puts it under the assessor's commitment, and the lab
-  can't block the assessor's report by withholding a signature. The adequacy item's
-  postreg points at it by `ref`.
 - Reveal sample: a drand round issued after the run selects which plants are revealed, so
   the assessor can't pick the published sample.
-- Key list with roles (assessor, lab) at a well-known path: a file convention, not a
-  registry. It feeds `signer`, and `presented_by` must match it; otherwise `presented_by`
-  is an unchecked self-label.
-- Verify: `order` extended to the plant-set commitment's ceiling preceding the lab run
-  record's floor, and the lab run record validly signed by a key the key list gives the
-  lab role.
-- Faults: plants swapped after the run (0.3.19 catches only this one), and plants
-  committed after the run.
+- Key list with roles at a well-known path: a file convention, not a registry. It feeds
+  `signer`, and `presented_by` must match it; otherwise `presented_by` is an unchecked
+  self-label.
+- Faults: plants swapped after the run (0.3.19 catches only this one), and a dropped
+  adequacy item.
+
+Until the lab signs its own run record (M3), the adequacy test is one-sided: it catches
+swapped plants and dropped items, but not plants committed after the monitor ran.
 
 **Open until assessors answer:** whether adequacy tests use planted counterexamples today
 (how many, and whether the lab sees them before the run); whether the lab can sign the
 run; whether publishing the plant set teaches evasion, and whether a count plus a random
 sample is enough.
 
-## 0.5.x — M3: Two-sided pilot, then lab promises
+## 0.6.0 — M3: Two-sided pilot, then lab promises
 
 - Pilot with one assessor and one lab: the assessor signs its plan, the lab signs the
   monitor run.
-- Lab disclosure promises, self-signed and outsider-extracted side by side. New optional
-  body field `origin`: `self` | `extracted`. Extracted records carry the source snapshot as
-  a subject (digest + URL) and put the quoted passage in `notes`. Not `provenance`, which
-  already means `asserted` | `reproducible`.
+- Lab run record: its own envelope, signed by the lab's key, with `attests: <prereg ref>`,
+  the run's output digest, and its own floor and ceiling. It is a new record kind, not a
+  postreg, so the counting rule never puts it under the assessor's commitment, and the lab
+  can't block the assessor's report by withholding a signature. The adequacy item's
+  postreg points at it by `ref`. The key list gains the lab role.
+- Verify: `order` extended to the plant-set commitment's ceiling preceding the lab run
+  record's floor, and the lab run record validly signed by a key the key list gives the
+  lab role. Fault: plants committed after the run.
+- Lab disclosure promises (P4), self-signed and outsider-extracted side by side. New
+  optional body field `origin`: `self` | `extracted`. Extracted records carry the source
+  snapshot as a subject (digest + URL) and put the quoted passage in `notes`. Not
+  `provenance`, which already means `asserted` | `reproducible`.
 
-## Deferred to 0.6.0+
+## Deferred to 0.7.0+
 
 - `continuity` + subject `role`: matching runs to their inputs; the test drive starts without it.
 - `final` / `expected_runs` for tail truncation beyond a declared item list: `complete` would cover the test drive, whose items are listed up front.

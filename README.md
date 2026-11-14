@@ -70,7 +70,7 @@ test:
 - **Chain** (`prev_hash`; [`chain`](./docs/VERIFICATION.md#chain)). The post-registrations of a
   commitment form a single linear chain: one root, no gaps, no forks. *Dropping the last
   post-registration(s) of a chain is **not** detectable yet; close-out manifests (`final`)
-  are deferred to 0.6.0 or later.*
+  are deferred to 0.7.0 or later.*
 - **Key consistency** ([`keyconsist`](./docs/VERIFICATION.md#keyconsist)). Every validly
   signed post-registration of a commitment uses the pre-registration's key.
 - **Created no earlier than** (`anchor.floor`; [`floor`](./docs/VERIFICATION.md#floor)). A
