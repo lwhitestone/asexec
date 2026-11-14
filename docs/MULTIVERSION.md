@@ -14,7 +14,11 @@ change does.
 
 ## Goal
 
-- A manifest signed by `0.4.0` or later gets the same verify result from every later release.
+- A manifest signed by `0.4.0` or later gets the same verify result from every later release,
+  except for the withdrawals below ([`ROADMAP.md`](../ROADMAP.md#support-from-040) lists
+  what the promise covers).
+- A manifest is read only under its own format's rules. A field a later format defines is
+  never read from an earlier format's manifest.
 - Manifests from `0.3.x` are out of scope and not supported.
 - An older verifier can't understand a newer format. It must fail clearly rather than
   misread the manifest, and users upgrade to verify it.
@@ -107,7 +111,12 @@ be marked as withdrawn, with a reason:
 - It never silently passes, and never fails without explaining why.
 - The entry stays in the table, so the verifier can still identify the format.
 
-Withdrawal is the one permitted exception to the promise, and it needs a release note.
+A pinned trust root can be withdrawn the same way, for example a compromised drand or
+Roughtime key. `floor` or `ceiling` then fails for manifests that rely on it, with a reason
+naming the withdrawn root.
+
+Withdrawal, of a format or a trust root, is the one permitted exception to the promise, and
+it needs a release note.
 
 ## Testing
 

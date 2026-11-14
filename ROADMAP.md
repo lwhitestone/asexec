@@ -66,17 +66,47 @@ Distribution (PyPI) is cut early to claim the name, with honest caveats.
   also say `/1` but aren't covered.
 - **Backward compatibility starts at `0.4.0`.** Until then, any release may change the
   schema, signed-byte format, verifier output, or CLI without a migration path. From
-  `0.4.0`, manifests stay verifiable: a format change adds a new format version and keeps
-  accepting the old ones. Manifests from `0.3.x` are not supported.
-  See [`docs/MULTIVERSION.md`](docs/MULTIVERSION.md) for the verifier design, which isn't
-  built yet.
+  `0.4.0`, see *Support from 0.4.0* below.
   `1.0.0` is deliberately unassigned; no trigger is defined.
 - **Every format version ships first as betas** (`0.4.0b1`, `0.4.0b2`, …), and is
   released only after its first user has done an end-to-end dry run on one. Each beta
   writes its own `payloadType` (for example `application/vnd.asexec.0.4.0b1+json`), so a
   release rejects a beta's manifests as an unknown format rather than misreading them.
-  Beta manifests are never supported. There is no experimental format: what a release
-  ships, it supports.
+  Beta manifests are never supported. The final beta and the release differ only in
+  that string: any other change after the final beta's dry runs needs another beta. There
+  is no experimental format: what a release ships, it supports.
+
+## Support from 0.4.0
+
+**Promised.** A manifest of a released `payloadType` gets the same verify code from every
+later release, given the same files, `--tests`, `--artifacts` and verification time. A
+test name's documented meaning is fixed per code grammar, starting with `asexec-verify/1`.
+How the verifier keeps this is in [`docs/MULTIVERSION.md`](docs/MULTIVERSION.md), which
+isn't built yet.
+
+**Field meanings belong to each format.** A manifest is read under the rules of its own
+`payloadType`. A field that a later format defines is never read from an earlier format's
+manifest, even if that manifest happens to carry it; there, it stays an unknown field.
+
+**Exceptions**, each needing a release note:
+- A withdrawn format, if its hash or signature algorithm is broken.
+- A withdrawn pinned trust root, such as a compromised drand or Roughtime key. Removing it
+  changes the `floor` or `ceiling` result for manifests that rely on it.
+
+**Not promised:**
+- Manifests from `0.3.x` or from any beta.
+- CLI flags and output text, other than the verify code.
+- The Python API.
+- `--json`, until 0.5.0, once the claim-graph display has used it.
+
+**What a change costs:**
+
+| Change | Release | Also needs |
+|---|---|---|
+| A new format version (any change to signed bytes or to what a field means) | `MINOR` | a new `FORMATS` entry, frozen manifests and betas |
+| A new test name | `PATCH` | — |
+| A change to an existing test's documented meaning | `MINOR` | a code-grammar bump (`asexec-verify/N+1`); every earlier grammar stays available |
+| A fix that brings code in line with documented meaning | `PATCH` | a release note |
 
 ## Version map
 
@@ -165,9 +195,9 @@ is no longer read; `subject[].name` becomes a relative path to one file.
 | `alg` | The commitment's encoding (spelling not decided) | prereg | `commitments.plants.alg` | optional | none | TrustedTested: a reveal test | 0.5.0 | M2 | P3 |
 | `root` | The root over the plants' salted hashes | prereg | `commitments.plants.root` | optional | none | TrustedTested: a reveal test | 0.5.0 | M2 | P3 |
 | `count` | How many plants are committed | prereg | `commitments.plants.count` | optional | none | TrustedTested: a reveal test | 0.5.0 | M2 | P3 |
-| `presented_by` | Who presents the claim; checked against the key list's roles | prereg | `presented_by` | optional | none | TrustedTested: `signer`, with the key list | 0.5.0 | M2 | P3 |
-| Lab run record: a new `phase` value, not decided; may be outside asexec scope | A lab's own signed record of its monitor run | run record | `phase` | optional | none | TrustedTested: `order`, extended | 0.6.0 | M3 | P3 |
-| `attests` | Part of the lab run record: the `ref` of the prereg the run was performed under | run record | `attests` | optional | none | TrustedTested: `order`, extended | 0.6.0 | M3 | P3 |
+| `presented_by` | Who presents the claim; checked against the key list's roles | prereg | `presented_by` | optional | none | TrustedTested: `role` (name not decided) | 0.5.0 | M2 | P3 |
+| Lab run record: a new `phase` value, not decided; may be outside asexec scope | A lab's own signed record of its monitor run | run record | `phase` | optional | none | TrustedTested: `plantorder` (name not decided) | 0.6.0 | M3 | P3 |
+| `attests` | Part of the lab run record: the `ref` of the prereg the run was performed under | run record | `attests` | optional | none | TrustedTested: `plantorder` | 0.6.0 | M3 | P3 |
 | `origin` | `self` \| `extracted`: whether the promiser or an outsider wrote the record | prereg | `origin` | optional | none | TrustedDeclared | 0.6.0 | M3 | P4 |
 
 Not properties: the reveal sample is chosen by a rule, not a field; and the role key list
@@ -192,7 +222,11 @@ is a file beside the manifests.
 |---|---|---|---|---|
 | `complete` | For each prereg with at least one item: every item has a counted postreg with its `item_id`, a `status` of `reported`, `excluded` or `blocked`, and a ceiling at or before `due`. A prereg whose item `id`s repeat fails. A prereg without items isn't examined | 0.4.0 | M1 | P3 |
 | `order` | The prereg's ceiling precedes the floor of each of its counted postregs | 0.4.0 | M1 | P2, P3 |
-| `order`, extended | The plant-set commitment's ceiling precedes the lab run record's floor | 0.6.0 | M3 | P3 |
+| `role` (name not decided) | `presented_by` matches the role the key list gives the signer's key | 0.5.0 | M2 | P3 |
+| `plantorder` (name not decided) | The plant-set commitment's ceiling precedes the lab run record's floor, and the run record is signed by a key the key list gives the lab role | 0.6.0 | M3 | P3 |
+
+These are new names rather than extensions of `signer` and `order`, so those keep their
+0.4.0 meanings and the code grammar stays `/1`.
 
 ---
 
@@ -318,6 +352,8 @@ adds sits outside it, in the wrapper:
 - `pubkey` needs no signature: `BDR` requires `signatures[0].keyid` to derive from it, so
   a substituted key fails. With `signer`, `--trusted-keys` additionally decides which
   keys are accepted.
+- Any other top-level key is treated like `untrusted`: shown under that heading, never
+  read by a test.
 - `untrusted` is neither signed nor bound: anyone can edit it after signing. That is
   what it is for. Unsigned isn't the same as untrusted, though: `ceiling` and `pubkey` are
   unsigned but checked, by the witness's signature and by `keyid`. `untrusted` is the one
@@ -333,16 +369,27 @@ adds sits outside it, in the wrapper:
 - Malformed means only what stops `verify` reading a manifest: not valid JSON, nested too
   deep, a duplicate key, or a missing frame (`dsse` with `payloadType`, a `payload` that
   decodes to a JSON object, and a `signatures` list). Everything else is judged by tests.
-- `--json`: a stable report (the claim-graph export reads it).
-- Unknown signed fields are shown as unverified content, never dropped.
+- `--json`: a report the claim-graph export reads. Outside the support promise until
+  0.5.0 (see *Support from 0.4.0*).
+- Unknown signed fields are shown as unknown and unchecked, never dropped. Unknown
+  top-level keys are shown with `untrusted`.
 - `untrusted` is printed under its own heading saying nothing in it was checked. No test
   reads it, and it never affects `ref` or the verify code.
 
-**Docs:** `docs/VERIFICATION.md` gains a *TrustedDeclared* list (signed properties that are
-shown but never tested) and an *Untrusted* section.
+**Docs**, rewritten for the 0.4.0 format before release, since they are part of what
+freezes:
+- `docs/VERIFICATION.md`: every path (body paths inside the decoded `dsse.payload`;
+  `dsse.signatures[]` and `pubkey` for `signature.*`), the malformed rule, the new tests,
+  a *TrustedDeclared* list (signed properties that are shown but never tested) and an
+  *Untrusted* section.
+- `README.md`: the manifest examples (DSSE envelope, file-only subjects, the claim
+  record, `untrusted`) and the `required` / `always` legend.
+- `examples/adequacy-test`: ported to the claim record's fields.
 
-**Tests:** golden vectors, regenerated for the DSSE format, plus tests for the items
-above. A tier check: every property the signing models can write appears in
+**Tests:** golden vectors for the DSSE format, regenerated freely during the betas, plus
+tests for the items above. At release, the first frozen 0.4.0 manifests are committed:
+never edited or regenerated, and every later release must verify them with the same
+codes ([`docs/MULTIVERSION.md`](docs/MULTIVERSION.md#testing)). A tier check: every property the signing models can write appears in
 `docs/VERIFICATION.md`: under some test's *Examines* (*TrustedTested*), in
 *TrustedDeclared*, or in *Untrusted*. A property nothing accounts for fails CI. No broader
 test program.
@@ -361,15 +408,18 @@ postreg with its `item_id`, `status` and `evidence`. The study integrates agains
 beta.
 
 The claim record's fields (see *New properties*) are in the first beta, in the adequacy
-test's shapes. The 0.3.19 run of the adequacy test already shows the gaps they close: an
-item silently dropped still showed `[FULFILLED]`, and plants committed after the run
-couldn't be checked.
+test's shapes. [`examples/adequacy-test`](examples/adequacy-test) already shows on 0.3.19
+the gaps they close: an item silently dropped still shows `[FULFILLED]`, and plants
+committed after the run can't be told apart from an honest run.
 
-**Release gate.** 0.4.0 is released after two dry runs on a beta, before any run meant for
-publication:
+**Release gate.** 0.4.0 is released after two dry runs, both on the final beta, and before
+any run meant for publication:
 1. The run-level study's first end-to-end dry run.
-2. The adequacy-test example, re-run on the beta format: a check that the claim record
-   still fits P3.
+2. [`examples/adequacy-test`](examples/adequacy-test), ported to the claim record and
+   re-run: a check that the record still fits P3.
+
+A format change after either dry run means another beta and both dry runs again. The
+release then changes only the `payloadType` string (see *Versioning*).
 
 The integration (an adapter from the study's runner to asexec) lives in the study's repo,
 not here. Where it hooks in waits on the study's choice of runner.
@@ -411,9 +461,9 @@ in them; the assessor then accounts for every item. Beyond the claim record, it 
   counterexample.
 - Reveal sample: a drand round issued after the run selects which plants are revealed, so
   the assessor can't pick the published sample.
-- Key list with roles at a well-known path: a file convention, not a registry. It feeds
-  `signer`, and `presented_by` must match it; otherwise `presented_by` is an unchecked
-  self-label.
+- Key list with roles at a well-known path: a file convention, not a registry. A new test,
+  `role` (name not decided), checks `presented_by` against it; without the key list,
+  `presented_by` is an unchecked self-label. `signer` keeps its 0.4.0 meaning.
 - Faults: plants swapped after the run (0.3.19 catches only this one), and a dropped
   adequacy item.
 
@@ -435,9 +485,10 @@ sample is enough.
   postreg, so the counting rule never puts it under the assessor's commitment, and the lab
   can't block the assessor's report by withholding a signature. The adequacy item's
   postreg points at it by `ref`. The key list gains the lab role.
-- Verify: `order` extended to the plant-set commitment's ceiling preceding the lab run
-  record's floor, and the lab run record validly signed by a key the key list gives the
-  lab role. Fault: plants committed after the run.
+- Verify: a new test, `plantorder` (name not decided): the plant-set commitment's ceiling
+  precedes the lab run record's floor, and the run record is signed by a key the key list
+  gives the lab role. `order` keeps its 0.4.0 meaning. Fault: plants committed after the
+  run.
 - Lab disclosure promises (P4), self-signed and outsider-extracted side by side. New
   optional body field `origin`: `self` | `extracted`. Extracted records carry the source
   snapshot as a subject (digest + URL) and put the quoted passage in `notes`. Not

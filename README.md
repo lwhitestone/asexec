@@ -141,6 +141,9 @@ asexec verify preregistration.json postregistration.json \
 
 For a detailed look at parameters and options, see: `asexec --help`.
 
+For a worked end-to-end run, with faults replayed against the verifier, see
+[`examples/adequacy-test`](examples/adequacy-test): `python examples/adequacy-test/run.py`.
+
 ### Verification output
 
 What each test examines, its exact pass criteria, and what it does not establish are
