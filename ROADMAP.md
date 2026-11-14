@@ -7,8 +7,8 @@
 ## Milestones
 
 - **M1:** the 0.4.0 core format, then an end-to-end test drive on one run-level study: a
-  2×2 model × harness matrix with pre-registered ablations, committed before the runs and
-  accounted for afterwards. The test drive runs on 0.4.0 betas; the format freezes at
+  matrix of runs with pre-registered ablations, committed before the runs and accounted
+  for afterwards. The test drive runs on 0.4.0 betas; the format freezes at
   0.4.0 → asexec 0.4.0.
 - **M2:** a second claim on the same schema (the adequacy test below, if assessors confirm
   the need), as the first format version after 0.4.0; in-toto export; and live export of
@@ -22,9 +22,8 @@ with its item list in `declaration`. The fields and tests beyond the core are ca
 each tied to the gap it would close, and one goes into 0.4.0 only if the test drive hits
 that gap.
 
-The adequacy test is the one in Apollo Research's [*Principles for Embedded
-Evaluations*](https://www.apolloresearch.ai/blog/principles-for-embedded-evaluations): to
-back a universal-negative claim ("models never attempted to evade their monitoring"),
+The adequacy test is a commit-reveal check run by an assessor: to back a
+universal-negative claim ("models never attempted to evade their monitoring"),
 realistic evasion attempts are planted in transcripts and the monitor's catch rate decides
 between *Verified* and *Unrefuted*. Today nothing proves the plants and the plan were fixed
 before the run, or that no item was dropped. asexec reports per-item statuses; verdicts
@@ -225,8 +224,8 @@ nothing. Yank reason: "pre-0.4.0, unsupported; use >=0.4.0".
 
 ## 0.4.0 betas — M1: The run-level test drive
 
-One run-level study, end to end: a 2×2 matrix (two models × two harnesses, so model and
-harness effects can be told apart), plus ablations, each committed before any run. The
+One run-level study, end to end: a matrix of runs (for example, models × harnesses, so
+their effects can be told apart), plus ablations, each committed before any run. The
 study integrates against a 0.4.0 beta. 0.4.0 is released after its first end-to-end dry
 run and before any run meant for publication, so the study's feedback can still change
 the format and its published records are on a supported one.
@@ -259,13 +258,13 @@ re-execution check it.
 **Tests:** a fault suite for each candidate that ships, each fault with its expected code:
 an item silently dropped; a late item; a silent amendment (an ablation redefined after
 the results); a run whose floor precedes the prereg's ceiling; a record signed with an
-untrusted key. Plus one synthetic worked example in the same shape, a 2×2 matrix with
+untrusted key. Plus one synthetic worked example in the same shape, a small matrix with
 ablations, through commit, run and verify.
 
 ## 0.5.0 — M2: Second claim
 
-- A second claim on the same schema: the commit-reveal adequacy test (below), if the
-  assessor calls confirm the need. If they don't, the next user's claim.
+- A second claim on the same schema: the commit-reveal adequacy test (below), if assessors confirm the
+  need. If they don't, the next user's claim.
 - The fields it adds make the first format version after 0.4.0, so the multi-version
   verifier ([`docs/MULTIVERSION.md`](docs/MULTIVERSION.md), steps 2 to 4) lands first. Like
   0.4.0, it ships as betas, and a field is released only once a dry run has exercised it.
