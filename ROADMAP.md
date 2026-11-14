@@ -6,14 +6,19 @@
 
 ## Milestones
 
-- **M1:** one assessor-run vertical, the commit-reveal adequacy test: proof that an
-  assessor fixed its plan, item list and planted counterexamples before the lab's monitor
-  ran, and accounted for every item afterwards → asexec 0.4.x.
-- **M2:** in-toto export, a second claim on the same schema, and live export of per-item
-  statuses to a claim-graph display; the format freezes here → asexec 0.5.0.
+- **M1:** the 0.4.0 core format, then an end-to-end test drive on one run-level study: a
+  2×2 model × harness matrix with pre-registered ablations, committed before the runs and
+  accounted for afterwards → asexec 0.4.x.
+- **M2:** a second claim on the same schema (the adequacy test below, if assessors confirm
+  the need), in-toto export, and live export of per-item statuses to a claim-graph
+  display; the format freezes here → asexec 0.5.0.
 - **M3:** a two-sided pilot (the assessor signs its plan and the lab signs the monitor run),
   then lab disclosure promises, self-signed and outsider-extracted side by side
   → asexec 0.5.x.
+
+M1 is a test drive, not a schema design. The study first runs on the 0.4.0 core alone,
+with its item list in `declaration`. The 0.4.x fields and tests are candidates, each
+tied to the gap it would close, and one ships only if the test drive hits that gap.
 
 The adequacy test is the one in Apollo Research's [*Principles for Embedded
 Evaluations*](https://www.apolloresearch.ai/blog/principles-for-embedded-evaluations): to
@@ -69,8 +74,8 @@ Distribution (PyPI) is cut early to claim the name, with honest caveats.
 |---|---|---|
 | 0.3.x | shipped (current 0.3.19; see *History*) | — |
 | **0.4.0** | slim verify surface + every core format change (below) | M1 |
-| **0.4.x** | the adequacy-test vertical under an experimental `payloadType`: `complete`, `order`, lab run records; patches from dogfooding | M1 |
-| **0.5.0** | format freeze: wire format + golden vectors become normative; `asexec export --in-toto`; second claim | M2 |
+| **0.4.x** | the run-level test drive; the candidate fields and tests it shows are needed, under an experimental `payloadType`; patches from dogfooding | M1 |
+| **0.5.0** | format freeze: wire format + golden vectors become normative; `asexec export --in-toto`; second claim (the adequacy test, if confirmed) | M2 |
 | **0.5.x** | two-sided pilot; lab disclosure promises (`origin`: `self` \| `extracted`) | M3 |
 | **0.6.0+** | everything deferred (below) | — |
 
@@ -91,9 +96,18 @@ Distribution (PyPI) is cut early to claim the name, with honest caveats.
 - `dsse.payloadType` selects the format version, and unknown values fail `BDR`
   ([`docs/MULTIVERSION.md`](docs/MULTIVERSION.md)).
 - `hash_alg` moves into each subject entry, and the body-level field becomes invalid.
-- Subjects are files only, because directory hash v1 is ambiguous. Signing refuses a directory
-  subject, and `content` fails one, so a hand-built manifest can't rely on the old hash. Remove
-  `hash_dir`.
+- Subjects are an explicit list of files, each hashed exactly as listed, because directory
+  hash v1 is ambiguous and skips what it can't encode.
+  - An entry's `name` is the relative path as given (normalized, `/`-separated), not its
+    basename, so two files with the same basename stay distinct. Duplicate names are
+    refused.
+  - Signing refuses a directory, and `content` fails one, so a hand-built manifest can't
+    rely on the old hash. To commit to a tree, list its files, or pack it (a tar, for
+    example) and list the archive. Remove `hash_dir`.
+  - A listed symlink is hashed as the bytes read through it; `content` already fails one
+    that resolves outside `--artifacts`.
+  - The README examples change to match. Nothing is kept for compatibility with
+    directory subjects.
 - Convention: one prereg per commitment (a promise, or an assessment's plan). No
   list-level schema.
 
@@ -201,59 +215,87 @@ above. No broader test program.
 deletion is permanent and gains nothing. Yank reason: "pre-0.4.0 alpha, unsupported; use
 >=0.4.0".
 
-## 0.4.x — M1: The adequacy-test vertical
+## 0.4.x — M1: The run-level test drive
 
-The vertical ships under its own experimental `payloadType` (spelling not decided). That
-format is outside the backward-compatibility promise until 0.5.0 promotes it to a frozen
-one; until then a release may change or drop it, and its manifests then fail `BDR` as an
-unknown format ([`docs/MULTIVERSION.md`](docs/MULTIVERSION.md)). The core format of 0.4.0
-is unaffected.
+One run-level study, end to end: a 2×2 matrix (two models × two harnesses, so model and
+harness effects can be told apart), plus ablations, each committed before any run. The
+study integrates against a 0.4.0 pre-release. 0.4.0 is cut after its first end-to-end dry
+run and before any run meant for publication, so the study's feedback can still change
+the core format cheaply and its published records are on a supported one.
 
-**Format**
+The integration (an adapter from the study's runner to asexec) lives in the study's repo,
+not here. Where it hooks in waits on the study's choice of runner.
 
-- Prereg (the assessor's commitment, signed before access and before the run): `plan`
-  (an opaque digest), `items` (for example search, experiments, adequacy), a plant-set
-  commitment (salted-hash root and count), `presented_by`, `due`, and a floor and ceiling.
-- Postreg: one per item, chained, with `status` (`reported` | `excluded` | `blocked`) and
-  `evidence` digests. The adequacy item's postreg points at the lab's run record by `ref`.
-- Lab run record: its own envelope, signed by the lab's key, with `attests: <prereg ref>`,
-  the run's output digest, and its own floor and ceiling. It is a new record kind, not a
-  postreg, so the counting rule never puts it under the assessor's commitment, and the lab
-  can't block the assessor's report by withholding a signature.
+**Starting point: the 0.4.0 core alone.** One prereg lists the cells and ablations in
+`declaration`, with the harness and its inputs as subjects. Each run gets a postreg,
+chained, with its logs as subjects. Each run fetches a drand round when it starts and uses
+it (for example as its seed), and its postreg carries that round as its floor. (Today
+`--floor` fetches the latest round at signing, so signing needs a way to pass in a round
+fetched earlier.) A reader checks two things by hand: that every listed cell and ablation
+was reported, and that the prereg's ceiling precedes each postreg's floor.
+
+**Candidates**, each shipped only if the test drive hits its gap, under an experimental
+`payloadType` (spelling not decided). That format is outside the backward-compatibility
+promise until 0.5.0 promotes it to a frozen one; until then a release may change or drop
+it, and its manifests then fail `BDR` as an unknown format
+([`docs/MULTIVERSION.md`](docs/MULTIVERSION.md)). The core format of 0.4.0 is unaffected.
+
+| Candidate | Gap it closes |
+|---|---|
+| `items` in the prereg; `status` (`reported` \| `excluded` \| `blocked`) and `evidence` digests in each postreg; `complete`: every committed item has a postreg by `due` | A cell or ablation silently dropped; today the reader compares `declaration` with the postregs by hand |
+| `order`: the prereg's ceiling precedes the floor of each of its postregs | The plan was fixed before the runs; today `floor` alone does not establish it ([`docs/VERIFICATION.md`](docs/VERIFICATION.md#floor)) |
+| One item per repetition, or a declared count per cell | A cell run n times and only the best run reported |
+
+`order` bounds a run only as tightly as the run's use of its drand round: a round the run
+merely records proves nothing about when the run started. Using it as a seed lets a
+re-execution check it.
+
+**Tests:** a fault suite for each candidate that ships, each fault with its expected code:
+an item silently dropped; a late item; a silent amendment (an ablation redefined after
+the results); a run whose floor precedes the prereg's ceiling; a record signed with an
+untrusted key. Plus one synthetic worked example in the same shape, a 2×2 matrix with
+ablations, through commit, run and verify.
+
+## 0.5.0 — M2: Second claim and format freeze
+
+- A second claim on the same schema: the commit-reveal adequacy test (below), if the
+  assessor calls confirm the need. If they don't, the next user's claim.
+- The wire format and the golden vectors become normative, including the fields 0.4.x
+  promoted from experimental. A field the second claim adds freezes only if a dry run has
+  exercised it; otherwise it stays experimental past 0.5.0.
+- `asexec export --in-toto`.
+- Live export of per-item statuses (`verify --json`) to a claim-graph display.
+  asexec-registry is built only if that display can't show records publicly.
+
+**The adequacy test.** The assessor commits, before access and before the lab's monitor
+runs, to its plan and a plant set; the lab's monitor runs over transcripts with the plants
+in them; the assessor then accounts for every item. Beyond the M1 candidates, it needs:
+
+- Prereg fields: `plan` (an opaque digest), a plant-set commitment (salted-hash root and
+  count), and `presented_by`.
 - Plant-set root: an unambiguous encoding (length-prefixed leaves, or a Merkle tree with
   domain separation), specified before anyone commits to a root. Directory hash v1 is the
   counterexample.
+- Lab run record: its own envelope, signed by the lab's key, with `attests: <prereg ref>`,
+  the run's output digest, and its own floor and ceiling. It is a new record kind, not a
+  postreg, so the counting rule never puts it under the assessor's commitment, and the lab
+  can't block the assessor's report by withholding a signature. The adequacy item's
+  postreg points at it by `ref`.
 - Reveal sample: a drand round issued after the run selects which plants are revealed, so
   the assessor can't pick the published sample.
 - Key list with roles (assessor, lab) at a well-known path: a file convention, not a
-  registry. It feeds `signer`, and `presented_by` must match it; otherwise
-  `presented_by` is an unchecked self-label.
-
-**Verify**
-
-- `complete`: every committed item has a postreg by `due`.
-- `order`: the plant-set commitment's ceiling is before the lab run record's floor.
-- The lab run record is validly signed by a key the key list gives the lab role.
-
-**Tests:** a fault suite, each fault with its expected code: plants swapped after the run;
-an item silently dropped; plants committed after the run; a late item; a silent
-amendment; a record signed with an unpublished key. 0.3.19 catches only the swap. Plus
-one end-to-end worked example: synthetic transcripts, a toy monitor and 40 plants, through
-commit, run, reveal and verify.
+  registry. It feeds `signer`, and `presented_by` must match it; otherwise `presented_by`
+  is an unchecked self-label.
+- Verify: `order` extended to the plant-set commitment's ceiling preceding the lab run
+  record's floor, and the lab run record validly signed by a key the key list gives the
+  lab role.
+- Faults: plants swapped after the run (0.3.19 catches only this one), and plants
+  committed after the run.
 
 **Open until assessors answer:** whether adequacy tests use planted counterexamples today
 (how many, and whether the lab sees them before the run); whether the lab can sign the
 run; whether publishing the plant set teaches evasion, and whether a count plus a random
 sample is enough.
-
-## 0.5.0 — M2: Format freeze
-
-- The wire format and the golden vectors become normative, including the vertical's
-  format, promoted from experimental.
-- `asexec export --in-toto`.
-- A second claim on the same schema.
-- Live export of per-item statuses (`verify --json`) to a claim-graph display.
-  asexec-registry is built only if that display can't show records publicly.
 
 ## 0.5.x — M3: Two-sided pilot, then lab promises
 
@@ -266,10 +308,9 @@ sample is enough.
 
 ## Deferred to 0.6.0+
 
-- `continuity` + subject `role` / relative paths: matching runs to their inputs; the vertical doesn't need it.
-- `final` / `expected_runs` for tail truncation beyond a declared item list: `complete` covers the vertical, whose items are listed up front.
+- `continuity` + subject `role`: matching runs to their inputs; the test drive starts without it.
+- `final` / `expected_runs` for tail truncation beyond a declared item list: `complete` would cover the test drive, whose items are listed up front.
 - `--trust-roots`: the pinned drand and Roughtime set is enough until readers ask to choose their own.
-- Directory subjects, with an unambiguous hash covering entry types, symlink targets, the executable bit and empty directories: M1 records hash snapshots, not trees.
 - [JCS (RFC 8785)](https://www.rfc-editor.org/rfc/rfc8785) canonicalization: DSSE verifies the stored bytes, so canonical form no longer matters for verification (worth adopting for multiple writers to produce byte-identical bodies, and therefore identical refs, from the same data).
 - Phase 1 invariant catalog, property/mutation testing, extra CI matrix: tests are added only when dogfooding or feedback shows a need.
 - Phase 3 dependency reduction (pydantic, blake3, BLS vendoring, Actions pinning): worthwhile, but not needed for M1–M3.
@@ -280,7 +321,7 @@ sample is enough.
 
 - **Per-key public index** (`.well-known/asexec-index.json`) — addresses
   selective *non*-registration, the largest remaining completeness gap.
-  Convention only, no hosting. (The role key list in 0.4.x is narrower: it lists keys,
+  Convention only, no hosting. (The role key list in 0.5.0 is narrower: it lists keys,
   not records.)
 - **Offline identity check** (`verify --wellknown <archived.json>`) and
   **`--as-of`** for reproducible state rendering.
@@ -289,7 +330,7 @@ sample is enough.
 - **Federated cosigner witnesses** — generalize the ceiling to a k-of-n
   `cosign` witness type the reader chooses to trust. Waits for willing
   witnesses.
-- **Multi-party co-signing** at prereg (several keys over one body; the vertical doesn't
+- **Multi-party co-signing** at prereg (several keys over one body; the adequacy test doesn't
   need it, since each party signs its own record); **structured regulatory
   cross-reference** field — add when a concrete need appears.
 - **Roughtime interop beyond int08h.** Keys for four IETF-Roughtime servers are pinned
@@ -328,6 +369,8 @@ Kept here so they are not re-litigated:
   block hashes. A ceiling is a witness that ingested `ref(payload)` (attached
   after signing, at the envelope): Roughtime, OTS, cosigners. A beacon cannot
   be a ceiling and a witness cannot be a floor.
+- **Subjects are explicit.** A subject lists files, each hashed exactly as listed. No
+  directory hash infers what a tree contains, so a manifest claims only what it names.
 - **Fail loud.** Ambiguous or unfulfilled states are rendered explicitly
   rather than collapsed into a pass/fail that overclaims.
 

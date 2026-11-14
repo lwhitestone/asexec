@@ -552,7 +552,7 @@ own block, since they have no prereg to sit under.
 
 ## Not in this version
 
-`signer` and `timely` are planned for 0.4.0, `complete` and `order` for 0.4.x, and
+`signer` and `timely` are planned for 0.4.0, `complete` and `order` are candidates for 0.4.x, and
 `continuity` is deferred to 0.6.0 or later (see [`ROADMAP.md`](../ROADMAP.md)). Adding a test name never
 changes the meaning of an existing code. From 0.4.0, changing the documented meaning of an
 existing name bumps the code grammar (`asexec-verify/N`); 0.4.0 itself keeps `/1`.
