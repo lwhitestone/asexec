@@ -130,7 +130,7 @@ Withdrawal is the one permitted exception to the promise, and it needs a release
 ## Open questions
 
 - **Spelling of later `payloadType` values:** `vnd.asexec.v2+json` is an example, not a decision.
-  Whichever form is chosen, it should be settled before `0.5.0` freezes the format.
+  Whichever form is chosen, it should be settled before the first format version after `0.4.0`.
 - **Key files:** should a key file record which formats it can sign, or is `alg` enough?
 - **Mixed commitments:** a prereg and its postregs could use different formats after an
   upgrade. `chain` and `keyconsist` compare refs and keyids, so the rules for comparing them

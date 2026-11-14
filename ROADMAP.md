@@ -8,17 +8,19 @@
 
 - **M1:** the 0.4.0 core format, then an end-to-end test drive on one run-level study: a
   2×2 model × harness matrix with pre-registered ablations, committed before the runs and
-  accounted for afterwards → asexec 0.4.x.
+  accounted for afterwards. The test drive runs on 0.4.0 betas; the format freezes at
+  0.4.0 → asexec 0.4.0.
 - **M2:** a second claim on the same schema (the adequacy test below, if assessors confirm
-  the need), in-toto export, and live export of per-item statuses to a claim-graph
-  display; the format freezes here → asexec 0.5.0.
+  the need), as the first format version after 0.4.0; in-toto export; and live export of
+  per-item statuses to a claim-graph display → asexec 0.5.0.
 - **M3:** a two-sided pilot (the assessor signs its plan and the lab signs the monitor run),
   then lab disclosure promises, self-signed and outsider-extracted side by side
   → asexec 0.5.x.
 
 M1 is a test drive, not a schema design. The study first runs on the 0.4.0 core alone,
-with its item list in `declaration`. The 0.4.x fields and tests are candidates, each
-tied to the gap it would close, and one ships only if the test drive hits that gap.
+with its item list in `declaration`. The fields and tests beyond the core are candidates,
+each tied to the gap it would close, and one goes into 0.4.0 only if the test drive hits
+that gap.
 
 The adequacy test is the one in Apollo Research's [*Principles for Embedded
 Evaluations*](https://www.apolloresearch.ai/blog/principles-for-embedded-evaluations): to
@@ -33,9 +35,9 @@ display can't show records publicly. Anything not needed for M1–M3 moves to 0.
 later. A test is added only once dogfooding or user feedback shows it is needed.
 
 **Ordering logic:** make the current claims true first; then make every format-breaking
-change in one release; then freeze the format at M2, after M1 dogfooding. Anything
-that changes signed bytes or verify-code semantics lands *before* the freeze,
-so the format people adopt is the format we can stand behind.
+change in one release; then freeze the format at 0.4.0, after the M1 test drive on its
+betas. Anything that changes signed bytes or verify-code semantics lands *before* the
+freeze, so the format people adopt is the format we can stand behind.
 Distribution (PyPI) is cut early to claim the name, with honest caveats.
 
 ## Versioning
@@ -67,15 +69,21 @@ Distribution (PyPI) is cut early to claim the name, with honest caveats.
   See [`docs/MULTIVERSION.md`](docs/MULTIVERSION.md) for the verifier design, which isn't
   built yet.
   `1.0.0` is deliberately unassigned; no trigger is defined.
+- **Every format version ships first as betas** (`0.4.0b1`, `0.4.0b2`, …), and is
+  released only after its first user has done an end-to-end dry run on one. A beta may
+  change the format; its manifests are supported only if the format didn't change
+  between that beta and the release. There is no experimental format: what a release
+  ships, it supports.
 
 ## Version map
 
 | Version | Scope | Milestone |
 |---|---|---|
 | 0.3.x | shipped (current 0.3.19; see *History*) | — |
-| **0.4.0** | slim verify surface + every core format change (below) | M1 |
-| **0.4.x** | the run-level test drive; the candidate fields and tests it shows are needed, under an experimental `payloadType`; patches from dogfooding | M1 |
-| **0.5.0** | format freeze: wire format + golden vectors become normative; `asexec export --in-toto`; second claim (the adequacy test, if confirmed) | M2 |
+| **0.4.0b*N*** | slim verify surface + every core format change (below); the run-level test drive; the candidates it shows are needed | M1 |
+| **0.4.0** | format freeze: wire format + golden vectors become normative | M1 |
+| **0.4.x** | patches; no format changes | — |
+| **0.5.0** | second claim (the adequacy test, if confirmed) as the second format version; `asexec export --in-toto`; display export | M2 |
 | **0.5.x** | two-sided pilot; lab disclosure promises (`origin`: `self` \| `extracted`) | M3 |
 | **0.6.0+** | everything deferred (below) | — |
 
@@ -142,7 +150,7 @@ signed bytes, and a `signatures` list.
 - **0.4.0:** full DSSE. The verifier checks the stored bytes as they are, so
   canonicalization no longer matters for verification. The `DSSEv1` prefix lets standard
   DSSE and in-toto tooling read asexec envelopes (groundwork for M2's export). The
-  `signatures` list keeps one entry: a second party signs its own record (see *0.4.x*),
+  `signatures` list keeps one entry: a second party signs its own record (see *0.5.0*),
   not the same body. The cost: a format break, regenerated
   golden vectors, and a payload that must be decoded to be read.
 
@@ -210,18 +218,18 @@ adds sits outside it, in the wrapper:
 **Tests:** golden vectors, regenerated for the DSSE format, plus tests for the items
 above. No broader test program.
 
-**Release:** once `0.4.0` is on PyPI, yank every `0.3.x` release, so a plain
-`pip install asexec` never picks unsupported alpha code. Yank rather than delete, because
-deletion is permanent and gains nothing. Yank reason: "pre-0.4.0 alpha, unsupported; use
->=0.4.0".
+**Release:** betas first (see *0.4.0 betas* below). Once `0.4.0` is on PyPI, yank every
+`0.3.x` release and every `0.4.0` beta, so a plain `pip install asexec` never picks
+unsupported code. Yank rather than delete, because deletion is permanent and gains
+nothing. Yank reason: "pre-0.4.0, unsupported; use >=0.4.0".
 
-## 0.4.x — M1: The run-level test drive
+## 0.4.0 betas — M1: The run-level test drive
 
 One run-level study, end to end: a 2×2 matrix (two models × two harnesses, so model and
 harness effects can be told apart), plus ablations, each committed before any run. The
-study integrates against a 0.4.0 pre-release. 0.4.0 is cut after its first end-to-end dry
+study integrates against a 0.4.0 beta. 0.4.0 is released after its first end-to-end dry
 run and before any run meant for publication, so the study's feedback can still change
-the core format cheaply and its published records are on a supported one.
+the format and its published records are on a supported one.
 
 The integration (an adapter from the study's runner to asexec) lives in the study's repo,
 not here. Where it hooks in waits on the study's choice of runner.
@@ -234,11 +242,9 @@ it (for example as its seed), and its postreg carries that round as its floor. (
 fetched earlier.) A reader checks two things by hand: that every listed cell and ablation
 was reported, and that the prereg's ceiling precedes each postreg's floor.
 
-**Candidates**, each shipped only if the test drive hits its gap, under an experimental
-`payloadType` (spelling not decided). That format is outside the backward-compatibility
-promise until 0.5.0 promotes it to a frozen one; until then a release may change or drop
-it, and its manifests then fail `BDR` as an unknown format
-([`docs/MULTIVERSION.md`](docs/MULTIVERSION.md)). The core format of 0.4.0 is unaffected.
+**Candidates**, each added in a later beta only if the test drive hits its gap. What the
+test drive doesn't need stays out of 0.4.0; added after it, a candidate needs a new format
+version ([`docs/MULTIVERSION.md`](docs/MULTIVERSION.md)).
 
 | Candidate | Gap it closes |
 |---|---|
@@ -256,13 +262,13 @@ the results); a run whose floor precedes the prereg's ceiling; a record signed w
 untrusted key. Plus one synthetic worked example in the same shape, a 2×2 matrix with
 ablations, through commit, run and verify.
 
-## 0.5.0 — M2: Second claim and format freeze
+## 0.5.0 — M2: Second claim
 
 - A second claim on the same schema: the commit-reveal adequacy test (below), if the
   assessor calls confirm the need. If they don't, the next user's claim.
-- The wire format and the golden vectors become normative, including the fields 0.4.x
-  promoted from experimental. A field the second claim adds freezes only if a dry run has
-  exercised it; otherwise it stays experimental past 0.5.0.
+- The fields it adds make the first format version after 0.4.0, so the multi-version
+  verifier ([`docs/MULTIVERSION.md`](docs/MULTIVERSION.md), steps 2 to 4) lands first. Like
+  0.4.0, it ships as betas, and a field is released only once a dry run has exercised it.
 - `asexec export --in-toto`.
 - Live export of per-item statuses (`verify --json`) to a claim-graph display.
   asexec-registry is built only if that display can't show records publicly.
@@ -314,7 +320,7 @@ sample is enough.
 - [JCS (RFC 8785)](https://www.rfc-editor.org/rfc/rfc8785) canonicalization: DSSE verifies the stored bytes, so canonical form no longer matters for verification (worth adopting for multiple writers to produce byte-identical bodies, and therefore identical refs, from the same data).
 - Phase 1 invariant catalog, property/mutation testing, extra CI matrix: tests are added only when dogfooding or feedback shows a need.
 - Phase 3 dependency reduction (pydantic, blake3, BLS vendoring, Actions pinning): worthwhile, but not needed for M1–M3.
-- Full normative `SPEC.md`: M2 freezes the wire format and vectors; a complete spec can follow adoption.
+- Full normative `SPEC.md`: 0.4.0 freezes the wire format and vectors; a complete spec can follow adoption.
 - Release-pipeline hardening (reproducible builds, build provenance): the current trusted-publishing pipeline is adequate for alpha.
 
 ## Later (unversioned until scheduled)
