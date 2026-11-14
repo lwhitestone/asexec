@@ -20,8 +20,9 @@
 
 M1 is designed for P3 and tested on P2. The record's fields take their shapes from the
 adequacy test, so it fits the frozen format without a structural change. The run-level
-study tests how they work in real use; it doesn't set their design. P2 alone needs nothing beyond the core:
-a prereg with its `target`, `declaration` and subjects, and a postreg with the results.
+study tests how they work in real use; it doesn't set their design. P2 alone needs
+nothing beyond the core: a prereg with its `target`, `declaration` and subjects, and a
+postreg with the results.
 
 The adequacy test is the one in Apollo Research's [*Principles for Embedded
 Evaluations*](https://www.apolloresearch.ai/blog/principles-for-embedded-evaluations): to
@@ -180,8 +181,8 @@ is a file beside the manifests.
 | `fulfills` | TrustedTested: `chain`, `keyconsist`, `complete` |
 | `prev_hash` | TrustedTested: `chain` |
 | `due` | TrustedTested: `timely`, `complete` |
-| `subject[].name`, `subject[].digest` | TrustedTested: `content` |
-| `anchor.floor` and its fields | TrustedTested: `floor`, `order` |
+| `subject`, `subject[].name`, `subject[].digest` | TrustedTested: `content` |
+| `anchor`, `anchor.floor` and its fields | TrustedTested: `floor`, `order` |
 | `ceiling` and its fields (envelope) | TrustedTested: `ceiling`, `order`, `timely`, `complete` |
 | `schema_id`, `predicateType`, `target`, `declaration`, `identity`, `provenance`, `repro_recipe`, `notes` | TrustedDeclared |
 
@@ -260,7 +261,7 @@ signed bytes, and a `signatures` list.
 - **0.4.0:** full DSSE. The verifier checks the stored bytes as they are, so
   canonicalization no longer matters for verification. The `DSSEv1` prefix lets standard
   DSSE and in-toto tooling read asexec envelopes (groundwork for M2's export). The
-  `signatures` list keeps one entry: a second party signs its own record (see *0.5.0*),
+  `signatures` list keeps one entry: a second party signs its own record (see *0.6.0*),
   not the same body. The cost: a format break, regenerated
   golden vectors, and a payload that must be decoded to be read.
 
@@ -303,7 +304,8 @@ Rules that follow:
 - Read every field the tests check from the verified body bytes, never from another copy in
   the file, and never from `untrusted`.
 - Keep rejecting duplicate JSON keys in the decoded body: parsers disagree on which value
-  wins, so two verifiers could read different fields from the same signed bytes.
+  wins, so two verifiers could read different fields from the same signed bytes. The
+  decoded body is held to the same JSON rules as the file, nesting limit included.
 
 **Wrapper.** DSSE defines only `payloadType`, `payload` and `signatures`, so what asexec
 adds sits outside it, in the wrapper:
@@ -384,7 +386,7 @@ property, it goes into a later beta.
 
 **Tests:** a fault suite, each fault with its expected code: an item silently dropped; a
 late item; a silent amendment (an ablation redefined after the results); a run whose
-floor precedes the prereg's ceiling; a record signed with an untrusted key. Plus one
+floor precedes the prereg's ceiling; a record signed with a key not in `--trusted-keys`. Plus one
 synthetic worked example in the same shape, a small matrix with ablations, through
 commit, run and verify.
 
