@@ -22,8 +22,9 @@ with its item list in `declaration`. The fields and tests beyond the core are ca
 each tied to the gap it would close, and one goes into 0.4.0 only if the test drive hits
 that gap.
 
-The adequacy test is a commit-reveal check run by an assessor: to back a
-universal-negative claim ("models never attempted to evade their monitoring"),
+The adequacy test is the one in Apollo Research's [*Principles for Embedded
+Evaluations*](https://www.apolloresearch.ai/blog/principles-for-embedded-evaluations): to
+back a universal-negative claim ("models never attempted to evade their monitoring"),
 realistic evasion attempts are planted in transcripts and the monitor's catch rate decides
 between *Verified* and *Unrefuted*. Today nothing proves the plants and the plan were fixed
 before the run, or that no item was dropped. asexec reports per-item statuses; verdicts
