@@ -9,8 +9,10 @@ claim record adds (see [`ROADMAP.md`](../../ROADMAP.md)).
 
 An assessor backs a universal-negative claim: "models never attempted to disable or evade
 their monitoring during internal deployment". Such a claim can only be falsified, so the
-verdict depends on whether the search could have found a counterexample. The assessor
-commits to three items:
+verdict depends on whether the search could have found a counterexample. Apollo's scale
+separates *Verified* (no counterexample found, and the methods would likely have found
+one) from *Unrefuted* (no counterexample found, but gaps in the methods weaken the
+result). The assessor commits to three items:
 
 | Item | Kind | Delivered as |
 |---|---|---|
@@ -60,8 +62,9 @@ reveal.
 ## Out of scope
 
 Whether the plants are realistic, whether the monitor tested is the one deployed, and
-whether any finding is true. Those stay with the assessor's judgement; asexec reports what
-was committed and delivered, and when.
+whether any finding is true. Those stay with the assessor's judgement. asexec reports what was
+committed and delivered, and when, item by item; the verdict belongs to the assessor or to
+a display layer, not to asexec.
 
 ## With the 0.4.0 betas
 

@@ -9,8 +9,10 @@
 - **M1:** the claim record on the 0.4.0 core format: a P3 claim with a `plan` and an item
   list, one postreg per item, and the `complete` and `order` tests. A run-level study
   test-drives it end to end, recorded as a claim whose items are its runs and ablations.
-  The test drive runs on 0.4.0 betas; the format freezes at 0.4.0 → asexec 0.4.0.
-- **M2:** a second claim on the same record, the adequacy test below (if assessors
+  The test drive runs on 0.4.0 betas. The 0.4.0 format (`application/vnd.asexec+json`) is
+  fixed when 0.4.0 is released, after the release gate; later formats are added beside it,
+  never in its place → asexec 0.4.0.
+- **M2:** a second claim on the same record, the adequacy test (if assessors
   confirm the need), with the plant-set commitment as the first format version after
   0.4.0; in-toto export; and live export of per-item statuses to a claim-graph display
   → asexec 0.5.0.
@@ -24,27 +26,23 @@ study tests how they work in real use; it doesn't set their design. P2 alone nee
 nothing beyond the core: a prereg with its `target`, `declaration` and subjects, and a
 postreg with the results.
 
-The adequacy test is the one in Apollo Research's [*Principles for Embedded
-Evaluations*](https://www.apolloresearch.ai/blog/principles-for-embedded-evaluations): to
-back a universal-negative claim ("models never attempted to evade their monitoring"),
-realistic evasion attempts are planted in transcripts and the monitor's catch rate decides
-between *Verified* and *Unrefuted*. Today nothing proves the plants and the plan were fixed
-before the run, or that no item was dropped. asexec reports per-item statuses; verdicts
-belong to the assessor or the display layer, not to asexec.
+The adequacy test is the commit-reveal test from Apollo Research's [*Principles for
+Embedded Evaluations*](https://www.apolloresearch.ai/blog/principles-for-embedded-evaluations).
+[`examples/adequacy-test`](examples/adequacy-test/README.md) describes it and shows what
+asexec catches today.
 
 No registry is planned. asexec-registry is built only if M2 shows that a claim-graph
 display can't show records publicly. Anything not needed for M1–M3 moves to 0.7.0 or
 later. A test is added only once dogfooding or user feedback shows it is needed.
 
 **Ordering logic:** make the current claims true first; then make every format-breaking
-change in one release; then freeze the format at 0.4.0, after the M1 test drive on its
-betas. Anything that changes signed bytes or verify-code semantics lands *before* the
-freeze, so the format people adopt is the format we can stand behind.
-Distribution (PyPI) is cut early to claim the name, with honest caveats.
+change in one release, tried on its betas; then fix that format at the 0.4.0 release.
+Anything that changes signed bytes or verify-code semantics lands *before* 0.4.0, so the
+format people adopt is the format we can stand behind.
 
 ## Versioning
 
-- **Releases** use `0.MINOR.PATCH`, pre-1.0 alpha.
+- **Releases** use `0.MINOR.PATCH`, alpha.
   - `MINOR`: a change to the manifest format, the signed bytes, or the
     documented meaning of a verify test.
   - `PATCH`: additive or corrective. A fix that brings the implementation in
@@ -56,8 +54,9 @@ Distribution (PyPI) is cut early to claim the name, with honest caveats.
 - **Identifiers baked into signed bytes.** `SIGNING_PAE_VERSION` (`asexec-PAE/v1`) and
   `MANIFEST_PAYLOAD_TYPE` are in the signing input, and `MANIFEST_SCHEMA_ID` and
   `MANIFEST_PREDICATE_TYPE` are written into the signed body. Changing any of them is a
-  deliberate format change, never incidental. The full list, and how each may change, is
-  in [`tests/test_constants.py`](tests/test_constants.py).
+  deliberate format change, never incidental. In 0.4.0 the PAE prefix becomes `DSSEv1`.
+  The full list, and how each may change, is in
+  [`tests/test_constants.py`](tests/test_constants.py).
 - **The verify-code grammar is versioned separately** (`asexec-verify/N`). The
   promise that "a code means exactly one thing, permanently" holds only if this
   rule holds: **if the documented meaning of an existing test name changes, the
@@ -67,7 +66,6 @@ Distribution (PyPI) is cut early to claim the name, with honest caveats.
 - **Backward compatibility starts at `0.4.0`.** Until then, any release may change the
   schema, signed-byte format, verifier output, or CLI without a migration path. From
   `0.4.0`, see *Support from 0.4.0* below.
-  `1.0.0` is deliberately unassigned; no trigger is defined.
 - **Every format version ships first as betas** (`0.4.0b1`, `0.4.0b2`, …), and is
   released only after its first user has done an end-to-end dry run on one. Each beta
   writes its own `payloadType` (for example `application/vnd.asexec.0.4.0b1+json`), so a
@@ -78,8 +76,11 @@ Distribution (PyPI) is cut early to claim the name, with honest caveats.
 
 ## Support from 0.4.0
 
-**Promised.** A manifest of a released `payloadType` gets the same verify code from every
-later release, given the same files, `--tests`, `--artifacts` and verification time. A
+**Promised.** A manifest of a released `payloadType` gets the verify code that
+`docs/VERIFICATION.md` specifies for it, given the same files, `--tests`, `--artifacts` and
+verification time, and later releases don't change that. A release that fixes code which
+diverged from `docs/VERIFICATION.md` changes codes only where they were wrong, and its
+release note names which. A
 test name's documented meaning is fixed per code grammar, starting with `asexec-verify/1`.
 How the verifier keeps this is in [`docs/MULTIVERSION.md`](docs/MULTIVERSION.md), which
 isn't built yet.
@@ -106,16 +107,16 @@ manifest, even if that manifest happens to carry it; there, it stays an unknown 
 | A new format version (any change to signed bytes or to what a field means) | `MINOR` | a new `FORMATS` entry, frozen manifests and betas |
 | A new test name | `PATCH` | — |
 | A change to an existing test's documented meaning | `MINOR` | a code-grammar bump (`asexec-verify/N+1`); every earlier grammar stays available |
-| A fix that brings code in line with documented meaning | `PATCH` | a release note |
+| A fix that brings code in line with documented meaning | `PATCH` | a release note naming the verify codes that change |
 
 ## Version map
 
 | Version | Scope | Milestone |
 |---|---|---|
 | 0.3.x | shipped (current 0.3.19; see *History*) | — |
-| **0.4.0b*N*** | slim verify surface + every core format change (below); the claim record; the run-level test drive | M1 |
-| **0.4.0** | format freeze: wire format + golden vectors become normative | M1 |
-| **0.4.x** | patches; no format changes | — |
+| **0.4.0b*N*** | every core format change (below); the claim record; the run-level test drive | M1 |
+| **0.4.0** | the first supported format, `application/vnd.asexec+json`, fixed; the wire format and frozen manifests become normative | M1 |
+| **0.4.x** | patches (see *0.4.x*); no format changes | — |
 | **0.5.0** | second claim (the adequacy test, if confirmed) as the second format version; `asexec export --in-toto`; display export | M2 |
 | **0.6.0** | two-sided pilot: lab run record; lab disclosure promises (`origin`: `self` \| `extracted`) | M3 |
 | **0.7.0+** | everything deferred (below) | — |
@@ -128,6 +129,219 @@ manifest, even if that manifest happens to carry it; there, it stays an unknown 
 | P2 | Run-level: one run, its parameters and guardrails, declared before it runs | Re-running on the same data, swapping the grader, or tweaking parameters until the result looks good | The core format: prereg (`target`, `declaration`, subjects) and postreg (results) |
 | P3 | Claim-level: a broader statement, and the evals or evidence that will decide it, declared up front | Dropping or redefining the evidence that didn't support the claim | The claim record (M1), the adequacy test (M2) |
 | P4 | Governance: a recurring disclosure, such as a periodic report | Quietly missing or diluting a promised disclosure | Lab disclosure promises (M3) |
+
+---
+
+## 0.4.0 — M1: The first supported format
+
+**Format**
+
+- DSSE envelope: `payload` is base64 of the exact signed bytes; the PAE prefix is
+  `DSSEv1`; `signatures: [...]` (one entry for now). The verifier checks the stored
+  bytes and never re-canonicalizes. `ref` = digest of the payload bytes.
+- The file is an asexec wrapper around that standard envelope: `dsse`, plus the unsigned
+  `ceiling`, `pubkey` and `untrusted` (see *Wrapper* below).
+- `untrusted`: a section for metadata nothing checks, starting with `asexec_version`.
+- `MANIFEST_PREDICATE_TYPE` → a URL the project controls.
+- Body field `schema_version` is now `schema_id`, since its value has no version in it.
+  (Done ahead of 0.4.0.)
+- `dsse.payloadType` selects the format version, and unknown values fail `BDR`
+  ([`docs/MULTIVERSION.md`](docs/MULTIVERSION.md)).
+- `hash_alg` moves into each subject entry. A body-level `hash_alg` is no longer read, and is
+  shown as unknown and unchecked, like any unknown field.
+- Subjects are an explicit list of files, each hashed exactly as listed, because directory
+  hash v1 is ambiguous and skips what it can't encode.
+  - An entry's `name` is the relative path as given (normalized, `/`-separated), not its
+    basename, so two files with the same basename stay distinct. Signing refuses duplicate
+    names, and `content` fails them.
+  - Signing refuses a directory, and `content` fails one, so a hand-built manifest can't
+    rely on the old hash. To commit to a tree, list its files, or pack it (a tar, for
+    example) and list the archive. Remove `hash_dir`.
+  - A listed symlink is hashed as the bytes read through it; `content` already fails one
+    that resolves outside `--artifacts`.
+  - The README examples change to match. Nothing is kept for compatibility with
+    directory subjects.
+- The claim record: `plan`, `items`, and per-postreg `item_id`, `status` and `evidence`
+  (see *New properties*).
+- Convention: one prereg per commitment (a promise, or an assessment's plan). No
+  list-level schema.
+
+How the 0.4.0 envelope is built, compared with 0.3.x, is in
+[`docs/FORMAT.md`](docs/FORMAT.md). The rules it implies:
+
+- Decode `payload` with strict base64, so each set of body bytes has one spelling.
+- Read every field the tests check from the verified body bytes, never from another copy in
+  the file, and never from `untrusted`.
+- Keep rejecting duplicate JSON keys in the decoded body: parsers disagree on which value
+  wins, so two verifiers could read different fields from the same signed bytes. The
+  decoded body is held to the same JSON rules as the file, nesting limit included.
+
+**Wrapper.** DSSE defines only `payloadType`, `payload` and `signatures`, so what asexec
+adds sits outside it, in the wrapper:
+
+- `dsse` is a standard envelope that DSSE and in-toto tooling can lift out and verify
+  unchanged, which keeps the M2 export simple.
+- `ceiling` cannot be inside the body (its nonce is the body's own hash). In the wrapper
+  it can still be attached after signing; it is bound by `nonce == ref` and authenticated
+  by the witness's own signature.
+- `pubkey` needs no signature: `BDR` requires `signatures[0].keyid` to derive from it, so
+  a substituted key fails. With `signer`, `--trusted-keys` additionally decides which
+  keys are accepted.
+- Any other top-level key is treated like `untrusted`: shown under that heading, never
+  read by a test.
+- `untrusted` is neither signed nor bound: anyone can edit it after signing. That is
+  what it is for. Unsigned isn't the same as untrusted, though: `ceiling` and `pubkey` are
+  unsigned but checked, by the witness's signature and by `keyid`. `untrusted` is the one
+  part of the file that nothing checks.
+
+**Verify**
+
+- `signer`: `--signer` / `--trusted-keys <file>`.
+- `timely`: postreg ceiling ≤ prereg `due`.
+- New commitment state `no-due`, separate from `open`. This changes what `open` means, but
+  the code grammar stays `asexec-verify/1`, because the bump rule starts at `0.4.0`.
+- `complete` and `order` (see *New properties*).
+- Malformed means only what stops `verify` reading a manifest: not valid JSON, nested too
+  deep, a duplicate key, or a missing frame (`dsse` with `payloadType`, a `payload` that
+  decodes to a JSON object, and a `signatures` list). Everything else is judged by tests.
+- `--json`: a report the claim-graph export reads. Outside the support promise until
+  0.5.0 (see *Support from 0.4.0*).
+- Unknown signed fields are shown as unknown and unchecked, never dropped. Unknown
+  top-level keys are shown with `untrusted`.
+- `untrusted` is printed under its own heading saying nothing in it was checked. No test
+  reads it, and it never affects `ref` or the verify code.
+
+**Docs**, rewritten for the 0.4.0 format before release, since the release fixes what they
+describe:
+- `docs/VERIFICATION.md`: every path (body paths inside the decoded `dsse.payload`;
+  `dsse.signatures[]` and `pubkey` for `signature.*`), the malformed rule, the new tests,
+  a *TrustedDeclared* list (signed properties that are shown but never tested) and an
+  *Untrusted* section.
+- `README.md`: the manifest examples (DSSE envelope, file-only subjects, the claim
+  record, `untrusted`) and the `required` / `always` legend.
+- `examples/adequacy-test`: ported to the claim record's fields.
+
+**Tests:** golden vectors for the DSSE format, regenerated freely during the betas, plus
+tests for the items above. At release, the first frozen 0.4.0 manifests are committed:
+never edited or regenerated, and every later release must verify them with the same
+codes ([`docs/MULTIVERSION.md`](docs/MULTIVERSION.md#testing)). A tier check: every property the signing models can write appears in
+`docs/VERIFICATION.md`: under some test's *Examines* (*TrustedTested*), in
+*TrustedDeclared*, or in *Untrusted*. A property nothing accounts for fails CI. No broader
+test program.
+
+**Release:** betas first (see *0.4.0 betas* below). Once `0.4.0` is on PyPI, yank every
+`0.3.x` release and every `0.4.0` beta, so a plain `pip install asexec` never picks
+unsupported code. Yank rather than delete, because deletion is permanent and gains
+nothing. Yank reason: "pre-0.4.0, unsupported; use >=0.4.0".
+
+## 0.4.0 betas — M1: The claim record, test-driven
+
+One run-level study, end to end: a matrix of runs (for example, models × harnesses, so
+their effects can be told apart), plus ablations. It is recorded as a claim: the prereg
+carries the study's `plan` and lists each run and ablation in `items`, and each run gets a
+postreg with its `item_id`, `status` and `evidence`. The study integrates against a 0.4.0
+beta.
+
+The claim record's fields (see *New properties*) are in the first beta, in the adequacy
+test's shapes. [`examples/adequacy-test`](examples/adequacy-test) already shows on 0.3.19
+the gaps they close: an item silently dropped still shows `[FULFILLED]`, and plants
+committed after the run can't be told apart from an honest run.
+
+**Release gate.** 0.4.0 is released after two dry runs, both on the final beta, and before
+any run meant for publication:
+1. The run-level study's first end-to-end dry run.
+2. [`examples/adequacy-test`](examples/adequacy-test), ported to the claim record and
+   re-run: a check that the record still fits P3.
+
+A format change after either dry run means another beta and both dry runs again. The
+release then changes only the `payloadType` string (see *Versioning*).
+
+The integration (an adapter from the study's runner to asexec) lives in the study's repo,
+not here. Where it hooks in waits on the study's choice of runner.
+
+Each run fetches a drand round when it starts and uses it (for example as its seed), and
+its postreg carries that round as its floor. Today `--floor` fetches the latest round at
+signing, so signing needs a way to pass in a round fetched earlier. `order` bounds a run
+only as tightly as the run's use of that round: a round the run merely records proves
+nothing about when the run started. Using it as a seed lets a re-execution check it.
+
+**Open for the test drive:** one item per repetition, or a declared count per cell. This
+closes the gap of a cell run n times with only the best run reported. If it needs a
+property, it goes into a later beta.
+
+**Tests:** a fault suite, each fault with its expected code: an item silently dropped; a
+late item; a silent amendment (an ablation redefined after the results); a run whose
+floor precedes the prereg's ceiling; a record signed with a key not in `--trusted-keys`. Plus one
+synthetic worked example in the same shape, a small matrix with ablations, through
+commit, run and verify.
+
+## 0.4.x — Patches
+
+What a 0.4.x release may carry:
+- Fixes that bring code in line with `docs/VERIFICATION.md`, with a release note naming the
+  verify codes that change (see *Support from 0.4.0*).
+- New test names, including tests that move a *TrustedDeclared* property to
+  *TrustedTested*.
+- CLI options and output text, `--json` (outside the promise until 0.5.0), the Python
+  API, and docs. For example, passing in a drand round fetched earlier.
+- Pinned trust roots: added, or withdrawn with a release note.
+- Dependencies and supported Python versions.
+
+Never: anything that changes signed bytes, a field's meaning, or a test's documented
+meaning. Those need a `MINOR`.
+
+## 0.5.0 — M2: The second format: the adequacy test, in-toto and display export
+
+- A second claim on the same record: the commit-reveal adequacy test (below), if
+  assessors confirm the need. If they don't, the next user's claim.
+- The fields it adds make the first format version after 0.4.0, so the multi-version
+  verifier ([`docs/MULTIVERSION.md`](docs/MULTIVERSION.md), steps 2 to 4) lands first. Like
+  0.4.0, it ships as betas, and a field is released only once a dry run has exercised it.
+- `asexec export --in-toto`.
+- Live export of per-item statuses (`verify --json`) to a claim-graph display.
+  asexec-registry is built only if that display can't show records publicly.
+
+**The adequacy test** ([`examples/adequacy-test`](examples/adequacy-test/README.md)).
+Beyond the claim record, it needs:
+
+- A plant-set commitment (salted-hash root and count) and `presented_by` in the prereg.
+- Plant-set root: an unambiguous encoding (length-prefixed leaves, or a Merkle tree with
+  domain separation), specified before anyone commits to a root. Directory hash v1 is the
+  counterexample.
+- Reveal sample: a drand round issued after the run selects which plants are revealed, so
+  the assessor can't pick the published sample.
+- Key list with roles at a well-known path: a file convention, not a registry. A new test,
+  `role` (name not decided), checks `presented_by` against it; without the key list,
+  `presented_by` is an unchecked self-label. `signer` keeps its 0.4.0 meaning.
+- Faults: plants swapped after the run (0.3.19 catches only this one), and a dropped
+  adequacy item.
+
+Until the lab signs its own run record (M3), the adequacy test is one-sided: it catches
+swapped plants and dropped items, but not plants committed after the monitor ran.
+
+**Open until assessors answer:** whether adequacy tests use planted counterexamples today
+(how many, and whether the lab sees them before the run); whether the lab can sign the
+run; whether publishing the plant set teaches evasion, and whether a count plus a random
+sample is enough.
+
+## 0.6.0 — M3: The third format: the two-sided pilot and lab promises
+
+- Pilot with one assessor and one lab: the assessor signs its plan, the lab signs the
+  monitor run.
+- Lab run record (a new `phase` value, not decided; may be outside asexec scope): its own
+  envelope, signed by the lab's key, with `attests: <prereg ref>`, the run's output
+  digest, and its own floor and ceiling. It is a new record kind, not a
+  postreg, so the counting rule never puts it under the assessor's commitment, and the lab
+  can't block the assessor's report by withholding a signature. The adequacy item's
+  postreg points at it by `ref`. The key list gains the lab role.
+- Verify: a new test, `plantorder` (name not decided): the plant-set commitment's ceiling
+  precedes the lab run record's floor, and the run record is signed by a key the key list
+  gives the lab role. `order` keeps its 0.4.0 meaning. Fault: plants committed after the
+  run.
+- Lab disclosure promises (P4), self-signed and outsider-extracted side by side. New
+  optional body field `origin`: `self` | `extracted`. Extracted records carry the source
+  snapshot as a subject (digest + URL) and put the quoted passage in `notes`. Not
+  `provenance`, which already means `asserted` | `reproducible`.
 
 ## New properties
 
@@ -228,281 +442,15 @@ is a file beside the manifests.
 These are new names rather than extensions of `signer` and `order`, so those keep their
 0.4.0 meanings and the code grammar stays `/1`.
 
----
-
-## 0.4.0 — M1: Slim verify surface and format changes
-
-**Format**
-
-- DSSE envelope: `payload` is base64 of the exact signed bytes; the PAE prefix is
-  `DSSEv1`; `signatures: [...]` (one entry for now). The verifier checks the stored
-  bytes and never re-canonicalizes. `ref` = digest of the payload bytes.
-- The file is an asexec wrapper around that standard envelope: `dsse`, plus the unsigned
-  `ceiling`, `pubkey` and `untrusted` (see *Wrapper* below).
-- `untrusted`: a section for metadata nothing checks, starting with `asexec_version`.
-- `MANIFEST_PREDICATE_TYPE` → a URL the project controls.
-- Body field `schema_version` is now `schema_id`, since its value has no version in it.
-  (Done ahead of 0.4.0.)
-- `dsse.payloadType` selects the format version, and unknown values fail `BDR`
-  ([`docs/MULTIVERSION.md`](docs/MULTIVERSION.md)).
-- `hash_alg` moves into each subject entry. A body-level `hash_alg` is no longer read, and is
-  shown as unverified content like any unknown field.
-- Subjects are an explicit list of files, each hashed exactly as listed, because directory
-  hash v1 is ambiguous and skips what it can't encode.
-  - An entry's `name` is the relative path as given (normalized, `/`-separated), not its
-    basename, so two files with the same basename stay distinct. Signing refuses duplicate
-    names, and `content` fails them.
-  - Signing refuses a directory, and `content` fails one, so a hand-built manifest can't
-    rely on the old hash. To commit to a tree, list its files, or pack it (a tar, for
-    example) and list the archive. Remove `hash_dir`.
-  - A listed symlink is hashed as the bytes read through it; `content` already fails one
-    that resolves outside `--artifacts`.
-  - The README examples change to match. Nothing is kept for compatibility with
-    directory subjects.
-- The claim record: `plan`, `items`, and per-postreg `item_id`, `status` and `evidence`
-  (see *New properties*).
-- Convention: one prereg per commitment (a promise, or an assessment's plan). No
-  list-level schema.
-
-**PAE vs DSSE.** PAE (pre-authentication encoding) is the rule for which bytes get
-signed:
-
-```
-PAE(type, body) = prefix SP len(type) SP type SP len(body) SP body
-```
-
-`SP` is a single ASCII space and `len` is the byte length in ASCII decimal. With today's
-prefix, a small body encodes as:
-
-```
-asexec-PAE/v1 27 application/vnd.asexec+json 31 {"phase":"prereg","target":"m"}
-```
-
-The signature therefore covers the payload's type as well as its body, and the length
-fields keep the boundaries unambiguous even when a value contains spaces. PAE is used only
-to sign and verify a signature. `ref` hashes the body bytes without it, and the verify code
-does not contain it: `BDR` checks the signature, and the code reports only that result.
-
-DSSE is the envelope built around PAE: `payloadType`, `payload` as base64 of the exact
-signed bytes, and a `signatures` list.
-
-- **Today (0.3.x):** asexec uses PAE with its own prefix, `asexec-PAE/v1`, but not the DSSE
-  envelope. Canonicalization is a separate step before PAE: `payload` is stored as a JSON
-  object, so signer and verifier must each re-derive the same body bytes (sorted keys,
-  compact separators, UTF-8), and `ref` depends on them too. Any difference in
-  serialization (another language's JSON encoder, number formatting, a library change)
-  breaks signatures and refs.
-- **0.4.0:** full DSSE. The verifier checks the stored bytes as they are, so
-  canonicalization no longer matters for verification. The `DSSEv1` prefix lets standard
-  DSSE and in-toto tooling read asexec envelopes (groundwork for M2's export). The
-  `signatures` list keeps one entry: a second party signs its own record (see *0.6.0*),
-  not the same body. The cost: a format break, regenerated
-  golden vectors, and a payload that must be decoded to be read.
-
-How the pieces relate. Only the body bytes are fixed; the PAE is rebuilt by signer and
-verifier and never stored:
-
-```
-body bytes = {"phase":"prereg","target":"model m via provider p",…}   ← the "exact stored bytes"
-payload    = base64(body bytes)                                       ← what the file holds
-PAE        = "DSSEv1 <len> application/vnd.asexec+json <len> " + body bytes
-sig        = ed25519_sign(private key, PAE)
-ref        = sha-256(body bytes)
-```
-
-```jsonc
-// today (0.3.x)
-{
-  "payloadType": "application/vnd.asexec+json",
-  "payload": { "phase": "prereg", … },           // a JSON object
-  "signature": { "alg": "ed25519", "keyid": "…", "pubkey": "…", "sig": "…" },
-  "ceiling": { … }                               // optional, unsigned
-}
-
-// 0.4.0 (asexec wrapper around a standard DSSE envelope)
-{
-  "dsse": {
-    "payloadType": "application/vnd.asexec+json",
-    "payload": "eyJwaGFzZSI6InByZXJlZyIs…",      // base64 of the body bytes
-    "signatures": [ { "keyid": "…", "sig": "…" } ]
-  },
-  "ceiling": { … },                              // optional, unsigned; nonce = ref
-  "pubkey": "…",                                 // unsigned; must derive signatures[0].keyid
-  "untrusted": { "asexec_version": "0.4.0" }     // optional, unsigned, never tested
-}
-```
-
-Rules that follow:
-
-- Decode `payload` with strict base64, so each set of body bytes has one spelling.
-- Read every field the tests check from the verified body bytes, never from another copy in
-  the file, and never from `untrusted`.
-- Keep rejecting duplicate JSON keys in the decoded body: parsers disagree on which value
-  wins, so two verifiers could read different fields from the same signed bytes. The
-  decoded body is held to the same JSON rules as the file, nesting limit included.
-
-**Wrapper.** DSSE defines only `payloadType`, `payload` and `signatures`, so what asexec
-adds sits outside it, in the wrapper:
-
-- `dsse` is a standard envelope that DSSE and in-toto tooling can lift out and verify
-  unchanged, which keeps the M2 export simple.
-- `ceiling` cannot be inside the body (its nonce is the body's own hash). In the wrapper
-  it can still be attached after signing; it is bound by `nonce == ref` and authenticated
-  by the witness's own signature.
-- `pubkey` needs no signature: `BDR` requires `signatures[0].keyid` to derive from it, so
-  a substituted key fails. With `signer`, `--trusted-keys` additionally decides which
-  keys are accepted.
-- Any other top-level key is treated like `untrusted`: shown under that heading, never
-  read by a test.
-- `untrusted` is neither signed nor bound: anyone can edit it after signing. That is
-  what it is for. Unsigned isn't the same as untrusted, though: `ceiling` and `pubkey` are
-  unsigned but checked, by the witness's signature and by `keyid`. `untrusted` is the one
-  part of the file that nothing checks.
-
-**Verify**
-
-- `signer`: `--signer` / `--trusted-keys <file>`.
-- `timely`: postreg ceiling ≤ prereg `due`.
-- New commitment state `no-due`, separate from `open`. This changes what `open` means, but
-  the code grammar stays `asexec-verify/1`, because the bump rule starts at `0.4.0`.
-- `complete` and `order` (see *New properties*).
-- Malformed means only what stops `verify` reading a manifest: not valid JSON, nested too
-  deep, a duplicate key, or a missing frame (`dsse` with `payloadType`, a `payload` that
-  decodes to a JSON object, and a `signatures` list). Everything else is judged by tests.
-- `--json`: a report the claim-graph export reads. Outside the support promise until
-  0.5.0 (see *Support from 0.4.0*).
-- Unknown signed fields are shown as unknown and unchecked, never dropped. Unknown
-  top-level keys are shown with `untrusted`.
-- `untrusted` is printed under its own heading saying nothing in it was checked. No test
-  reads it, and it never affects `ref` or the verify code.
-
-**Docs**, rewritten for the 0.4.0 format before release, since they are part of what
-freezes:
-- `docs/VERIFICATION.md`: every path (body paths inside the decoded `dsse.payload`;
-  `dsse.signatures[]` and `pubkey` for `signature.*`), the malformed rule, the new tests,
-  a *TrustedDeclared* list (signed properties that are shown but never tested) and an
-  *Untrusted* section.
-- `README.md`: the manifest examples (DSSE envelope, file-only subjects, the claim
-  record, `untrusted`) and the `required` / `always` legend.
-- `examples/adequacy-test`: ported to the claim record's fields.
-
-**Tests:** golden vectors for the DSSE format, regenerated freely during the betas, plus
-tests for the items above. At release, the first frozen 0.4.0 manifests are committed:
-never edited or regenerated, and every later release must verify them with the same
-codes ([`docs/MULTIVERSION.md`](docs/MULTIVERSION.md#testing)). A tier check: every property the signing models can write appears in
-`docs/VERIFICATION.md`: under some test's *Examines* (*TrustedTested*), in
-*TrustedDeclared*, or in *Untrusted*. A property nothing accounts for fails CI. No broader
-test program.
-
-**Release:** betas first (see *0.4.0 betas* below). Once `0.4.0` is on PyPI, yank every
-`0.3.x` release and every `0.4.0` beta, so a plain `pip install asexec` never picks
-unsupported code. Yank rather than delete, because deletion is permanent and gains
-nothing. Yank reason: "pre-0.4.0, unsupported; use >=0.4.0".
-
-## 0.4.0 betas — M1: The claim record, test-driven
-
-One run-level study, end to end: a matrix of runs (for example, models × harnesses, so
-their effects can be told apart), plus ablations. It is recorded as a claim: the prereg
-carries the study's `plan` and lists each run and ablation in `items`, and each run gets a
-postreg with its `item_id`, `status` and `evidence`. The study integrates against a 0.4.0
-beta.
-
-The claim record's fields (see *New properties*) are in the first beta, in the adequacy
-test's shapes. [`examples/adequacy-test`](examples/adequacy-test) already shows on 0.3.19
-the gaps they close: an item silently dropped still shows `[FULFILLED]`, and plants
-committed after the run can't be told apart from an honest run.
-
-**Release gate.** 0.4.0 is released after two dry runs, both on the final beta, and before
-any run meant for publication:
-1. The run-level study's first end-to-end dry run.
-2. [`examples/adequacy-test`](examples/adequacy-test), ported to the claim record and
-   re-run: a check that the record still fits P3.
-
-A format change after either dry run means another beta and both dry runs again. The
-release then changes only the `payloadType` string (see *Versioning*).
-
-The integration (an adapter from the study's runner to asexec) lives in the study's repo,
-not here. Where it hooks in waits on the study's choice of runner.
-
-Each run fetches a drand round when it starts and uses it (for example as its seed), and
-its postreg carries that round as its floor. Today `--floor` fetches the latest round at
-signing, so signing needs a way to pass in a round fetched earlier. `order` bounds a run
-only as tightly as the run's use of that round: a round the run merely records proves
-nothing about when the run started. Using it as a seed lets a re-execution check it.
-
-**Open for the test drive:** one item per repetition, or a declared count per cell. This
-closes the gap of a cell run n times with only the best run reported. If it needs a
-property, it goes into a later beta.
-
-**Tests:** a fault suite, each fault with its expected code: an item silently dropped; a
-late item; a silent amendment (an ablation redefined after the results); a run whose
-floor precedes the prereg's ceiling; a record signed with a key not in `--trusted-keys`. Plus one
-synthetic worked example in the same shape, a small matrix with ablations, through
-commit, run and verify.
-
-## 0.5.0 — M2: Second claim
-
-- A second claim on the same record: the commit-reveal adequacy test (below), if
-  assessors confirm the need. If they don't, the next user's claim.
-- The fields it adds make the first format version after 0.4.0, so the multi-version
-  verifier ([`docs/MULTIVERSION.md`](docs/MULTIVERSION.md), steps 2 to 4) lands first. Like
-  0.4.0, it ships as betas, and a field is released only once a dry run has exercised it.
-- `asexec export --in-toto`.
-- Live export of per-item statuses (`verify --json`) to a claim-graph display.
-  asexec-registry is built only if that display can't show records publicly.
-
-**The adequacy test.** The assessor commits, before access and before the lab's monitor
-runs, to its plan and a plant set; the lab's monitor runs over transcripts with the plants
-in them; the assessor then accounts for every item. Beyond the claim record, it needs:
-
-- A plant-set commitment (salted-hash root and count) and `presented_by` in the prereg.
-- Plant-set root: an unambiguous encoding (length-prefixed leaves, or a Merkle tree with
-  domain separation), specified before anyone commits to a root. Directory hash v1 is the
-  counterexample.
-- Reveal sample: a drand round issued after the run selects which plants are revealed, so
-  the assessor can't pick the published sample.
-- Key list with roles at a well-known path: a file convention, not a registry. A new test,
-  `role` (name not decided), checks `presented_by` against it; without the key list,
-  `presented_by` is an unchecked self-label. `signer` keeps its 0.4.0 meaning.
-- Faults: plants swapped after the run (0.3.19 catches only this one), and a dropped
-  adequacy item.
-
-Until the lab signs its own run record (M3), the adequacy test is one-sided: it catches
-swapped plants and dropped items, but not plants committed after the monitor ran.
-
-**Open until assessors answer:** whether adequacy tests use planted counterexamples today
-(how many, and whether the lab sees them before the run); whether the lab can sign the
-run; whether publishing the plant set teaches evasion, and whether a count plus a random
-sample is enough.
-
-## 0.6.0 — M3: Two-sided pilot, then lab promises
-
-- Pilot with one assessor and one lab: the assessor signs its plan, the lab signs the
-  monitor run.
-- Lab run record (a new `phase` value, not decided; may be outside asexec scope): its own
-  envelope, signed by the lab's key, with `attests: <prereg ref>`, the run's output
-  digest, and its own floor and ceiling. It is a new record kind, not a
-  postreg, so the counting rule never puts it under the assessor's commitment, and the lab
-  can't block the assessor's report by withholding a signature. The adequacy item's
-  postreg points at it by `ref`. The key list gains the lab role.
-- Verify: a new test, `plantorder` (name not decided): the plant-set commitment's ceiling
-  precedes the lab run record's floor, and the run record is signed by a key the key list
-  gives the lab role. `order` keeps its 0.4.0 meaning. Fault: plants committed after the
-  run.
-- Lab disclosure promises (P4), self-signed and outsider-extracted side by side. New
-  optional body field `origin`: `self` | `extracted`. Extracted records carry the source
-  snapshot as a subject (digest + URL) and put the quoted passage in `notes`. Not
-  `provenance`, which already means `asserted` | `reproducible`.
-
 ## Deferred to 0.7.0+
 
 - `continuity` + subject `role`: matching runs to their inputs; the test drive starts without it.
 - `final` / `expected_runs` for tail truncation beyond a declared item list: `complete` would cover the test drive, whose items are listed up front.
 - `--trust-roots`: the pinned drand and Roughtime set is enough until readers ask to choose their own.
 - [JCS (RFC 8785)](https://www.rfc-editor.org/rfc/rfc8785) canonicalization: DSSE verifies the stored bytes, so canonical form no longer matters for verification (worth adopting for multiple writers to produce byte-identical bodies, and therefore identical refs, from the same data).
-- Phase 1 invariant catalog, property/mutation testing, extra CI matrix: tests are added only when dogfooding or feedback shows a need.
-- Phase 3 dependency reduction (pydantic, blake3, BLS vendoring, Actions pinning): worthwhile, but not needed for M1–M3.
-- Full normative `SPEC.md`: 0.4.0 freezes the wire format and vectors; a complete spec can follow adoption.
+- Invariant catalog, property/mutation testing, extra CI matrix: tests are added only when dogfooding or feedback shows a need.
+- Dependency reduction (pydantic, blake3, BLS vendoring, Actions pinning): worthwhile, but not needed for M1–M3.
+- Full normative `SPEC.md`: 0.4.0 fixes the wire format and frozen manifests; a complete spec can follow adoption.
 - Release-pipeline hardening (reproducible builds, build provenance): the current trusted-publishing pipeline is adequate for alpha.
 
 ## Later (unversioned until scheduled)

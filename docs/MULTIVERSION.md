@@ -14,8 +14,8 @@ change does.
 
 ## Goal
 
-- A manifest signed by `0.4.0` or later gets the same verify result from every later release,
-  except for the withdrawals below ([`ROADMAP.md`](../ROADMAP.md#support-from-040) lists
+- A manifest signed by `0.4.0` or later gets the verify result `docs/VERIFICATION.md`
+  specifies for it from every later release, except for the withdrawals below ([`ROADMAP.md`](../ROADMAP.md#support-from-040) lists
   what the promise covers).
 - A manifest is read only under its own format's rules. A field a later format defines is
   never read from an earlier format's manifest.
