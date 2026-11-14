@@ -14,7 +14,11 @@ change does.
 
 ## Goal
 
-- A manifest signed by `0.4.0` or later gets the same verify result from every later release.
+- A manifest signed by `0.4.0` or later gets the verify result `docs/VERIFICATION.md`
+  specifies for it from every later release, except for the withdrawals below ([`ROADMAP.md`](../ROADMAP.md#support-from-040) lists
+  what the promise covers).
+- A manifest is read only under its own format's rules. A field a later format defines is
+  never read from an earlier format's manifest.
 - Manifests from `0.3.x` are out of scope and not supported.
 - An older verifier can't understand a newer format. It must fail clearly rather than
   misread the manifest, and users upgrade to verify it.
@@ -29,8 +33,9 @@ weaker rules.
 signature fail. For example:
 
 ```
-application/vnd.asexec+json      the 0.4.0 format
-application/vnd.asexec.v2+json   a later format
+application/vnd.asexec+json             the 0.4.0 format
+application/vnd.asexec.v2+json          a later format
+application/vnd.asexec.0.4.0b1+json     a beta: never accepted by a release
 ```
 
 The other candidates don't work:
@@ -106,7 +111,12 @@ be marked as withdrawn, with a reason:
 - It never silently passes, and never fails without explaining why.
 - The entry stays in the table, so the verifier can still identify the format.
 
-Withdrawal is the one permitted exception to the promise, and it needs a release note.
+A pinned trust root can be withdrawn the same way, for example a compromised drand or
+Roughtime key. `floor` or `ceiling` then fails for manifests that rely on it, with a reason
+naming the withdrawn root.
+
+Withdrawal, of a format or a trust root, is the one permitted exception to the promise, and
+it needs a release note.
 
 ## Testing
 
@@ -130,7 +140,7 @@ Withdrawal is the one permitted exception to the promise, and it needs a release
 ## Open questions
 
 - **Spelling of later `payloadType` values:** `vnd.asexec.v2+json` is an example, not a decision.
-  Whichever form is chosen, it should be settled before `0.5.0` freezes the format.
+  Whichever form is chosen, it should be settled before the first format version after `0.4.0`.
 - **Key files:** should a key file record which formats it can sign, or is `alg` enough?
 - **Mixed commitments:** a prereg and its postregs could use different formats after an
   upgrade. `chain` and `keyconsist` compare refs and keyids, so the rules for comparing them

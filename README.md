@@ -70,7 +70,7 @@ test:
 - **Chain** (`prev_hash`; [`chain`](./docs/VERIFICATION.md#chain)). The post-registrations of a
   commitment form a single linear chain: one root, no gaps, no forks. *Dropping the last
   post-registration(s) of a chain is **not** detectable yet; close-out manifests (`final`)
-  are deferred to 0.6.0 or later.*
+  are deferred to 0.7.0 or later.*
 - **Key consistency** ([`keyconsist`](./docs/VERIFICATION.md#keyconsist)). Every validly
   signed post-registration of a commitment uses the pre-registration's key.
 - **Created no earlier than** (`anchor.floor`; [`floor`](./docs/VERIFICATION.md#floor)). A
@@ -141,6 +141,9 @@ asexec verify preregistration.json postregistration.json \
 
 For a detailed look at parameters and options, see: `asexec --help`.
 
+For a worked end-to-end run, with faults replayed against the verifier, see
+[`examples/adequacy-test`](examples/adequacy-test): `python examples/adequacy-test/run.py`.
+
 ### Verification output
 
 What each test examines, its exact pass criteria, and what it does not establish are
@@ -171,8 +174,11 @@ single-space delimited. The same result set is byte-identical everywhere.
 
 A pre-registration and a post-registration that fulfills it, as would be built by
 `asexec prereg` and `asexec postreg`, with every field filled in. Fields marked `required`
-will always be present; everything else is optional, and how much to disclose is the
-practitioner's call.
+are the only ones `verify` needs to read a manifest at all; without one, the file is
+malformed. Every other field is optional: leaving it out is structurally fine, and whether
+a manifest meets a bar is up to the [tests](#what-asexec-can-prove-optional-fields-and-tests)
+you request. Fields marked `always` are always written by `asexec prereg` or `asexec postreg`;
+the rest are the practitioner's call.
 
 **Pre-registration**
 
@@ -180,16 +186,16 @@ practitioner's call.
 {
   "payloadType": "application/vnd.asexec+json",
   "payload": {                                       // required: the signed body
-    "schema_id": "asexec",                           // required
-    "predicateType": "https://asexec.dev/manifest",  // required
-    "phase": "prereg",                               // required: prereg | postreg
-    "target": "claude-opus-4-8 via the anthropic API", // required: text or JSON
+    "schema_id": "asexec",                           // always
+    "predicateType": "https://asexec.dev/manifest",  // always
+    "phase": "prereg",                               // always: prereg | postreg
+    "target": "claude-opus-4-8 via the anthropic API", // always: text or JSON
     "due": "2099-01-01T00:00:00Z",                   // deadline; none = stays open
     "declaration": "all runs of this harness against this model, in full", // text or JSON
     "subject": [                                     // artifacts, hashed
       { "name": "harness/", "digest": { "sha-256": "2c26b46b…" } }
     ],
-    "hash_alg": "sha-256",                           // required with subject
+    "hash_alg": "sha-256",                           // always with subject
     "anchor": {
       "floor": {                                     // drand (--floor): not before
         "floor_type": "drand",
@@ -204,9 +210,9 @@ practitioner's call.
   },
   "signature": {                                     // required
     "alg": "ed25519",
-    "keyid": "sha-256:8f3e0a91…",                    // required: sha-256 of pubkey
-    "pubkey": "d75a9801…",                           // required
-    "sig": "3a91c0de…"                               // required
+    "keyid": "sha-256:8f3e0a91…",                    // always: sha-256 of pubkey
+    "pubkey": "d75a9801…",                           // required: hex
+    "sig": "3a91c0de…"                               // required: hex
   },
   "ceiling": {                                       // Roughtime (--ceiling): not after
     "ceiling_type": "roughtime",
@@ -226,18 +232,18 @@ practitioner's call.
 {
   "payloadType": "application/vnd.asexec+json",
   "payload": {                                       // required: the signed body
-    "schema_id": "asexec",                           // required
-    "predicateType": "https://asexec.dev/manifest",  // required
-    "phase": "postreg",                              // required: prereg | postreg
-    "target": "claude-opus-4-8 via the anthropic API", // required: text or JSON
+    "schema_id": "asexec",                           // always
+    "predicateType": "https://asexec.dev/manifest",  // always
+    "phase": "postreg",                              // always: prereg | postreg
+    "target": "claude-opus-4-8 via the anthropic API", // always: text or JSON
     "due": "2099-01-01T00:00:00Z",                   // deadline; none = stays open
     "declaration": "all runs of this harness against this model, in full", // text or JSON
     "subject": [                                     // artifacts, hashed
       { "name": "transcript.txt", "digest": { "sha-256": "9f86d081…" } },
       { "name": "harness/", "digest": { "sha-256": "2c26b46b…" } }
     ],
-    "hash_alg": "sha-256",                           // required with subject
-    "fulfills": "sha-256:4be1c1f8…",                 // required in a postreg
+    "hash_alg": "sha-256",                           // always with subject
+    "fulfills": "sha-256:4be1c1f8…",                 // always in a postreg
     "prev_hash": "sha-256:07ad3b2e…",                // previous postreg
     "anchor": {
       "floor": {                                     // drand (--floor): not before
