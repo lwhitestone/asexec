@@ -263,8 +263,8 @@ ablations, through commit, run and verify.
 
 ## 0.5.0 — M2: Second claim
 
-- A second claim on the same schema: the commit-reveal adequacy test (below), if assessors confirm the
-  need. If they don't, the next user's claim.
+- A second claim on the same schema: the commit-reveal adequacy test (below), if
+  assessors confirm the need. If they don't, the next user's claim.
 - The fields it adds make the first format version after 0.4.0, so the multi-version
   verifier ([`docs/MULTIVERSION.md`](docs/MULTIVERSION.md), steps 2 to 4) lands first. Like
   0.4.0, it ships as betas, and a field is released only once a dry run has exercised it.
