@@ -71,9 +71,10 @@ Distribution (PyPI) is cut early to claim the name, with honest caveats.
   built yet.
   `1.0.0` is deliberately unassigned; no trigger is defined.
 - **Every format version ships first as betas** (`0.4.0b1`, `0.4.0b2`, …), and is
-  released only after its first user has done an end-to-end dry run on one. A beta may
-  change the format; its manifests are supported only if the format didn't change
-  between that beta and the release. There is no experimental format: what a release
+  released only after its first user has done an end-to-end dry run on one. Each beta
+  writes its own `payloadType` (for example `application/vnd.asexec.0.4.0b1+json`), so a
+  release rejects a beta's manifests as an unknown format rather than misreading them.
+  Beta manifests are never supported. There is no experimental format: what a release
   ships, it supports.
 
 ## Version map
@@ -107,18 +108,24 @@ meets a stated bar is up to the tests requested. No property has a default. Body
 are within the decoded `dsse.payload`; envelope paths start at the file root. "All" means
 the property is part of the format at every level.
 
+*Tested by* gives each property's trust tier (see *Three trust tiers*): the tests that
+read it, *declaration* (signed and shown, never tested), or *untrusted* (unsigned, never
+tested).
+
 **0.4.0: core format**
 
-| Property | Description | Stage | Path | Required | Default | Lands | Real use | Level |
-|---|---|---|---|---|---|---|---|---|
-| `dsse` | The standard DSSE envelope: the signed body and its signatures | all | envelope | required | none | 0.4.0 | M1 | all |
-| `payloadType` | Selects the format version; covered by the signature | all | `dsse.payloadType` | required | none | 0.4.0 | M1 | all |
-| `payload` | Strict base64 of the exact signed body bytes, which decode to a JSON object | all | `dsse.payload` | required | none | 0.4.0 | M1 | all |
-| `signatures` | Signatures over the body; `BDR` passes only with exactly one valid entry | all | `dsse.signatures[]` | required | none | 0.4.0 | M1 | all |
-| `keyid` | `sha-256:` plus the hash of the signer's public key | all | `dsse.signatures[].keyid` | optional | none | 0.4.0 | M1 | all |
-| `sig` | ed25519 signature over the PAE of the body bytes | all | `dsse.signatures[].sig` | optional | none | 0.4.0 | M1 | all |
-| `pubkey` | The signer's public key, unsigned; `BDR` requires `keyid` to derive from it | all | envelope | optional | none | 0.4.0 | M1 | all |
-| `hash_alg` | The algorithm of this entry's digest | all | `subject[].hash_alg` | optional | none | 0.4.0 | M1 | all |
+| Property | Description | Stage | Path | Required | Default | Tested by | Lands | Real use | Level |
+|---|---|---|---|---|---|---|---|---|---|
+| `dsse` | The standard DSSE envelope: the signed body and its signatures | all | envelope | required | none | `BDR` | 0.4.0 | M1 | all |
+| `payloadType` | Selects the format version; covered by the signature | all | `dsse.payloadType` | required | none | `BDR` | 0.4.0 | M1 | all |
+| `payload` | Strict base64 of the exact signed body bytes, which decode to a JSON object | all | `dsse.payload` | required | none | `BDR` | 0.4.0 | M1 | all |
+| `signatures` | Signatures over the body; `BDR` passes only with exactly one valid entry | all | `dsse.signatures[]` | required | none | `BDR` | 0.4.0 | M1 | all |
+| `keyid` | `sha-256:` plus the hash of the signer's public key | all | `dsse.signatures[].keyid` | optional | none | `BDR`, `chain`, `keyconsist`, `signer` | 0.4.0 | M1 | all |
+| `sig` | ed25519 signature over the PAE of the body bytes | all | `dsse.signatures[].sig` | optional | none | `BDR` | 0.4.0 | M1 | all |
+| `pubkey` | The signer's public key, unsigned; `BDR` requires `keyid` to derive from it | all | envelope | optional | none | `BDR`, `signer` | 0.4.0 | M1 | all |
+| `hash_alg` | The algorithm of this entry's digest | all | `subject[].hash_alg` | optional | none | `content` | 0.4.0 | M1 | all |
+| `untrusted` | Metadata that nothing checks: unsigned, never tested, never part of `ref` | all | envelope | optional | none | untrusted | 0.4.0 | M1 | all |
+| `asexec_version` | The asexec release that wrote the manifest, for diagnostics only | all | `untrusted.asexec_version` | optional | none | untrusted | 0.4.0 | M1 | all |
 
 Changed in 0.4.0: `payloadType` and `payload` move into `dsse`; `signature` is replaced
 by `dsse.signatures[]` and `pubkey`; `ceiling` moves to the wrapper; body-level `hash_alg`
@@ -126,39 +133,57 @@ is no longer read; `subject[].name` becomes a relative path to one file.
 
 **0.4.0: the claim record**
 
-| Property | Description | Stage | Path | Required | Default | Lands | Real use | Level |
-|---|---|---|---|---|---|---|---|---|
-| `plan` | The plan the claim will be tested against, by digest; asexec never parses it | prereg | `plan` | optional | none | 0.4.0 | M1 | P2, P3 |
-| `media_type` | The plan document's media type | prereg | `plan.media_type` | optional | none | 0.4.0 | M1 | P2, P3 |
-| `digest` | The plan document's digest, in the subject entry's form | prereg | `plan.digest` | optional | none | 0.4.0 | M1 | P2, P3 |
-| `hash_alg` | The algorithm of `plan.digest` | prereg | `plan.hash_alg` | optional | none | 0.4.0 | M1 | P2, P3 |
-| `label` | A human-readable name for the plan | prereg | `plan.label` | optional | none | 0.4.0 | M1 | P2, P3 |
-| `items` | What the claim commits to deliver, each accounted for by a postreg | prereg | `items[]` | optional | none | 0.4.0 | M1 | P3 |
-| `id` | The item's identifier, matched by a postreg's `item_id` | prereg | `items[].id` | optional | none | 0.4.0 | M1 | P3 |
-| `kind` | Free-text kind (a run, an ablation, a search); never verified | prereg | `items[].kind` | optional | none | 0.4.0 | M1 | P3 |
-| `item_id` | Which committed item this postreg accounts for | postreg | `item_id` | optional | none | 0.4.0 | M1 | P3 |
-| `status` | `reported` \| `excluded` \| `blocked`: what happened to the item | postreg | `status` | optional | none | 0.4.0 | M1 | P3 |
-| `evidence` | Digests of what backs this postreg | postreg | `evidence[]` | optional | none | 0.4.0 | M1 | P2, P3 |
-| `media_type` | This evidence's media type | postreg | `evidence[].media_type` | optional | none | 0.4.0 | M1 | P2, P3 |
-| `digest` | This evidence's digest, in the subject entry's form | postreg | `evidence[].digest` | optional | none | 0.4.0 | M1 | P2, P3 |
-| `hash_alg` | The algorithm of this entry's digest | postreg | `evidence[].hash_alg` | optional | none | 0.4.0 | M1 | P2, P3 |
-| `uri` | Where this evidence can be fetched, if anywhere | postreg | `evidence[].uri` | optional | none | 0.4.0 | M1 | P2, P3 |
+| Property | Description | Stage | Path | Required | Default | Tested by | Lands | Real use | Level |
+|---|---|---|---|---|---|---|---|---|---|
+| `plan` | The plan the claim will be tested against, by digest; asexec never parses it | prereg | `plan` | optional | none | `content` | 0.4.0 | M1 | P2, P3 |
+| `name` | The plan document's relative path, resolved under `--artifacts` | prereg | `plan.name` | optional | none | `content` | 0.4.0 | M1 | P2, P3 |
+| `digest` | The plan document's digest, in the subject entry's form | prereg | `plan.digest` | optional | none | `content` | 0.4.0 | M1 | P2, P3 |
+| `hash_alg` | The algorithm of `plan.digest` | prereg | `plan.hash_alg` | optional | none | `content` | 0.4.0 | M1 | P2, P3 |
+| `media_type` | The plan document's media type | prereg | `plan.media_type` | optional | none | declaration | 0.4.0 | M1 | P2, P3 |
+| `label` | A human-readable name for the plan | prereg | `plan.label` | optional | none | declaration | 0.4.0 | M1 | P2, P3 |
+| `items` | What the claim commits to deliver, each accounted for by a postreg | prereg | `items[]` | optional | none | `complete` | 0.4.0 | M1 | P3 |
+| `id` | The item's identifier, matched by a postreg's `item_id` | prereg | `items[].id` | optional | none | `complete` | 0.4.0 | M1 | P3 |
+| `kind` | Free-text kind (a run, an ablation, a search) | prereg | `items[].kind` | optional | none | declaration | 0.4.0 | M1 | P3 |
+| `item_id` | Which committed item this postreg accounts for | postreg | `item_id` | optional | none | `complete` | 0.4.0 | M1 | P3 |
+| `status` | `reported` \| `excluded` \| `blocked`: what happened to the item | postreg | `status` | optional | none | `complete` | 0.4.0 | M1 | P3 |
+| `evidence` | Digests of what backs this postreg | postreg | `evidence[]` | optional | none | `content` | 0.4.0 | M1 | P2, P3 |
+| `name` | This evidence's relative path, resolved under `--artifacts` | postreg | `evidence[].name` | optional | none | `content` | 0.4.0 | M1 | P2, P3 |
+| `digest` | This evidence's digest, in the subject entry's form | postreg | `evidence[].digest` | optional | none | `content` | 0.4.0 | M1 | P2, P3 |
+| `hash_alg` | The algorithm of this entry's digest | postreg | `evidence[].hash_alg` | optional | none | `content` | 0.4.0 | M1 | P2, P3 |
+| `media_type` | This evidence's media type | postreg | `evidence[].media_type` | optional | none | declaration | 0.4.0 | M1 | P2, P3 |
+| `uri` | Where this evidence can be fetched, if anywhere | postreg | `evidence[].uri` | optional | none | declaration | 0.4.0 | M1 | P2, P3 |
+
+`content` checks `plan` and each `evidence` entry the way it checks a subject entry: by
+`name` under `--artifacts`, against `digest` under the entry's own `hash_alg`.
 
 **0.5.0 and later**
 
-| Property | Description | Stage | Path | Required | Default | Lands | Real use | Level |
-|---|---|---|---|---|---|---|---|---|
-| `plants` | A commitment to a hidden set of planted counterexamples | prereg | `commitments.plants` | optional | none | 0.5.0 | M2 | P3 |
-| `alg` | The commitment's encoding (spelling not decided) | prereg | `commitments.plants.alg` | optional | none | 0.5.0 | M2 | P3 |
-| `root` | The root over the plants' salted hashes | prereg | `commitments.plants.root` | optional | none | 0.5.0 | M2 | P3 |
-| `count` | How many plants are committed | prereg | `commitments.plants.count` | optional | none | 0.5.0 | M2 | P3 |
-| `presented_by` | Who presents the claim; checked against the key list's roles | prereg | `presented_by` | optional | none | 0.5.0 | M2 | P3 |
-| Lab run record: a new `phase` value, not decided; may be outside asexec scope | A lab's own signed record of its monitor run | run record | `phase` | optional | none | 0.6.0 | M3 | P3 |
-| `attests` | Part of the lab run record: the `ref` of the prereg the run was performed under | run record | `attests` | optional | none | 0.6.0 | M3 | P3 |
-| `origin` | `self` \| `extracted`: whether the promiser or an outsider wrote the record | prereg | `origin` | optional | none | 0.6.0 | M3 | P4 |
+| Property | Description | Stage | Path | Required | Default | Tested by | Lands | Real use | Level |
+|---|---|---|---|---|---|---|---|---|---|
+| `plants` | A commitment to a hidden set of planted counterexamples | prereg | `commitments.plants` | optional | none | a reveal test (not named) | 0.5.0 | M2 | P3 |
+| `alg` | The commitment's encoding (spelling not decided) | prereg | `commitments.plants.alg` | optional | none | a reveal test | 0.5.0 | M2 | P3 |
+| `root` | The root over the plants' salted hashes | prereg | `commitments.plants.root` | optional | none | a reveal test | 0.5.0 | M2 | P3 |
+| `count` | How many plants are committed | prereg | `commitments.plants.count` | optional | none | a reveal test | 0.5.0 | M2 | P3 |
+| `presented_by` | Who presents the claim; checked against the key list's roles | prereg | `presented_by` | optional | none | `signer`, with the key list | 0.5.0 | M2 | P3 |
+| Lab run record: a new `phase` value, not decided; may be outside asexec scope | A lab's own signed record of its monitor run | run record | `phase` | optional | none | `order`, extended | 0.6.0 | M3 | P3 |
+| `attests` | Part of the lab run record: the `ref` of the prereg the run was performed under | run record | `attests` | optional | none | `order`, extended | 0.6.0 | M3 | P3 |
+| `origin` | `self` \| `extracted`: whether the promiser or an outsider wrote the record | prereg | `origin` | optional | none | declaration | 0.6.0 | M3 | P4 |
 
 Not properties: the reveal sample is chosen by a rule, not a field; and the role key list
 is a file beside the manifests.
+
+**Existing properties, by tier (from 0.4.0)**
+
+| Property | Tested by |
+|---|---|
+| `phase` | `chain`, `keyconsist`, `complete` (which manifests join a commitment) |
+| `fulfills` | `chain`, `keyconsist`, `complete` |
+| `prev_hash` | `chain` |
+| `due` | `timely`, `complete` |
+| `subject[].name`, `subject[].digest` | `content` |
+| `anchor.floor` and its fields | `floor`, `order` |
+| `ceiling` and its fields (envelope) | `ceiling`, `order`, `timely`, `complete` |
+| `schema_id`, `predicateType`, `target`, `declaration`, `identity`, `provenance`, `repro_recipe`, `notes` | declaration |
 
 **Tests**
 
@@ -178,7 +203,8 @@ is a file beside the manifests.
   `DSSEv1`; `signatures: [...]` (one entry for now). The verifier checks the stored
   bytes and never re-canonicalizes. `ref` = digest of the payload bytes.
 - The file is an asexec wrapper around that standard envelope: `dsse`, plus the unsigned
-  `ceiling` and `pubkey` (see *Wrapper* below).
+  `ceiling`, `pubkey` and `untrusted` (see *Wrapper* below).
+- `untrusted`: a section for metadata nothing checks, starting with `asexec_version`.
 - `MANIFEST_PREDICATE_TYPE` → a URL the project controls.
 - Body field `schema_version` is now `schema_id`, since its value has no version in it.
   (Done ahead of 0.4.0.)
@@ -266,7 +292,8 @@ ref        = sha-256(body bytes)
     "signatures": [ { "keyid": "…", "sig": "…" } ]
   },
   "ceiling": { … },                              // optional, unsigned; nonce = ref
-  "pubkey": "…"                                  // unsigned; must derive signatures[0].keyid
+  "pubkey": "…",                                 // unsigned; must derive signatures[0].keyid
+  "untrusted": { "asexec_version": "0.4.0" }     // optional, unsigned, never tested
 }
 ```
 
@@ -274,7 +301,7 @@ Rules that follow:
 
 - Decode `payload` with strict base64, so each set of body bytes has one spelling.
 - Read every field the tests check from the verified body bytes, never from another copy in
-  the file.
+  the file, and never from `untrusted`.
 - Keep rejecting duplicate JSON keys in the decoded body: parsers disagree on which value
   wins, so two verifiers could read different fields from the same signed bytes.
 
@@ -289,6 +316,10 @@ adds sits outside it, in the wrapper:
 - `pubkey` needs no signature: `BDR` requires `signatures[0].keyid` to derive from it, so
   a substituted key fails. With `signer`, `--trusted-keys` additionally decides which
   keys are accepted.
+- `untrusted` is neither signed nor bound: anyone can edit it after signing. That is
+  what it is for. Unsigned isn't the same as untrusted, though: `ceiling` and `pubkey` are
+  unsigned but checked, by the witness's signature and by `keyid`. `untrusted` is the one
+  part of the file that nothing checks.
 
 **Verify**
 
@@ -302,9 +333,16 @@ adds sits outside it, in the wrapper:
   decodes to a JSON object, and a `signatures` list). Everything else is judged by tests.
 - `--json`: a stable report (the claim-graph export reads it).
 - Unknown signed fields are shown as unverified content, never dropped.
+- `untrusted` is printed under its own heading saying nothing in it was checked. No test
+  reads it, and it never affects `ref` or the verify code.
+
+**Docs:** `docs/VERIFICATION.md` gains a *Declarations* list (signed properties that are
+shown but never tested) and an *Untrusted* section.
 
 **Tests:** golden vectors, regenerated for the DSSE format, plus tests for the items
-above. No broader test program.
+above. A tier check: every property the signing models can write appears in
+`docs/VERIFICATION.md`: under some test's *Examines*, in *Declarations*, or in
+*Untrusted*. A property nothing accounts for fails CI. No broader test program.
 
 **Release:** betas first (see *0.4.0 betas* below). Once `0.4.0` is on PyPI, yank every
 `0.3.x` release and every `0.4.0` beta, so a plain `pip install asexec` never picks
@@ -467,6 +505,13 @@ Kept here so they are not re-litigated:
   be a ceiling and a witness cannot be a floor.
 - **Subjects are explicit.** A subject lists files, each hashed exactly as listed. No
   directory hash infers what a tree contains, so a manifest claims only what it names.
+- **Three trust tiers.** Every property is exactly one of: *tested* (listed under a test's
+  *Examines* in `docs/VERIFICATION.md`), a *declaration* (signed and shown, never tested:
+  what was promised, which no test can judge), or *untrusted* (in the unsigned `untrusted`
+  section, never tested, never part of `ref`). A new property names the test that reads it
+  or joins the declarations list. The manifest stays organized by meaning, not by test:
+  tests and properties are many-to-many, and keying the format by test would make every
+  new test a format change.
 - **Structure is minimal; tests set the bar.** `verify` treats a manifest as malformed
   only when it can't read it. Every property past that frame is optional: absent, or an
   empty list, is structurally fine, and no property is conditional on another. Whether

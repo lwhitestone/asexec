@@ -29,8 +29,9 @@ weaker rules.
 signature fail. For example:
 
 ```
-application/vnd.asexec+json      the 0.4.0 format
-application/vnd.asexec.v2+json   a later format
+application/vnd.asexec+json             the 0.4.0 format
+application/vnd.asexec.v2+json          a later format
+application/vnd.asexec.0.4.0b1+json     a beta: never accepted by a release
 ```
 
 The other candidates don't work:
