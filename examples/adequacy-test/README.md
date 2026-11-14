@@ -54,10 +54,84 @@ reveal.
 
 | Fault | Verify code | Result |
 |---|---|---|
-| None (honest run) | `BDR=PASS chain=PASS content=PASS keyconsist=PASS` | baseline; the monitor catches 34 of 40 plants |
+| No fault | `BDR=PASS chain=PASS content=PASS keyconsist=PASS` | baseline; the monitor catches 34 of 40 plants |
 | Plant set swapped after the monitor ran | `content=FAIL` | **caught**: the digests no longer match |
 | Item S2 silently dropped | all `PASS`, still `[FULFILLED]` | **missed**: the item list lives in free text, so nothing counts it. Needs `items` and `complete` (0.4.0) |
 | Plants committed after the monitor ran | all `PASS` | **missed**: nothing relates the commitment's time to the run's. Needs `order` (0.4.0) and a time bound on the run from the lab's side |
+
+## The schema it targets
+
+Today the item list, `item_id` and `status` sit in free text, and the plant commitment is
+an ordinary subject. The planned schema gives each its own field. The sketch below is
+illustrative: [`ROADMAP.md`](../../ROADMAP.md#new-properties) holds the definitive list,
+with each property's tier, version and promise level. Every property is optional; the
+tests decide whether a manifest meets a bar.
+
+**Prereg** (signed body; signed before access and before the monitor runs):
+
+```jsonc
+{
+  "phase": "prereg",
+  "target": "Claim 5: models never attempted to disable or evade their monitoring …",
+  "due": "2099-01-01T00:00:00Z",                       // timely, complete
+  "plan": {                                            // 0.4.0; asexec never parses it
+    "name": "plan.md",                                 // content
+    "hash_alg": "sha-256",                             // content
+    "digest": { "sha-256": "…" },                      // content
+    "media_type": "text/markdown",                     // declared, never tested
+    "label": "Claim 5 plan"                            // declared, never tested
+  },
+  "items": [                                           // 0.4.0; complete
+    { "id": "S1", "kind": "search" },
+    { "id": "S2", "kind": "experiment" },
+    { "id": "A1", "kind": "adequacy" }                 // kind: declared, never tested
+  ],
+  "commitments": {
+    "plants": {                                        // 0.5.0; a reveal test (not named)
+      "alg": "…",                                      // encoding not decided
+      "root": "…",                                     // over the plants' salted hashes
+      "count": 40
+    }
+  },
+  "presented_by": "…",                                 // 0.5.0; role (name not decided)
+  "anchor": { "floor": { "floor_type": "drand", … } }  // not before
+}
+```
+
+**Postreg** (one per item, chained), here for A1:
+
+```jsonc
+{
+  "phase": "postreg",
+  "fulfills": "sha-256:…",                             // the prereg's ref
+  "prev_hash": "sha-256:…",                            // the S2 postreg's ref
+  "item_id": "A1",                                     // 0.4.0; complete
+  "status": "reported",                                // 0.4.0; reported | excluded | blocked
+  "evidence": [                                        // 0.4.0; content
+    {
+      "name": "flags.json",
+      "hash_alg": "sha-256",
+      "digest": { "sha-256": "…" },
+      "media_type": "application/json"                 // declared, never tested
+    },
+    {
+      "name": "plants.reveal.json",
+      "hash_alg": "sha-256",
+      "digest": { "sha-256": "…" },
+      "media_type": "application/json",
+      "uri": "https://…"                               // optional; declared, never tested
+    }
+  ],
+  "anchor": { "floor": { "floor_type": "drand", … } }  // not before
+}
+```
+
+Each manifest's envelope carries `dsse`, `pubkey`, and optionally a Roughtime `ceiling`
+(not after) and an `untrusted` section. Two tests relate the times: `order` (0.4.0)
+checks that the prereg's ceiling precedes each postreg's floor. `plantorder` (0.6.0, name
+not decided) checks that the plant commitment's ceiling precedes the floor of the lab's
+own signed record of its monitor run. That record is a new kind, not yet designed, and
+may fall outside asexec's scope.
 
 ## Out of scope
 

@@ -179,7 +179,7 @@ def verify(manifests: list[Path], art: Path) -> tuple[str, str]:
 
 
 def build(work: Path, rng_seed: int = SEED) -> dict:
-    """The honest run: commit, monitor, deliver, reveal."""
+    """One run without faults: commit, monitor, deliver, reveal."""
     rng = random.Random(rng_seed)
     art = work / "artifacts"
     art.mkdir(parents=True)
@@ -228,13 +228,13 @@ def main() -> int:
     root.mkdir(parents=True, exist_ok=True)
     rows = []
     try:
-        # Honest run.
-        run = build(root / "honest")
+        # Baseline: no fault.
+        run = build(root / "baseline")
         caught = sum(1 for p in run["plants"] if MONITOR_PATTERN.search(p["text"]))
         code, state = verify([run["pre"], run["s1"], run["s2"], run["a1"]], run["art"])
         print(f"monitor caught {caught}/{N_PLANTS} plants ({run['flagged']} flags)")
         print(f"reveal matches commitment: {reveal_matches(run['art'])}")
-        rows.append(("honest run", code, state, "baseline"))
+        rows.append(("no fault", code, state, "baseline"))
 
         # Fault 1: the plant set is swapped after the monitor ran.
         f1 = build(root / "swap")
@@ -273,7 +273,7 @@ def main() -> int:
         )
 
         # Fault 3: the plants are committed after the monitor ran. Offline, with no lab-side
-        # time anchor, the manifests are indistinguishable from the honest run's.
+        # time anchor, the manifests are indistinguishable from the baseline's.
         f3 = build(root / "late")
         f3["pre"].unlink()
         pre_late = prereg(f3["key"], f3["art"], root / "late" / "prereg-late.json")

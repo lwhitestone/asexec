@@ -245,7 +245,7 @@ beta.
 The claim record's fields (see *New properties*) are in the first beta, in the adequacy
 test's shapes. [`examples/adequacy-test`](examples/adequacy-test) already shows on 0.3.19
 the gaps they close: an item silently dropped still shows `[FULFILLED]`, and plants
-committed after the run can't be told apart from an honest run.
+committed after the run pass the same tests as plants committed before it.
 
 **Release gate.** 0.4.0 is released after two dry runs, both on the final beta, and before
 any run meant for publication:
