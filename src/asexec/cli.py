@@ -342,7 +342,7 @@ def cmd_verify(args) -> int:
             print(f"  - {line}")
 
     print(f"\n{report['code']}")
-    print(f"Verified at {report['verified_at']}")
+    print(f"Checked at {report['checked_at']}")
     return 0 if report["ok"] else 2
 
 

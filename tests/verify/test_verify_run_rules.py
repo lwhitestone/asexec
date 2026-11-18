@@ -57,7 +57,7 @@ def test_code__one_token_per_requested_test_sorted_by_name(scenario):
 
 
 def test_code__one_failing_token_makes_the_run_not_ok(scenario):
-    report = scenario.verify("floor")  # nothing carries a floor: vacuous, so FAIL
+    report = scenario.verify("floor")  # nothing carries a floor: nothing to examine, so FAIL
     assert report["code"] == "asexec-verify/1 BDR=PASS floor=FAIL"
     assert report["ok"] is False
 

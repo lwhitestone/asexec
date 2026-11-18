@@ -134,7 +134,7 @@ def test_floor__fail__5_signature_verifies_for_round(sc):
 
 
 @pytest.mark.parametrize("absent", ["missing", "null-floor", "null-anchor"])
-def test_floor__fail__vacuous_no_manifest_carries_one(scenario, absent):
+def test_floor__fail__empty_no_manifest_carries_one(scenario, absent):
     """floor (*): no manifest carries an anchor.floor (missing or null), so the test fails."""
     if absent != "missing":
         path = {"null-floor": "payload.anchor.floor", "null-anchor": "payload.anchor"}[absent]

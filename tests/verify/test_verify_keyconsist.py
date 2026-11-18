@@ -44,7 +44,7 @@ def test_keyconsist__fail__1_valid_postreg_has_prereg_keyid(scenario):
     assert report["commitments"][0]["key_consistent"] is False
 
 
-def test_keyconsist__fail__vacuous_no_postreg_references_a_prereg(scenario):
+def test_keyconsist__fail__empty_no_postreg_references_a_prereg(scenario):
     """keyconsist (*): a prereg no postreg references has no receipts to key-check."""
     for name in ("postreg0", "postreg1", "postreg2"):
         scenario.drop(name)

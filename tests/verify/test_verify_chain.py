@@ -85,7 +85,7 @@ def test_chain__fail__3_no_prev_hash_shared__fork(scenario):
     assert scenario.code("chain") == FAIL
 
 
-def test_chain__fail__vacuous_no_counted_postreg(scenario):
+def test_chain__fail__empty_no_counted_postreg(scenario):
     """chain (*): a prereg with no counted postreg has nothing to chain-check."""
     for name in ("postreg0", "postreg1", "postreg2"):
         scenario.drop(name)

@@ -16,7 +16,7 @@ HERE = Path(__file__).parent
 DOC = HERE.parents[1] / "docs" / "VERIFICATION.md"
 
 _TEST_NAME = re.compile(
-    r"^test_(?P<name>[A-Za-z_]+?)__(?P<kind>pass|fail)__(?P<item>\d+|all|vacuous)_?"
+    r"^test_(?P<name>[A-Za-z_]+?)__(?P<kind>pass|fail)__(?P<item>\d+|all|empty)_?"
 )
 _ITEM = re.compile(r"^(\d+)\. ")
 
@@ -80,7 +80,7 @@ def test_doc_coverage__every_numbered_test_names_a_doc_item():
     assert sorted(named - wanted) == []
 
 
-def test_doc_coverage__every_catalog_test_has_pass_all_and_vacuous_fail():
+def test_doc_coverage__every_catalog_test_has_pass_all_and_empty_fail():
     for name in TEST_CATALOG:
         assert (name, "pass", "all") in SUITE, name
-        assert (name, "fail", "vacuous") in SUITE, name
+        assert (name, "fail", "empty") in SUITE, name

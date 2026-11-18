@@ -324,7 +324,7 @@ def test_verify_ends_with_code_then_time(prereg, capsys):
     assert run("verify", prereg, "--tests", "BDR") == 0
     lines = capsys.readouterr().out.splitlines()
     assert lines[-2] == "asexec-verify/1 BDR=PASS"
-    assert re.fullmatch(r"Verified at \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", lines[-1])
+    assert re.fullmatch(r"Checked at \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", lines[-1])
 
 
 def test_verify_prints_each_commitments_signer(key, prereg, capsys):

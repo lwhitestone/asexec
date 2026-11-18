@@ -160,7 +160,7 @@ def test_content__pass__6_digest_hex_accepts_either_case_and_whitespace(scenario
     assert scenario.code("content") == PASS
 
 
-def test_content__fail__vacuous_no_artifacts_provided(scenario):
+def test_content__fail__empty_no_artifacts_provided(scenario):
     """content (*): without --artifacts, nothing is examined."""
     report = scenario.verify("content", artifacts=False)
     assert report["code"] == FAIL
@@ -168,7 +168,7 @@ def test_content__fail__vacuous_no_artifacts_provided(scenario):
 
 
 @pytest.mark.parametrize("absent", ["missing", "null"])
-def test_content__fail__vacuous_no_manifest_has_a_subject(scenario, absent):
+def test_content__fail__empty_no_manifest_has_a_subject(scenario, absent):
     """content (*): with --artifacts but no manifest carrying a subject (missing or null),
     nothing is examined."""
     if absent == "missing":

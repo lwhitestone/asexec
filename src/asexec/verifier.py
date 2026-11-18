@@ -300,7 +300,7 @@ def verify_paths(
 
     ``servers`` is the pinned Roughtime witness map for ``ceiling`` (default:
     ``roughtime.SERVERS``). ``now`` (default: the current time) is the moment commitment
-    states are judged at, and is reported as ``verified_at``.
+    states are judged at, and is reported as ``checked_at``.
     """
     now = time.time() if now is None else now
     files = _expand(paths)
@@ -412,7 +412,7 @@ def verify_paths(
         "code": code,
         "ok": ok,
         "ceiling_trust": ceiling_trust,
-        "verified_at": _utc_timestamp(now),
+        "checked_at": _utc_timestamp(now),
     }
 
 

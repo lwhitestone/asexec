@@ -32,8 +32,8 @@ A notarization-only tool (proving a receipt wasn't tampered with *after* publica
 
 | Term | Definition |
 |---|---|
-| **Pre-registration** | A signed manifest, published *before* an eval run begins, declaring: harness identity (hash), eval/benchmark identity (hash), target model identity (hash or model ID), and a **disclosure commitment** (see §6.3). |
-| **Receipt** | A signed manifest, published *after* a run completes, containing content hashes of the harness, eval set, model identity, and raw output/transcript, plus a reference back to the pre-registration it fulfills. |
+| **Pre-registration** (`prereg`) | A signed manifest, published *before* an eval run begins, declaring: harness identity (hash), eval/benchmark identity (hash), target model identity (hash or model ID), and a **disclosure commitment** (see §6.3). |
+| **Receipt** (`postreg`) | A signed manifest, published *after* a run completes, containing content hashes of the harness, eval set, model identity, and raw output/transcript, plus a reference back to the pre-registration it fulfills. |
 | **Key** | A pseudonymous keypair generated and held by the evaluator. No CA, no identity binding required. Compromise/secrecy is the evaluator's standard key-management responsibility (out of scope to solve — this is ordinary signing-key hygiene). |
 | **Disclosure commitment** | The specific promise made at pre-registration time about what will be published and by when. This is the mechanism that makes gaps detectable (§6.3). |
 | **Timestamp anchor** | A method of proving a manifest existed at or before a certain point in time, without trusting a third-party timestamp authority — done by embedding a recent public-randomness value (e.g., a blockchain block hash or NIST randomness beacon output) into the signed manifest. |

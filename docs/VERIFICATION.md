@@ -16,8 +16,8 @@ asexec verify <manifest|dir>... --tests <name>[,<name>...] [--artifacts <dir>]
 paths from the envelope root, e.g. `payload.anchor.floor.round`, `signature.keyid`,
 `ceiling.nonce`. `[]` denotes array elements: `payload.subject[].name`.
 
-**Roles.** A *prereg* is a manifest with `payload.phase == "prereg"`; a *postreg* has
-`payload.phase == "postreg"`. `ref(m)` is `sha-256:<hex>` over the canonical bytes of
+**Phases.** A manifest's phase is its `payload.phase`. A *prereg* is a manifest with
+`payload.phase == "prereg"`; a *postreg* has `payload.phase == "postreg"`. `ref(m)` is `sha-256:<hex>` over the canonical bytes of
 `m.payload`.
 
 **Hex.** A value required to be hex is a string that `bytes.fromhex` accepts: an even
@@ -46,7 +46,7 @@ tests that examine it.
   including `{}`, `[]`, `""`, `false` and `0`, is present. A property whose path runs
   through a present non-object (e.g. `payload.anchor` is `[]`) is present, and malformed.
 - (\*) If no provided manifest or commitment has the examined properties, the test is
-  vacuous and is judged `FAIL`. One that lacks them is not examined and cannot fail the
+  empty (nothing to examine) and is judged `FAIL`. One that lacks them is not examined and cannot fail the
   test; it also does not count toward passing.
 - Verification is offline.
 - A file is **malformed** if it cannot be read, is not a JSON object, nests more than 64
@@ -68,7 +68,7 @@ the reasons this document lists.
 | `=== tests ===` | always | One line per requested test: its result and a short reason. |
 | `=== ceiling trust … ===` | if a ceiling verified | Which witness you are trusting, and for what time. |
 | code | always | The [code](#conventions). |
-| `Verified at <time>` | always | When the run happened, in UTC to the second: the moment commitment states were judged against. Not part of the code. |
+| `Checked at <time>` | always | When the run happened, in UTC to the second: the moment commitment states were judged against. Not part of the code. |
 
 Exit status is `0` if every token in the code is `PASS`, else `2`. Commitment states never
 affect either: a run can show `ELAPSED-NO-RECEIPT` and still exit `0`.
@@ -95,7 +95,7 @@ $ asexec verify prereg.json postreg-1.json postreg-2.json --tests BDR,chain,keyc
   ✓ keyconsist=PASS  (1/1 commitment(s) ok)
 
 asexec-verify/1 BDR=PASS chain=PASS keyconsist=PASS
-Verified at 2026-12-31T23:59:59Z
+Checked at 2026-12-31T23:59:59Z
 ```
 
 ## Summary
@@ -110,7 +110,7 @@ Verified at 2026-12-31T23:59:59Z
 | [`keyconsist`](#keyconsist) | `payload.phase`<br>`payload.fulfills`<br>`signature.pubkey`<br>`signature.sig`<br>`signature.keyid` | every validly signed postreg referencing the prereg has the prereg's `signature.keyid` |
 
 (\*) per [Run rules](#conventions): examined properties absent from every manifest or
-commitment make the test vacuous, judged `FAIL`.
+commitment leave the test with nothing to examine, judged `FAIL`.
 
 ---
 
@@ -134,7 +134,7 @@ Bedrock. Mandatory in every run.
    `payload`.
 3. `signature.keyid == "sha-256:" + sha256(bytes.fromhex(signature.pubkey)).hexdigest()`.
 
-**Vacuous reason:** `no manifests to verify`.
+**Nothing to examine:** `no manifests to verify`.
 
 **Does not establish:** who signed (internal consistency only); that `payload` is a
 well-formed asexec body (any validly signed object `payload` passes, whatever it holds).
@@ -170,7 +170,7 @@ Output (from `=== tests ===` on), exit status `0`:
   ✓ BDR=PASS  (1/1 manifest(s) ok)
 
 asexec-verify/1 BDR=PASS
-Verified at 2026-12-31T23:59:59Z
+Checked at 2026-12-31T23:59:59Z
 ```
 
 ---
@@ -199,7 +199,7 @@ Roughtime witness: the manifest was created no later than time T.
    - the Merkle path (`PATH`, `INDX`) roots `ceiling.nonce` at `SREP.ROOT`;
    - `DELE.MINT <= SREP.MIDP <= DELE.MAXT`.
 
-**Vacuous reason:** `requested but no manifest carries a ceiling witness`.
+**Nothing to examine:** `requested but no manifest carries a ceiling witness`.
 
 **Not examined:** a manifest that is malformed (see Run rules).
 
@@ -240,7 +240,7 @@ Output (from `=== tests ===` on), exit status `0`:
   - prereg.json: ceiling witnessed by int08h-Roughtime at … - you are trusting …
 
 asexec-verify/1 BDR=PASS ceiling=PASS
-Verified at 2026-12-31T23:59:59Z
+Checked at 2026-12-31T23:59:59Z
 ```
 
 ---
@@ -267,7 +267,7 @@ A postreg is **counted** for a prereg if it meets the [counting rule](#counting-
    of the same prereg (no gaps).
 3. No `ref` appears as `payload.prev_hash` of more than one counted postreg (no forks).
 
-**Vacuous reason:** `requested but no commitment has receipts to chain-check`.
+**Nothing to examine:** `requested but no commitment has receipts to chain-check`.
 
 **Does not establish:** completeness. Dropping the last postreg(s) of a chain is not
 detectable.
@@ -302,7 +302,7 @@ Output (from `=== tests ===` on), exit status `0`:
   ✓ chain=PASS  (1/1 chain(s) ok)
 
 asexec-verify/1 BDR=PASS chain=PASS
-Verified at 2026-12-31T23:59:59Z
+Checked at 2026-12-31T23:59:59Z
 ```
 
 ---
@@ -330,7 +330,7 @@ Subject digests recomputed from the original artifacts.
 6. The recomputed digest of the file or directory under `hash_alg` equals the bytes of
    `digest[hash_alg]`, in either hex case.
 
-**Vacuous reason:** `requested but no content could be checked (need --artifacts and a
+**Nothing to examine:** `requested but no content could be checked (need --artifacts and a
 manifest with a subject)`.
 
 **Entry failure reasons** (shown per entry in the report): `malformed subject entry`,
@@ -375,7 +375,7 @@ Output (from `=== tests ===` on), exit status `0`:
   ✓ content=PASS  (1/1 subject(s) ok)
 
 asexec-verify/1 BDR=PASS content=PASS
-Verified at 2026-12-31T23:59:59Z
+Checked at 2026-12-31T23:59:59Z
 ```
 
 ---
@@ -399,7 +399,7 @@ drand beacon: the manifest was created no earlier than time T.
 5. `signature` is a valid BLS12-381 signature over `sha256(round as 8-byte big-endian)`
    under the pinned group public key.
 
-**Vacuous reason:** `requested but no manifest carries an anchor.floor`.
+**Nothing to examine:** `requested but no manifest carries an anchor.floor`.
 
 **Not examined:** a manifest that is malformed.
 
@@ -440,7 +440,7 @@ Output (from `=== tests ===` on), exit status `0`:
   ✓ floor=PASS  (1/1 floor(s) ok)
 
 asexec-verify/1 BDR=PASS floor=PASS
-Verified at 2026-12-31T23:59:59Z
+Checked at 2026-12-31T23:59:59Z
 ```
 
 ---
@@ -463,7 +463,7 @@ Whether a commitment's postregs were signed by its own key.
 
 A postreg with an invalid signature is not judged here (it fails `BDR`).
 
-**Vacuous reason:** `requested but no commitment has receipts to key-check`.
+**Nothing to examine:** `requested but no commitment has receipts to key-check`.
 
 **Example** (all requirements pass)
 
@@ -490,7 +490,7 @@ Output (from `=== tests ===` on), exit status `0`:
   ✓ keyconsist=PASS  (1/1 commitment(s) ok)
 
 asexec-verify/1 BDR=PASS keyconsist=PASS
-Verified at 2026-12-31T23:59:59Z
+Checked at 2026-12-31T23:59:59Z
 ```
 
 ---
@@ -512,7 +512,7 @@ that `ref` is **rejected**. It is listed under each such commitment with its rea
 never counted toward fulfillment or `chain`.
 
 A manifest is identified by its `ref`. Copies of a postreg, with the same `ref` and
-`signature.keyid`, are one receipt: counted, rejected or notarization-only once, however
+`signature.keyid`, count as one: counted, rejected or notarization-only once, however
 many are provided. Copies of a prereg, with the same `ref` and `signature.keyid`, are one
 commitment.
 
@@ -527,7 +527,11 @@ One per commitment, shown in the `=== commitments ===` block of the report (see
 | `open` | no counted postreg, and `payload.due` is absent or in the future |
 | `elapsed-no-receipt` | no counted postreg, and `payload.due` is at or before now |
 | `invalid-due` | no counted postreg, and `payload.due` is present but not a parseable ISO-8601 string |
-| `notarization-only` | (postreg-side) a postreg whose `payload.fulfills` matches no provided prereg |
+
+A "receipt" in a state name (`elapsed-no-receipt`) means a counted postreg.
+
+A postreg whose `payload.fulfills` matches no provided prereg is **notarization-only**. It
+belongs to no commitment, so it has no state.
 
 A `payload.due` without a UTC offset or `Z` is read as UTC, never in the verifier's local
 timezone, and is flagged in the report. Timeliness (a postreg created before `due`) is not

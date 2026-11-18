@@ -22,7 +22,7 @@ Within a catalog-test file the tests appear in this order, and are named::
     test_<TEST>__pass__all                 every "Passes when all" item holds
     test_<TEST>__pass__<N>_<slug>          an item's optional branch ("if present")
     test_<TEST>__fail__<N>_<slug>          only item N is violated, the rest hold
-    test_<TEST>__fail__vacuous_<slug>      nothing to examine (Run rules, (*))
+    test_<TEST>__fail__empty_<slug>        nothing to examine (Run rules, (*))
 
 ``<N>`` is the item number in that test's *Passes when all* list in the doc, and
 every docstring starts with ``<TEST> #<N>:`` followed by the item's wording. A
