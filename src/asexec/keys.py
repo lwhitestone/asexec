@@ -93,7 +93,7 @@ def load_signing_key(path: str) -> tuple[bytes, bytes]:
         pub = bytes(nacl.signing.SigningKey(priv).verify_key)
         stored = bytes.fromhex(data["public_key"]) if "public_key" in data else pub
     except (KeyError, TypeError, ValueError) as e:  # nacl's errors subclass these
-        raise AsexecError(f"key file {path} has no valid private_key: {e!r}") from e
+        raise AsexecError(f"{path} is not a valid key file: {e}") from e
     if stored != pub:
         raise AsexecError("key file public_key does not match private_key")
     return priv, pub

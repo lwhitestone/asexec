@@ -154,7 +154,7 @@ def test_BDR__fail__1_missing_file_is_examined_and_malformed(tmp_path):
 
 def test_BDR__fail__1_unlistable_directory_is_examined_and_malformed(tmp_path, monkeypatch):
     """BDR #1: a directory that cannot be listed is examined itself, as malformed, never
-    an exception (verify exits only 0, 2 or 64)."""
+    an exception."""
 
     def denied(path):
         raise PermissionError(13, "Permission denied", path)

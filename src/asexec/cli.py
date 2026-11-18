@@ -176,7 +176,7 @@ def cmd_prereg(args) -> int:
     """Write a signed pre-registration, signalling the intended execution."""
     target = _get_target(args)
     if target is None:  # argparse requires one; only a file holding null gets here
-        raise SystemExit(f"error: --target-file {args.target_file} holds no target")
+        raise SystemExit(f"error: --target-file {args.target_file!r} holds no target")
     priv, pub = keys.load_signing_key(args.key)
     subject = _build_subject(args.subject, args.hash_alg)
     body = manifest.build_prereg(
