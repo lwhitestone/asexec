@@ -374,13 +374,12 @@ def verify_paths(
         candidates = [pr for (ref, _keyid), pr in preregs.items() if ref == links.fulfills]
         if candidates:
             entry = {"ref": rref, "prev_hash": links.prev_hash, "keyid": sig.get("keyid")}
-            rejections = [_get_postreg_rejection(sig, pr) for pr in candidates]
-            if None in rejections:
-                _add_once(candidates[rejections.index(None)]["counted_postregs"], entry)
+            reasons = [_get_postreg_rejection_reason(sig, pr) for pr in candidates]
+            if None in reasons:
+                _add_once(candidates[reasons.index(None)]["counted_postregs"], entry)
             else:
-                for pr, code in zip(candidates, rejections, strict=True):
-                    rejected = {**entry, "rejection": code, "reason": REJECTION_REASONS[code]}
-                    _add_once(pr["rejected_postregs"], rejected)
+                for pr, reason in zip(candidates, reasons, strict=True):
+                    _add_once(pr["rejected_postregs"], {**entry, "reason": reason})
         else:
             _add_once(
                 notarization_only,
@@ -392,7 +391,7 @@ def verify_paths(
         due_present, due_ts, due_naive = _parse_due(pr.get("due"))
         state = _commitment_state(pr, now, due_present, due_ts)
         chain_ok, chain_note = _check_chain(pr["counted_postregs"])
-        other_key = any(r["rejection"] == "different-key" for r in pr["rejected_postregs"])
+        other_key = any(r["reason"] == REASON_DIFFERENT_KEY for r in pr["rejected_postregs"])
         commitments.append(
             {
                 **pr,
@@ -516,23 +515,21 @@ def _build_code(tests: list[str], results: dict[str, dict[str, Any]]) -> str:
     return VERIFY_CODE_VERSION + " " + " ".join(tokens)
 
 
-# Why a postreg that names a prereg does not count toward its commitment: a stable code,
-# which verdicts use, and the reason the report shows (docs/VERIFICATION.md).
-REJECTION_REASONS = {
-    "invalid-signature": "invalid signature",
-    "different-key": "signed by a different key than the pre-registration",
-}
+# Why a postreg that names a prereg does not count toward its commitment, as the report
+# shows it (docs/VERIFICATION.md). keyconsist compares against these constants, never
+# against the wording, so rewording one cannot change a verdict.
+REASON_INVALID_SIGNATURE = "invalid signature"
+REASON_DIFFERENT_KEY = "signed by a different key than the pre-registration"
 
 
-def _get_postreg_rejection(sig: dict[str, Any], prereg: dict[str, Any]) -> str | None:
-    """The ``REJECTION_REASONS`` code for why a postreg that references ``prereg``
-    does not count toward fulfilling it, or None if it counts: validly signed by
-    the prereg's own key. Only a well-formed postreg gets here (a malformed one
-    joins no commitment)."""
+def _get_postreg_rejection_reason(sig: dict[str, Any], prereg: dict[str, Any]) -> str | None:
+    """Why a postreg that references ``prereg`` does not count toward fulfilling
+    it, or None if it counts: validly signed by the prereg's own key. Only a
+    well-formed postreg gets here (a malformed one joins no commitment)."""
     if not (sig.get("signature_ok") and sig.get("keyid_ok")):
-        return "invalid-signature"
+        return REASON_INVALID_SIGNATURE
     if sig.get("keyid") != prereg["keyid"]:
-        return "different-key"
+        return REASON_DIFFERENT_KEY
     return None
 
 

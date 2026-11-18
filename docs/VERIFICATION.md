@@ -93,7 +93,7 @@ $ asexec verify prereg.json postreg-1.json postreg-2.json --tests BDR,chain,keyc
   [FULFILLED] prereg sha-256:2f4f6ac7…
     signer       : sha-256:fbffcddd…
     due          : (none declared)
-    counted      : 2
+    postregs     : 2
 
 === tests ===
   ✓ BDR=PASS  (3/3 manifest(s) ok)
@@ -596,12 +596,12 @@ chained postregs as in the [`chain` example](#chain):
   [FULFILLED] prereg sha-256:86078561…
     signer       : sha-256:fbffcddd…
     due          : 2099-01-01T00:00:00Z
-    counted      : 2
+    postregs     : 2
 ```
 
 Each entry is the state in capitals and the prereg's `ref`, then its signer's keyid, `due`
 (or `(none declared)`) and the number of counted postregs. Problems follow as `✗` lines: a
-`due` without a timezone, an unparseable `due`, a chain problem (on the `counted` line), or
+`due` without a timezone, an unparseable `due`, a chain problem (on the `postregs` line), or
 a rejected postreg and why it does not count.
 [`notarization-only`](#matching-postregs-to-commitments) postregs are listed in their own
 block, since they have no prereg to sit under.

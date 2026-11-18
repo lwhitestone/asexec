@@ -51,7 +51,6 @@ def test_matching__fail__2_signature_is_valid(scenario):
     assert len(commitment["counted_postregs"]) == 2
     (rejected,) = commitment["rejected_postregs"]
     assert rejected["reason"] == "invalid signature"
-    assert rejected["rejection"] == "invalid-signature"
 
 
 def test_matching__fail__3_same_keyid_as_prereg(scenario):
@@ -61,7 +60,6 @@ def test_matching__fail__3_same_keyid_as_prereg(scenario):
     assert len(commitment["counted_postregs"]) == 2
     (rejected,) = commitment["rejected_postregs"]
     assert rejected["reason"] == "signed by a different key than the pre-registration"
-    assert rejected["rejection"] == "different-key"
 
 
 def test_matching__rejected_postreg_never_counts_toward_fulfillment(scenario):

@@ -320,7 +320,7 @@ def cmd_verify(args) -> int:
         if c["state"] == "invalid-due":
             print(f"    {NO} due is not a parseable ISO-8601 timestamp")
         print(
-            f"    counted      : {len(c['counted_postregs'])}"
+            f"    postregs     : {len(c['counted_postregs'])}"
             + ("" if c["chain_ok"] else f"  {NO} {c['chain_note']}")
         )
         for r in c["rejected_postregs"]:
