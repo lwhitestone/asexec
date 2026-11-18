@@ -1,9 +1,9 @@
 """Doc coverage: every numbered requirement in docs/VERIFICATION.md has a failing-case test.
 
 Reads the numbered *Passes when all* items of each `` ### `<test>` `` section (and the
-numbered items of `## Matching postregs to commitments`), and the ``test_<name>__{pass,fail}__<N>_...`` names
-of this suite (see conftest.py). Black-box: it checks the suite against the doc, never
-against the verifier's code.
+numbered items of `## Matching postregs to commitments`), and the
+``test_<name>__{pass,fail}__<N>_...`` names of this suite (see conftest.py). Black-box: it
+checks the suite against the doc, never against the verifier's code.
 """
 
 import ast

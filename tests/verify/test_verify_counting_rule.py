@@ -1,4 +1,5 @@
-"""Matching and counting: docs/VERIFICATION.md `## Matching postregs to commitments`. Naming: see conftest.py.
+"""Matching and counting: docs/VERIFICATION.md `## Matching postregs to commitments`.
+Naming: see conftest.py.
 
 A postreg counts toward a prereg iff #1 (phase postreg, fulfills == ref(prereg)),
 #2 (BDR signature and keyid conditions) and #3 (same keyid as the prereg) hold. One that
