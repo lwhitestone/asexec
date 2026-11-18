@@ -5,7 +5,7 @@ build-backend = "uv_build"
 [project]
 name = "asexec"
 version = "0.3.19"
-description = "Pre-registration & notarization primitive for AI evaluations — commit-then-reveal post-registrations so silence becomes evidence"
+description = "Pre-registration & notarization primitive for AI evaluations"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
