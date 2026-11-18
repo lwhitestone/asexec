@@ -127,7 +127,7 @@ def test_run__malformed_postreg_joins_no_commitment(scenario):
     assert report["code"] == "asexec-verify/1 BDR=FAIL chain=FAIL keyconsist=FAIL"
     assert report["results"]["keyconsist"]["applicable"] == 0
     (commitment,) = report["commitments"]
-    assert commitment["postregs"] == [] and commitment["rejected_postregs"] == []
+    assert commitment["counted_postregs"] == [] and commitment["rejected_postregs"] == []
     assert report["notarization_only"] == []
 
 

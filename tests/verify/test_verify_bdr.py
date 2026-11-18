@@ -128,7 +128,7 @@ def test_BDR__fail__3_keyid_derives_from_pubkey(scenario):
 
 
 def test_BDR__fail__empty_no_manifests():
-    """BDR (*): with no manifest to verify, BDR fails rather than passing empty."""
+    """BDR (*): with no manifest to verify, BDR fails rather than passing with nothing examined."""
     report = verify_paths([], ["BDR"])
     assert report["code"] == FAIL
     assert report["results"]["BDR"]["reason"] == "no manifests to verify"

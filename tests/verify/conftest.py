@@ -10,7 +10,7 @@ One file per catalog test, plus one per cross-cutting section of the doc::
     test_verify_content.py           ## content
     test_verify_floor.py             ## floor
     test_verify_keyconsist.py        ## keyconsist
-    test_verify_counting_rule.py     ## Matching postregs to commitments
+    test_verify_matching.py          ## Matching postregs to commitments
     test_verify_commitment_states.py ## Commitment states
     test_verify_run_rules.py         ## Conventions (Result, Code, Run rules)
     test_verify_doc_coverage.py      every numbered item above has a fail test
@@ -38,7 +38,7 @@ never through the verifier's own models. Nor are they built by the production wr
 bodies start from the plain dicts in ``tests/manifest_data.py`` and are signed there, so
 any body can be signed, as anyone with a key could.
 
-Cross-cutting files use ``test_counting_rule__...``, ``test_state__<state>__...``,
+Cross-cutting files use ``test_matching__...``, ``test_state__<state>__...``,
 ``test_due__...`` and, in run rules, ``test_tests_arg__``, ``test_code__``, ``test_run__``
 and ``test_never_raises__``.
 

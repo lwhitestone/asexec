@@ -52,8 +52,8 @@ commitment:
 - **What was committed to.** Every manifest carries a `target`, and every post-registration
   names the pre-registration it `fulfills`.
 - **Commitment state.** Each pre-registration is rendered as `fulfilled`, `open`,
-  `elapsed-no-postreg` or `invalid-due`; a post-registration whose pre-registration was not
-  provided is `notarization-only`. A post-registration counts toward fulfilling a
+  `elapsed-no-postreg` or `invalid-due`. A post-registration whose pre-registration was not
+  provided has no state: it is listed as `notarization-only`. A post-registration counts toward fulfilling a
   pre-registration only if it is validly signed by that pre-registration's private key.
   Silence is on the record too: a pre-registration with no counted post-registration reads
   `elapsed-no-postreg` once its deadline (`due`) passes. But `asexec` does **not** yet check

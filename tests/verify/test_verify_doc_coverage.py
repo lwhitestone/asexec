@@ -32,7 +32,7 @@ def _doc_items() -> dict[str, set[int]]:
             section, listing = heading.group(1), False
             items[section] = set()
         elif line == "## Matching postregs to commitments":
-            section, listing = "counting_rule", True
+            section, listing = "matching", True
             items[section] = set()
         elif line.startswith("## "):
             section, listing = None, False
@@ -64,7 +64,7 @@ SUITE = _suite_tests()
 
 
 def test_doc_coverage__doc_lists_every_catalog_test():
-    assert set(TEST_CATALOG) == set(DOC_ITEMS) - {"counting_rule"}
+    assert set(TEST_CATALOG) == set(DOC_ITEMS) - {"matching"}
     assert all(DOC_ITEMS.values()), "a section with no numbered items was parsed"
 
 

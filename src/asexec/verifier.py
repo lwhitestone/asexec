@@ -39,12 +39,13 @@ Tests (the catalog - only verifiable claims, no self-declarations)
                      subject is present.
   - ``floor``      : the drand freshness floor BLS-verifies. Applies to
                      manifests that carry an anchor.floor.
-  - ``keyconsist`` : postregs that name a pre-registration share its key.
-                     Applies to commitments with counted or rejected postregs.
+  - ``keyconsist`` : validly signed postregs that name a pre-registration
+                     share its key. Applies to commitments with a counted
+                     postreg or one rejected as signed by a different key.
 
 A requested test is ``PASS`` iff it holds everywhere it applies AND it applies
 somewhere; a requested test that applies **nowhere** is ``FAIL``
-(requested-but-absent), never a silent omission or an empty pass.
+(requested-but-absent), never a silent omission or a pass with nothing examined.
 
 States (per commitment = a prereg + the postregs that fulfil it)
 ----------------------------------------------------------------
@@ -53,7 +54,8 @@ never adjudicates intent or whether a commitment was "good enough":
   - fulfilled          : >=1 postreg references this prereg AND is validly
                          signed by the prereg's own key. Postregs that reference
                          it but fail either condition are listed separately
-                         (``rejected_postregs``) and never count.
+                         (``rejected_postregs``) and never count; those
+                         that count are ``counted_postregs``.
   - open               : 0 counted postregs and the ``due`` deadline has not
                          elapsed (or no ``due`` was declared - an open-ended
                          commitment)
@@ -357,7 +359,7 @@ def verify_paths(
                 "ref": sig["ref"],
                 "keyid": sig.get("keyid"),
                 "due": body.get("due"),
-                "postregs": [],
+                "counted_postregs": [],
                 "rejected_postregs": [],
             }
         elif links.phase == "postreg":
@@ -372,12 +374,13 @@ def verify_paths(
         candidates = [pr for (ref, _keyid), pr in preregs.items() if ref == links.fulfills]
         if candidates:
             entry = {"ref": rref, "prev_hash": links.prev_hash, "keyid": sig.get("keyid")}
-            reasons = [_get_postreg_rejection_reason(sig, pr) for pr in candidates]
-            if None in reasons:
-                _add_once(candidates[reasons.index(None)]["postregs"], entry)
+            rejections = [_get_postreg_rejection(sig, pr) for pr in candidates]
+            if None in rejections:
+                _add_once(candidates[rejections.index(None)]["counted_postregs"], entry)
             else:
-                for pr, reason in zip(candidates, reasons, strict=True):
-                    _add_once(pr["rejected_postregs"], {**entry, "reason": reason})
+                for pr, code in zip(candidates, rejections, strict=True):
+                    rejected = {**entry, "rejection": code, "reason": REJECTION_REASONS[code]}
+                    _add_once(pr["rejected_postregs"], rejected)
         else:
             _add_once(
                 notarization_only,
@@ -388,10 +391,8 @@ def verify_paths(
     for pr in preregs.values():
         due_present, due_ts, due_naive = _parse_due(pr.get("due"))
         state = _commitment_state(pr, now, due_present, due_ts)
-        chain_ok, chain_note = _check_chain(pr["postregs"])
-        key_consistent = not any(
-            r["reason"].startswith("signed by a different key") for r in pr["rejected_postregs"]
-        )
+        chain_ok, chain_note = _check_chain(pr["counted_postregs"])
+        other_key = any(r["rejection"] == "different-key" for r in pr["rejected_postregs"])
         commitments.append(
             {
                 **pr,
@@ -399,7 +400,8 @@ def verify_paths(
                 "due_naive": due_naive,
                 "chain_ok": chain_ok,
                 "chain_note": chain_note,
-                "key_consistent": key_consistent,
+                "key_checked": bool(pr["counted_postregs"]) or other_key,
+                "key_consistent": not other_key,
             }
         )
 
@@ -435,7 +437,7 @@ def _tally(units: list[bool], nowhere_reason: str, fail_noun: str) -> dict[str, 
 
     PASS iff there is at least one applicable unit and all of them pass;
     otherwise FAIL - distinguishing "applied nowhere" from "some failed" in the
-    human-readable reason (never a silent omission or an empty pass).
+    human-readable reason (never a silent omission or a pass with nothing examined).
     """
     n = len(units)
     if n == 0:
@@ -448,8 +450,10 @@ def _tally(units: list[bool], nowhere_reason: str, fail_noun: str) -> dict[str, 
 
 def _evaluate(tests, manifests, commitments, artifacts_dir) -> dict[str, dict[str, Any]]:
     res: dict[str, dict[str, Any]] = {}
-    with_counted = [c for c in commitments if c["postregs"]]
-    referenced = [c for c in commitments if c["postregs"] or c["rejected_postregs"]]
+    with_counted = [c for c in commitments if c["counted_postregs"]]
+    # A commitment is key-checked only if a validly signed postreg names it: one rejected
+    # for an invalid signature alone has no key to check (BDR judges it).
+    key_checked = [c for c in commitments if c["key_checked"]]
 
     if "BDR" in tests:
         units = [
@@ -497,10 +501,10 @@ def _evaluate(tests, manifests, commitments, artifacts_dir) -> dict[str, dict[st
         )
 
     if "keyconsist" in tests:
-        units = [c["key_consistent"] for c in referenced]
+        units = [c["key_consistent"] for c in key_checked]
         res["keyconsist"] = _tally(
             units,
-            "requested but no commitment has counted or rejected postregs to key-check",
+            "requested but no validly signed postreg names a provided prereg",
             "commitment(s)",
         )
 
@@ -512,21 +516,30 @@ def _build_code(tests: list[str], results: dict[str, dict[str, Any]]) -> str:
     return VERIFY_CODE_VERSION + " " + " ".join(tokens)
 
 
-def _get_postreg_rejection_reason(sig: dict[str, Any], prereg: dict[str, Any]) -> str | None:
-    """Why a postreg that references ``prereg`` does not count toward fulfilling
-    it, or None if it counts: validly signed by the prereg's own key. Only a
-    well-formed postreg gets here (a malformed one joins no commitment)."""
+# Why a postreg that names a prereg does not count toward its commitment: a stable code,
+# which verdicts use, and the reason the report shows (docs/VERIFICATION.md).
+REJECTION_REASONS = {
+    "invalid-signature": "invalid signature",
+    "different-key": "signed by a different key than the pre-registration",
+}
+
+
+def _get_postreg_rejection(sig: dict[str, Any], prereg: dict[str, Any]) -> str | None:
+    """The ``REJECTION_REASONS`` code for why a postreg that references ``prereg``
+    does not count toward fulfilling it, or None if it counts: validly signed by
+    the prereg's own key. Only a well-formed postreg gets here (a malformed one
+    joins no commitment)."""
     if not (sig.get("signature_ok") and sig.get("keyid_ok")):
-        return "invalid signature"
+        return "invalid-signature"
     if sig.get("keyid") != prereg["keyid"]:
-        return "signed by a different key than the pre-registration"
+        return "different-key"
     return None
 
 
 def _commitment_state(
     pr: dict[str, Any], now: float, due_present: bool, due_ts: float | None
 ) -> str:
-    if pr["postregs"]:
+    if pr["counted_postregs"]:
         return "fulfilled"
     if not due_present:
         return "open"  # no deadline declared -> cannot elapse
