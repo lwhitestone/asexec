@@ -75,14 +75,26 @@ def save(private_key: bytes, path: str, *, force: bool = False) -> str:
 
 
 def load_signing_key(path: str) -> tuple[bytes, bytes]:
-    """Load a secret key file, returning (private_key, public_key)."""
+    """Load a secret key file, returning (private_key, public_key).
+
+    Raises ``OSError`` if the file cannot be read, else ``AsexecError`` if it is not
+    a valid key file."""
     with open(path) as f:
-        data = json.load(f)
+        try:
+            data = json.load(f)
+        except ValueError as e:
+            raise AsexecError(f"key file {path} is not valid JSON: {e}") from e
+    if not isinstance(data, dict):
+        raise AsexecError(f"key file {path} is not a JSON object")
     if data.get("alg") != SIGNING_KEY_ALG:
         raise AsexecError(f"unsupported key alg {data.get('alg')!r}")
-    priv = bytes.fromhex(data["private_key"])
-    pub = bytes(nacl.signing.SigningKey(priv).verify_key)
-    if "public_key" in data and bytes.fromhex(data["public_key"]) != pub:
+    try:
+        priv = bytes.fromhex(data["private_key"])
+        pub = bytes(nacl.signing.SigningKey(priv).verify_key)
+        stored = bytes.fromhex(data["public_key"]) if "public_key" in data else pub
+    except (KeyError, TypeError, ValueError) as e:  # nacl's errors subclass these
+        raise AsexecError(f"{path} is not a valid key file: {e}") from e
+    if stored != pub:
         raise AsexecError("key file public_key does not match private_key")
     return priv, pub
 

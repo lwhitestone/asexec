@@ -7,6 +7,7 @@ from asexec import keys
 
 PASS = "asexec-verify/1 BDR=PASS keyconsist=PASS"
 FAIL = "asexec-verify/1 BDR=PASS keyconsist=FAIL"
+EMPTY = "requested but no validly signed postreg names a provided prereg"
 
 
 def test_keyconsist__pass__all(scenario):
@@ -44,10 +45,36 @@ def test_keyconsist__fail__1_valid_postreg_has_prereg_keyid(scenario):
     assert report["commitments"][0]["key_consistent"] is False
 
 
-def test_keyconsist__fail__vacuous_no_postreg_references_a_prereg(scenario):
-    """keyconsist (*): a prereg no postreg references has no receipts to key-check."""
+def test_keyconsist__fail__1_valid_postreg_has_prereg_keyid__all_rejected(scenario):
+    """keyconsist #1: with every postreg signed by another key, none counts, yet validly
+    signed postregs name the commitment, so it is examined (not empty) and fails."""
+    other = keys.generate()
+    for name in ("postreg0", "postreg1", "postreg2"):
+        scenario.sign_with(name, other)
+    report = scenario.verify("keyconsist")
+    assert report["code"] == FAIL
+    assert report["results"]["keyconsist"]["applicable"] == 1
+
+
+def test_keyconsist__fail__empty_only_invalid_signatures(scenario):
+    """keyconsist (*): a commitment whose postregs all have invalid signatures has no key
+    to check, so it is not examined: keyconsist fails rather than passing unchecked."""
+    for name in ("postreg0", "postreg1", "postreg2"):
+        scenario.tamper(
+            name, lambda envelope: envelope["payload"]["target"].update(model_id="SWAPPED")
+        )
+    report = scenario.verify("keyconsist")
+    assert len(report["commitments"][0]["rejected_postregs"]) == 3
+    assert report["code"] == "asexec-verify/1 BDR=FAIL keyconsist=FAIL"
+    assert report["results"]["keyconsist"]["applicable"] == 0
+    assert report["results"]["keyconsist"]["reason"] == EMPTY
+
+
+def test_keyconsist__fail__empty_no_postreg_references_a_prereg(scenario):
+    """keyconsist (*): a prereg that no postreg names has nothing to key-check."""
     for name in ("postreg0", "postreg1", "postreg2"):
         scenario.drop(name)
     report = scenario.verify("keyconsist")
     assert report["code"] == FAIL
     assert report["results"]["keyconsist"]["applicable"] == 0
+    assert report["results"]["keyconsist"]["reason"] == EMPTY

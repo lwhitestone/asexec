@@ -109,10 +109,10 @@ _HEX = d.ref(d.PREREG).split(":")[1]
     ids=["uppercase-hex", "no-prefix", "missing"],
 )
 def test_fault__fulfills_not_exactly_the_ref(tmp_path, post):
-    """Counting #1 compares fulfills to ref(prereg) exactly; anything else links nowhere."""
+    """Matching #1 compares fulfills to ref(prereg) exactly; anything else links nowhere."""
     report = _run(tmp_path, d.sign(d.PREREG), d.sign(post), tests=TESTS_LINKED)
     assert report["code"] == PREFIX + "BDR=PASS chain=FAIL keyconsist=FAIL"
-    assert report["commitments"][0]["receipts"] == []
+    assert report["commitments"][0]["counted_postregs"] == []
     assert len(report["notarization_only"]) == 1
 
 
@@ -179,6 +179,19 @@ def test_fault__body_with_no_canonical_form_fails_BDR(tmp_path):
     raw = json.dumps(d.sign(d.PREREG)).replace('"notes": "prereg"', '"notes": "\\ud800"')
     assert "\\ud800" in raw
     assert _run(tmp_path, raw)["code"] == PREFIX + "BDR=FAIL"
+
+
+def test_fault__postreg_with_no_canonical_form_joins_no_commitment(tmp_path):
+    """Run rules: a postreg whose payload has no canonical bytes is malformed, so it is
+    neither counted nor rejected, nor notarization-only."""
+    post = d.with_field(d.with_field(d.POSTREG, "fulfills", d.ref(d.PREREG)), "notes", "LONE")
+    raw = json.dumps(d.sign(post)).replace('"LONE"', '"\\ud800"')
+    assert "\\ud800" in raw
+    report = _run(tmp_path, d.sign(d.PREREG), raw, tests=TESTS_LINKED)
+    assert report["code"] == PREFIX + "BDR=FAIL chain=FAIL keyconsist=FAIL"
+    (commitment,) = report["commitments"]
+    assert commitment["counted_postregs"] == [] and commitment["rejected_postregs"] == []
+    assert report["notarization_only"] == []
 
 
 def test_fault__nan_in_the_body_is_valid_json(tmp_path):

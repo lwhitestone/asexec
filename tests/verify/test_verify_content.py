@@ -7,9 +7,11 @@ plus one transcript file for each postreg) that matches ``scenario.artifacts``.
 import pytest
 
 from asexec import hashing
+from asexec.verifier import verify_paths
 
 PASS = "asexec-verify/1 BDR=PASS content=PASS"
 FAIL = "asexec-verify/1 BDR=PASS content=FAIL"
+EMPTY = "requested but no content could be checked (need --artifacts and a manifest with a subject)"
 
 
 def _entry_reasons(report):
@@ -160,15 +162,24 @@ def test_content__pass__6_digest_hex_accepts_either_case_and_whitespace(scenario
     assert scenario.code("content") == PASS
 
 
-def test_content__fail__vacuous_no_artifacts_provided(scenario):
+def test_content__fail__empty_no_artifacts_provided(scenario):
     """content (*): without --artifacts, nothing is examined."""
     report = scenario.verify("content", artifacts=False)
     assert report["code"] == FAIL
     assert report["results"]["content"]["applicable"] == 0
+    assert report["results"]["content"]["reason"] == EMPTY
+
+
+def test_content__fail__empty_artifacts_given_as_empty_string(scenario):
+    """content (*): ``--artifacts ""`` is read as not given, so nothing is examined."""
+    report = verify_paths(scenario.write(), ["BDR", "content"], artifacts_dir="")
+    assert report["code"] == FAIL
+    assert report["results"]["content"]["applicable"] == 0
+    assert report["results"]["content"]["reason"] == EMPTY
 
 
 @pytest.mark.parametrize("absent", ["missing", "null"])
-def test_content__fail__vacuous_no_manifest_has_a_subject(scenario, absent):
+def test_content__fail__empty_no_manifest_has_a_subject(scenario, absent):
     """content (*): with --artifacts but no manifest carrying a subject (missing or null),
     nothing is examined."""
     if absent == "missing":
@@ -178,3 +189,18 @@ def test_content__fail__vacuous_no_manifest_has_a_subject(scenario, absent):
     report = scenario.verify("content")
     assert report["code"] == FAIL
     assert report["results"]["content"]["applicable"] == 0
+    assert report["results"]["content"]["reason"] == EMPTY
+
+
+def test_content__fail__empty_malformed_manifest_not_examined(scenario):
+    """content (*): a malformed manifest is not examined, even if it carries a subject."""
+    scenario.mutate_all(lambda body: (body.pop("subject"), body.pop("hash_alg")))
+    scenario.add_raw(
+        "bad",
+        '{"payload": {"subject": [{"name": "harness", "digest": {"sha-256": "00"}}]},'
+        ' "signature": {}}',
+    )
+    report = scenario.verify("content")
+    assert report["results"]["content"]["applicable"] == 0
+    assert report["code"] == "asexec-verify/1 BDR=FAIL content=FAIL"
+    assert report["results"]["content"]["reason"] == EMPTY

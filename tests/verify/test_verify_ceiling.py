@@ -6,6 +6,7 @@ from asexec import keys, roughtime
 
 PASS = "asexec-verify/1 BDR=PASS ceiling=PASS"
 FAIL = "asexec-verify/1 BDR=PASS ceiling=FAIL"
+EMPTY = "requested but no manifest carries a ceiling witness"
 
 
 @pytest.fixture
@@ -160,16 +161,17 @@ def test_ceiling__fail__5_response_verifies(sc, make_server, case):
 
 
 @pytest.mark.parametrize("absent", ["missing", "null"])
-def test_ceiling__fail__vacuous_no_manifest_carries_one(scenario, absent):
+def test_ceiling__fail__empty_no_manifest_carries_one(scenario, absent):
     """ceiling (*): no manifest carries a ceiling (missing or null), so the test fails."""
     if absent == "null":
         scenario.set("prereg", "ceiling", None)
     report = scenario.verify("ceiling")
     assert report["code"] == FAIL
     assert report["results"]["ceiling"]["applicable"] == 0
+    assert report["results"]["ceiling"]["reason"] == EMPTY
 
 
-def test_ceiling__fail__vacuous_malformed_manifest_not_examined(scenario):
+def test_ceiling__fail__empty_malformed_manifest_not_examined(scenario):
     """ceiling (*): a malformed manifest is not examined, even if it carries a ceiling."""
     scenario.add_raw(
         "bad", '{"payload": {}, "signature": {}, "ceiling": {"ceiling_type": "roughtime"}}'
@@ -177,3 +179,4 @@ def test_ceiling__fail__vacuous_malformed_manifest_not_examined(scenario):
     report = scenario.verify("ceiling")
     assert report["results"]["ceiling"]["applicable"] == 0
     assert report["code"] == "asexec-verify/1 BDR=FAIL ceiling=FAIL"
+    assert report["results"]["ceiling"]["reason"] == EMPTY

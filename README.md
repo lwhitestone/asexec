@@ -44,21 +44,23 @@ in the form of `asexec verify` providing a code regarding the checks applied.
 ### What `asexec` always proves
 
 Every `verify` run checks [`BDR`](./docs/VERIFICATION.md#bdr) and renders the state of each
-commitment:
+commitment (a pre-registration and its signer):
 
 - **Integrity and non-repudiation.** A manifest (pre-registration or post-registration) was
   not altered after signing, and was signed by the private key whose public key its `keyid`
   names, so the holder of that key cannot later deny signing it.
-- **What was committed to.** Every manifest carries a `target`, and every post-registration
-  names the pre-registration it `fulfills`.
-- **Commitment state.** Each pre-registration is rendered as `fulfilled`, `open`,
-  `elapsed-no-receipt` or `invalid-due`; a post-registration whose pre-registration was not
-  provided is `notarization-only`. A post-registration counts toward fulfilling a
-  pre-registration only if it is validly signed by that pre-registration's private key.
-  Silence is on the record too: a pre-registration with no counted post-registration reads
-  `elapsed-no-receipt` once its deadline (`due`) passes. But `asexec` does **not** yet check
-  that a post-registration was created before `due`, so a late one still turns it
-  `fulfilled`; that check (`timely`) arrives in 0.4.0.
+- **What was committed to.** The signature covers the whole `payload`: its `target` (which
+  `asexec prereg` and `postreg` always write) and, in a post-registration, the
+  pre-registration it `fulfills`.
+- **Commitment state.** Each commitment is rendered as `fulfilled`, `open`,
+  `elapsed-no-postreg` or `invalid-due`. A post-registration that names a pre-registration
+  counts toward fulfilling it only if validly signed by that pre-registration's private key;
+  otherwise it is listed under it as *rejected*, with the reason. A post-registration whose
+  pre-registration was not provided belongs to no commitment, so it has no state: it is
+  listed as *notarization-only*. Silence is on the record too: a pre-registration with no
+  counted post-registration reads `elapsed-no-postreg` once its deadline (`due`) passes. But
+  `asexec` does **not** yet check that a post-registration was created before `due`, so a
+  late one still turns it `fulfilled`; that check (`timely`) arrives in 0.4.0.
 
 ### What `asexec` can prove (optional fields and tests)
 
@@ -67,12 +69,13 @@ test:
 
 - **Content** (`subject`; [`content`](./docs/VERIFICATION.md#content) with `--artifacts`). The
   artifacts the verifier holds match the digests a manifest records.
-- **Chain** (`prev_hash`; [`chain`](./docs/VERIFICATION.md#chain)). The post-registrations of a
-  commitment form a single linear chain: one root, no gaps, no forks. *Dropping the last
-  post-registration(s) of a chain is **not** detectable yet; close-out manifests (`final`)
-  are deferred to 0.7.0 or later.*
+- **Chain** (`prev_hash`; [`chain`](./docs/VERIFICATION.md#chain)). The counted
+  post-registrations of a commitment form a single linear chain: one root, no gaps, no
+  forks. *Dropping the last post-registration(s) of a chain is **not** detectable yet;
+  close-out manifests (`final`) are deferred to 0.7.0 or later.*
 - **Key consistency** ([`keyconsist`](./docs/VERIFICATION.md#keyconsist)). Every validly
-  signed post-registration of a commitment uses the pre-registration's key.
+  signed post-registration that names a pre-registration was signed with the key of a
+  provided pre-registration with that body.
 - **Created no earlier than** (`anchor.floor`; [`floor`](./docs/VERIFICATION.md#floor)). A
   manifest was created after a public moment: a [drand](https://drand.love/) beacon round it
   embeds.
@@ -128,7 +131,7 @@ asexec prereg --key lab.key \
     --declaration "all runs of this harness against this model, in full" \
     --out preregistration.json
 
-# 3. Practitioner, AFTER each run: post-register a receipt of the run
+# 3. Practitioner, AFTER each run: post-register the run
 asexec postreg --key lab.key --fulfills preregistration.json \
     --subject ./transcript.txt ./harness \
     --out postregistration.json
@@ -144,16 +147,34 @@ For a detailed look at parameters and options, see: `asexec --help`.
 For a worked end-to-end run, with faults replayed against the verifier, see
 [`examples/adequacy-test`](examples/adequacy-test): `python examples/adequacy-test/run.py`.
 
+### Exit status
+
+| Status | Meaning |
+|---|---|
+| `0` | Success. For `verify`, every requested test is `PASS`; for `identity match`, the key is bound to the domain. |
+| `1` | Error: the arguments are valid, but the command could not complete with the files or network they name, e.g. a missing or invalid key file, an unreadable `--subject` or `--target-file`, a key file it refuses to overwrite, a failed `identity match` fetch, or a failed `--floor`/`--ceiling` fetch without `--best-effort`. An `error: ...` line is printed; a few bad inputs still print a traceback instead ([#45](https://github.com/lwhitestone/asexec/issues/45)). |
+| `2` | `verify`: at least one requested test is `FAIL`. `identity match`: the key is not bound. |
+| `64` | Usage error: the arguments themselves are wrong, whatever the files hold. For example: an unknown command or option; a missing argument; two that exclude each other, such as `--target` and `--target-file`; a `--due` without an explicit offset; a `--tests` that names an unknown test, names none, or omits `BDR`; or for `identity match`, not exactly one of `--keyid`, `--pubkey` and `--key`. Usage is printed and nothing runs (`verify` prints no code). A few argument mistakes, such as an empty value, are not caught yet ([#45](https://github.com/lwhitestone/asexec/issues/45)). |
+
+For `verify`, malformed manifest input is a `FAIL`, never an error.
+
 ### Verification output
 
 What each test examines, its exact pass criteria, and what it does not establish are
 specified in the [verification catalog](./docs/VERIFICATION.md).
 
-`verify` runs the tests you name and prints one canonical code, e.g.:
+`verify` runs the tests you name and prints a report for people to read (each manifest,
+each commitment with its state, any notarization-only post-registrations, and each test's
+result with a short reason), then one canonical code, then `Checked at <time>` (UTC, the
+moment commitment states were judged against), e.g.:
 
 ```
 asexec-verify/1 BDR=PASS chain=PASS content=PASS keyconsist=PASS
+Checked at 2026-12-31T23:59:59Z
 ```
+
+Only the code line and the [exit status](#exit-status) are stable to script against.
+Commitment states never affect either.
 
 Grammar (`asexec-verify/1` versions the code format): the literal prefix, then one
 `name=RESULT` token per requested test (`RESULT ∈ {PASS, FAIL}`), sorted alphabetically,
@@ -164,9 +185,10 @@ single-space delimited. The same result set is byte-identical everywhere.
   [What `asexec` can prove](#what-asexec-can-prove-optional-fields-and-tests)).
 - Named, not scored, so it's forward-compatible. Because the code names which tests
   ran, adding a test in a later version can never change the meaning of an older code. A code
-  means exactly one thing, permanently.
-- A requested test that applies nowhere is `FAIL`, never a silent omission (e.g.
-  `--tests BDR,ceiling` on manifests with no ceiling -> `ceiling=FAIL`).
+  means exactly one thing, permanently, from `0.4.0`; until then a test's documented meaning
+  may still be corrected (see [Status](#status)).
+- A requested test with nothing to examine is *empty* and `FAIL`, never a silent omission
+  or a pass (e.g. `--tests BDR,ceiling` on manifests with no ceiling -> `ceiling=FAIL`).
 - The code is not a certificate. Real verification comes from the verifier running the tool
   against the files and getting the code.
 
@@ -286,7 +308,7 @@ A post-registration counts toward a pre-registration only if both were signed wi
 private key. So:
 
 - **Lose the private key** and your open commitments can never be fulfilled: they stay `open`,
-  or turn `elapsed-no-receipt` once `due` passes. Back up `lab.key` offline (e.g. in an
+  or turn `elapsed-no-postreg` once `due` passes. Back up `lab.key` offline (e.g. in an
   encrypted password manager or vault) before you pre-register.
 - **Leak the private key** and anyone can sign pre- and post-registrations as you, including
   post-registrations that count toward your commitments. `asexec` has no revocation: stop

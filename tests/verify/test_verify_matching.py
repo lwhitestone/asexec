@@ -1,11 +1,14 @@
-"""Counting rule: docs/VERIFICATION.md `## Counting rule`. Naming: see conftest.py.
+"""Matching postregs to commitments: docs/VERIFICATION.md `## Matching postregs to commitments`.
+Naming: see conftest.py.
 
 A postreg counts toward a prereg iff #1 (phase postreg, fulfills == ref(prereg)),
 #2 (BDR signature and keyid conditions) and #3 (same keyid as the prereg) hold. One that
-references the prereg but fails #2 or #3 is *rejected* and listed with its reason.
-Observed through the report: ``commitments[].receipts`` / ``rejected_receipts`` /
-``state`` and ``notarization_only``.
+names the prereg but counts toward no commitment with its ref is *rejected* and listed
+with its reason. Observed through the report: ``commitments[].counted_postregs`` /
+``rejected_postregs`` / ``state`` and ``notarization_only``.
 """
+
+import json
 
 from asexec import keys
 from asexec.verifier import verify_paths
@@ -16,63 +19,63 @@ def _commitment(report):
     return commitment
 
 
-def test_counting_rule__pass__all(scenario):
-    """Counting #1-#3 hold: every postreg counts, none is rejected, the commitment is fulfilled."""
+def test_matching__pass__all(scenario):
+    """Matching #1-#3 hold: every postreg counts, none is rejected, the commitment is fulfilled."""
     commitment = _commitment(scenario.verify())
-    assert len(commitment["receipts"]) == 3
-    assert commitment["rejected_receipts"] == []
+    assert len(commitment["counted_postregs"]) == 3
+    assert commitment["rejected_postregs"] == []
     assert commitment["state"] == "fulfilled"
 
 
-def test_counting_rule__fail__1_fulfills_equals_ref_of_prereg(scenario):
-    """Counting #1: fulfills must equal ref(prereg). Otherwise it counts for nothing."""
+def test_matching__fail__1_fulfills_equals_ref_of_prereg(scenario):
+    """Matching #1: fulfills must equal ref(prereg). Otherwise it counts for nothing."""
     scenario.link("postreg0", fulfills="sha-256:" + "ab" * 32)
     report = scenario.verify()
-    assert len(_commitment(report)["receipts"]) == 2
-    assert _commitment(report)["rejected_receipts"] == []  # it does not reference the prereg
+    assert len(_commitment(report)["counted_postregs"]) == 2
+    assert _commitment(report)["rejected_postregs"] == []  # it does not reference the prereg
     assert [n["fulfills"] for n in report["notarization_only"]] == ["sha-256:" + "ab" * 32]
 
 
-def test_counting_rule__fail__1_phase_is_postreg(scenario):
-    """Counting #1: phase must be postreg."""
+def test_matching__fail__1_phase_is_postreg(scenario):
+    """Matching #1: phase must be postreg."""
     scenario.mutate("postreg0", lambda body: body.update(phase="other"))
     commitment = _commitment(scenario.verify())
-    assert len(commitment["receipts"]) == 2
-    assert commitment["rejected_receipts"] == []
+    assert len(commitment["counted_postregs"]) == 2
+    assert commitment["rejected_postregs"] == []
 
 
-def test_counting_rule__fail__2_signature_is_valid(scenario):
-    """Counting #2: an invalid signature is rejected, with its reason, and does not count."""
+def test_matching__fail__2_signature_is_valid(scenario):
+    """Matching #2: an invalid signature is rejected, with its reason, and does not count."""
     scenario.tamper(
         "postreg0", lambda envelope: envelope["payload"]["target"].update(model_id="SWAPPED")
     )
     commitment = _commitment(scenario.verify())
-    assert len(commitment["receipts"]) == 2
-    (rejected,) = commitment["rejected_receipts"]
+    assert len(commitment["counted_postregs"]) == 2
+    (rejected,) = commitment["rejected_postregs"]
     assert rejected["reason"] == "invalid signature"
 
 
-def test_counting_rule__fail__3_same_keyid_as_prereg(scenario):
-    """Counting #3: a validly signed postreg by another key is rejected and does not count."""
+def test_matching__fail__3_same_keyid_as_prereg(scenario):
+    """Matching #3: a validly signed postreg by another key is rejected and does not count."""
     scenario.sign_with("postreg0", keys.generate())
     commitment = _commitment(scenario.verify())
-    assert len(commitment["receipts"]) == 2
-    (rejected,) = commitment["rejected_receipts"]
+    assert len(commitment["counted_postregs"]) == 2
+    (rejected,) = commitment["rejected_postregs"]
     assert rejected["reason"] == "signed by a different key than the pre-registration"
 
 
-def test_counting_rule__rejected_postreg_never_counts_toward_fulfillment(scenario):
-    """Counting (last paragraph): a commitment with only a rejected postreg is not fulfilled."""
+def test_matching__rejected_postreg_never_counts_toward_fulfillment(scenario):
+    """Matching (rejected): a commitment with only a rejected postreg is not fulfilled."""
     scenario.drop("postreg1")
     scenario.drop("postreg2")
     scenario.sign_with("postreg0", keys.generate())
     commitment = _commitment(scenario.verify())
-    assert commitment["receipts"] == []
+    assert commitment["counted_postregs"] == []
     assert commitment["state"] != "fulfilled"
 
 
-def test_counting_rule__rejected_postreg_never_counts_toward_chain(scenario):
-    """Counting (last paragraph): a rejected postreg is invisible to chain, even as a 2nd root."""
+def test_matching__rejected_postreg_never_counts_toward_chain(scenario):
+    """Matching (rejected): a rejected postreg is invisible to chain, even as a 2nd root."""
     scenario.add_postreg("intruder", transcript="transcript1.txt")  # a second root, other key
     scenario.sign_with("intruder", keys.generate())
     assert scenario.code("chain") == "asexec-verify/1 BDR=PASS chain=PASS"
@@ -81,40 +84,56 @@ def test_counting_rule__rejected_postreg_never_counts_toward_chain(scenario):
 # --- copies: a manifest is identified by its ref ------------------------------------ #
 
 
-def test_counting_rule__copies_of_a_postreg_are_one_receipt(scenario):
+def test_matching__copies_of_a_postreg_are_one_postreg(scenario):
     """Copies (same ref and keyid) count once, so they make no second root for chain."""
     scenario.add_raw("copy", scenario.read("postreg0"))
     report = scenario.verify("chain", "keyconsist")
     assert report["code"] == "asexec-verify/1 BDR=PASS chain=PASS keyconsist=PASS"
-    assert len(_commitment(report)["receipts"]) == 3
+    assert len(_commitment(report)["counted_postregs"]) == 3
 
 
-def test_counting_rule__copies_of_a_prereg_are_one_commitment(scenario):
+def test_matching__copies_of_a_prereg_are_one_commitment(scenario):
     scenario.add_raw("copy", scenario.read("prereg"))
     report = scenario.verify("chain")
     assert report["code"] == "asexec-verify/1 BDR=PASS chain=PASS"
-    assert len(_commitment(report)["receipts"]) == 3
+    assert len(_commitment(report)["counted_postregs"]) == 3
 
 
-def test_counting_rule__copies_of_a_rejected_postreg_are_rejected_once(scenario):
+def test_matching__copies_of_a_rejected_postreg_are_rejected_once(scenario):
     scenario.sign_with("postreg0", keys.generate())
     scenario.add_raw("copy", scenario.read("postreg0"))
-    assert len(_commitment(scenario.verify())["rejected_receipts"]) == 1
+    assert len(_commitment(scenario.verify())["rejected_postregs"]) == 1
 
 
-def test_counting_rule__copies_of_a_notarization_only_postreg_are_listed_once(scenario):
+def test_matching__broken_copy_of_a_counted_postreg_is_also_rejected(scenario):
+    """A copy whose signature does not verify is judged on its own: the same ref is listed
+    as counted (the valid copy) and as rejected for invalid signature (the broken one)."""
+    copy = json.loads(scenario.read("postreg0"))
+    sig = copy["signature"]["sig"]
+    copy["signature"]["sig"] = ("00" if sig[:2] != "00" else "11") + sig[2:]
+    scenario.add_raw("copy", json.dumps(copy))
+    report = scenario.verify()
+    assert report["code"] == "asexec-verify/1 BDR=FAIL"
+    commitment = _commitment(report)
+    assert len(commitment["counted_postregs"]) == 3
+    (rejected,) = commitment["rejected_postregs"]
+    assert rejected["reason"] == "invalid signature"
+    assert rejected["ref"] in {p["ref"] for p in commitment["counted_postregs"]}
+
+
+def test_matching__copies_of_a_notarization_only_postreg_are_listed_once(scenario):
     scenario.drop("prereg")
     scenario.add_raw("copy", scenario.read("postreg0"))
     assert len(scenario.verify()["notarization_only"]) == 3
 
 
-def test_counting_rule__same_body_by_two_other_keys_is_two_rejections(scenario):
+def test_matching__same_body_by_two_other_keys_is_two_rejections(scenario):
     """Copies must share the keyid too: each other signer is rejected in its own right."""
     scenario.sign_with("postreg0", keys.generate())
     first = scenario.read("postreg0")
     scenario.sign_with("postreg0", keys.generate())
     scenario.add_raw("first", first)
-    (rejected_a, rejected_b) = _commitment(scenario.verify())["rejected_receipts"]
+    (rejected_a, rejected_b) = _commitment(scenario.verify())["rejected_postregs"]
     assert rejected_a["ref"] == rejected_b["ref"]
     assert rejected_a["keyid"] != rejected_b["keyid"]
 
@@ -135,12 +154,12 @@ def _second_signer(scenario):
 
 def _summary(report):
     return sorted(
-        (c["ref"], c["keyid"], len(c["receipts"]), len(c["rejected_receipts"]), c["state"])
+        (c["ref"], c["keyid"], len(c["counted_postregs"]), len(c["rejected_postregs"]), c["state"])
         for c in report["commitments"]
     )
 
 
-def test_counting_rule__same_body_by_two_keys_is_two_commitments(scenario):
+def test_matching__same_body_by_two_keys_is_two_commitments(scenario):
     """Each signer's commitment counts only its own postregs; neither rejects the other's."""
     other = _second_signer(scenario)
     report = scenario.verify("chain", "keyconsist")
@@ -148,12 +167,12 @@ def test_counting_rule__same_body_by_two_keys_is_two_commitments(scenario):
     (ref_a, key_a, *_), (ref_b, key_b, *_) = _summary(report)
     assert ref_a == ref_b
     by_key = {c["keyid"]: c for c in report["commitments"]}
-    assert len(by_key[keys.keyid_for(scenario.key[1])]["receipts"]) == 3
-    assert len(by_key[keys.keyid_for(other[1])]["receipts"]) == 1
-    assert all(c["rejected_receipts"] == [] for c in report["commitments"])
+    assert len(by_key[keys.keyid_for(scenario.key[1])]["counted_postregs"]) == 3
+    assert len(by_key[keys.keyid_for(other[1])]["counted_postregs"]) == 1
+    assert all(c["rejected_postregs"] == [] for c in report["commitments"])
 
 
-def test_counting_rule__commitments_do_not_depend_on_file_order(scenario):
+def test_matching__commitments_do_not_depend_on_file_order(scenario):
     _second_signer(scenario)
     paths = scenario.write()
     forwards = verify_paths(paths, ["BDR", "chain", "keyconsist"], str(scenario.artifacts))
@@ -162,21 +181,21 @@ def test_counting_rule__commitments_do_not_depend_on_file_order(scenario):
     assert _summary(forwards) == _summary(backwards)
 
 
-def test_counting_rule__postreg_by_neither_signer_is_rejected_under_both(scenario):
+def test_matching__postreg_by_neither_signer_is_rejected_under_both(scenario):
     _second_signer(scenario)
     scenario.sign_with("postreg2", keys.generate())
     report = scenario.verify("keyconsist")
     assert report["code"] == "asexec-verify/1 BDR=PASS keyconsist=FAIL"
     for commitment in report["commitments"]:
-        (rejected,) = commitment["rejected_receipts"]
+        (rejected,) = commitment["rejected_postregs"]
         assert rejected["reason"] == "signed by a different key than the pre-registration"
 
 
-def test_counting_rule__invalid_signature_is_rejected_under_both(scenario):
+def test_matching__invalid_signature_is_rejected_under_both(scenario):
     _second_signer(scenario)
     scenario.tamper(
         "postreg2", lambda envelope: envelope["payload"]["target"].update(model_id="SWAPPED")
     )
     for commitment in scenario.verify()["commitments"]:
-        (rejected,) = commitment["rejected_receipts"]
+        (rejected,) = commitment["rejected_postregs"]
         assert rejected["reason"] == "invalid signature"

@@ -331,7 +331,7 @@ sample is enough.
 - Lab run record (a new `phase` value, not decided; may be outside asexec scope): its own
   envelope, signed by the lab's key, with `attests: <prereg ref>`, the run's output
   digest, and its own floor and ceiling. It is a new record kind, not a
-  postreg, so the counting rule never puts it under the assessor's commitment, and the lab
+  postreg, so matching never puts it under the assessor's commitment, and the lab
   can't block the assessor's report by withholding a signature. The adequacy item's
   postreg points at it by `ref`. The key list gains the lab role.
 - Verify: a new test, `plantorder` (name not decided): the plant-set commitment's ceiling

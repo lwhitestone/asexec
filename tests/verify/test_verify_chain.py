@@ -5,8 +5,11 @@ The scenario's chain is postreg0 <- postreg1 <- postreg2.
 
 import pytest
 
+from asexec import keys
+
 PASS = "asexec-verify/1 BDR=PASS chain=PASS"
 FAIL = "asexec-verify/1 BDR=PASS chain=FAIL"
+EMPTY = "requested but no commitment has counted postregs to chain-check"
 BOGUS_REF = "sha-256:" + "cd" * 32
 
 
@@ -85,10 +88,24 @@ def test_chain__fail__3_no_prev_hash_shared__fork(scenario):
     assert scenario.code("chain") == FAIL
 
 
-def test_chain__fail__vacuous_no_counted_postreg(scenario):
+def test_chain__fail__empty_no_counted_postreg(scenario):
     """chain (*): a prereg with no counted postreg has nothing to chain-check."""
     for name in ("postreg0", "postreg1", "postreg2"):
         scenario.drop(name)
     report = scenario.verify("chain")
     assert report["code"] == FAIL
     assert report["results"]["chain"]["applicable"] == 0
+    assert report["results"]["chain"]["reason"] == EMPTY
+
+
+def test_chain__fail__empty_only_rejected_postregs(scenario):
+    """chain (*): a prereg whose postregs are all rejected (signed by another key) has no
+    counted postreg, so there is nothing to chain-check."""
+    other = keys.generate()
+    for name in ("postreg0", "postreg1", "postreg2"):
+        scenario.sign_with(name, other)
+    report = scenario.verify("chain")
+    assert len(report["commitments"][0]["rejected_postregs"]) == 3
+    assert report["code"] == FAIL
+    assert report["results"]["chain"]["applicable"] == 0
+    assert report["results"]["chain"]["reason"] == EMPTY

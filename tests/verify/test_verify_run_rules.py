@@ -57,7 +57,7 @@ def test_code__one_token_per_requested_test_sorted_by_name(scenario):
 
 
 def test_code__one_failing_token_makes_the_run_not_ok(scenario):
-    report = scenario.verify("floor")  # nothing carries a floor: vacuous, so FAIL
+    report = scenario.verify("floor")  # nothing carries a floor: nothing to examine, so FAIL
     assert report["code"] == "asexec-verify/1 BDR=PASS floor=FAIL"
     assert report["ok"] is False
 
@@ -118,8 +118,8 @@ def test_run__file_unreadable_by_BDR_is_examined_by_no_other_test(scenario):
 
 
 def test_run__malformed_postreg_joins_no_commitment(scenario):
-    """A malformed postreg (here: non-hex pubkey) fulfilling the prereg is not a receipt,
-    counted or rejected, so chain and keyconsist have nothing to examine."""
+    """A malformed postreg (here: non-hex pubkey) fulfilling the prereg is neither counted
+    nor rejected, so chain and keyconsist have nothing to examine."""
     scenario.drop("postreg1")
     scenario.drop("postreg2")
     scenario.set("postreg0", "signature.pubkey", "zz")
@@ -127,7 +127,7 @@ def test_run__malformed_postreg_joins_no_commitment(scenario):
     assert report["code"] == "asexec-verify/1 BDR=FAIL chain=FAIL keyconsist=FAIL"
     assert report["results"]["keyconsist"]["applicable"] == 0
     (commitment,) = report["commitments"]
-    assert commitment["receipts"] == [] and commitment["rejected_receipts"] == []
+    assert commitment["counted_postregs"] == [] and commitment["rejected_postregs"] == []
     assert report["notarization_only"] == []
 
 

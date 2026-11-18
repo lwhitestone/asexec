@@ -32,19 +32,21 @@ Tests (the catalog - only verifiable claims, no self-declarations)
                      manifests that carry a ceiling.
   - ``chain``      : prev_hash chain integrity (one root, no gaps, no forks: a
                      single linear chain). Applies to
-                     commitments that have receipts.
+                     commitments that have counted postregs.
   - ``content``    : subject digests recomputed from --artifacts match. Subject
                      names must resolve inside --artifacts (an escape is a
                      mismatch). Applies where artifacts are provided and a
                      subject is present.
   - ``floor``      : the drand freshness floor BLS-verifies. Applies to
                      manifests that carry an anchor.floor.
-  - ``keyconsist`` : receipts share the pre-registration's key. Applies to
-                     commitments that have receipts.
+  - ``keyconsist`` : each validly signed postreg that names a pre-registration's
+                     ref has the key of a provided pre-registration with that
+                     ref. Applies to commitments with a counted postreg or one
+                     rejected as signed by a different key.
 
 A requested test is ``PASS`` iff it holds everywhere it applies AND it applies
 somewhere; a requested test that applies **nowhere** is ``FAIL``
-(requested-but-absent), never a silent omission or a vacuous pass.
+(requested-but-absent), never a silent omission or a pass with nothing examined.
 
 States (per commitment = a prereg + the postregs that fulfil it)
 ----------------------------------------------------------------
@@ -53,13 +55,18 @@ never adjudicates intent or whether a commitment was "good enough":
   - fulfilled          : >=1 postreg references this prereg AND is validly
                          signed by the prereg's own key. Postregs that reference
                          it but fail either condition are listed separately
-                         (``rejected_receipts``) and never count.
-  - open               : 0 postregs and the ``due`` deadline has not elapsed
-                         (or no ``due`` was declared - an open-ended commitment)
-  - elapsed-no-receipt : 0 postregs and the ``due`` deadline has elapsed
-  - invalid-due        : 0 postregs and ``due`` is present but is not a parseable
-                         ISO-8601 timestamp (never silently rendered ``open``)
-  - notarization-only  : a postreg with no matching prereg provided
+                         (``rejected_postregs``) and never count; those
+                         that count are ``counted_postregs``.
+  - open               : 0 counted postregs and the ``due`` deadline has not
+                         elapsed (or no ``due`` was declared - an open-ended
+                         commitment)
+  - elapsed-no-postreg : 0 counted postregs and the ``due`` deadline has elapsed
+  - invalid-due        : 0 counted postregs and ``due`` is present but is not a
+                         parseable ISO-8601 timestamp (never silently rendered
+                         ``open``)
+
+A postreg whose ``fulfills`` matches no provided prereg is notarization-only: it
+belongs to no commitment, so it has no state, and is reported in its own list.
 """
 
 from __future__ import annotations
@@ -300,7 +307,7 @@ def verify_paths(
 
     ``servers`` is the pinned Roughtime witness map for ``ceiling`` (default:
     ``roughtime.SERVERS``). ``now`` (default: the current time) is the moment commitment
-    states are judged at, and is reported as ``verified_at``.
+    states are judged at, and is reported as ``checked_at``.
     """
     now = time.time() if now is None else now
     files = _expand(paths)
@@ -309,12 +316,14 @@ def verify_paths(
     # no key, so the same body signed by two keys is two commitments, never one whose key
     # depends on which file was read last.
     preregs: dict[tuple[str, Any], Any] = {}
-    receipts = []
+    postregs = []
     manifests_report = []
     ceiling_trust = []
 
-    for p in files:
+    for p, unlistable in files:
         try:
+            if unlistable is not None:
+                raise unlistable
             mani = manifest.load(p)
             sig = verify_signature(mani)
         except Exception as e:  # unreadable / not JSON / duplicate keys / not an object
@@ -353,27 +362,27 @@ def verify_paths(
                 "ref": sig["ref"],
                 "keyid": sig.get("keyid"),
                 "due": body.get("due"),
-                "receipts": [],
-                "rejected_receipts": [],
+                "counted_postregs": [],
+                "rejected_postregs": [],
             }
         elif links.phase == "postreg":
-            receipts.append((sig.get("ref"), links, sig))
+            postregs.append((sig.get("ref"), links, sig))
 
     # A manifest is identified by its ref, so a copy (same ref and keyid) of one already
     # listed adds nothing: the same ref is the same body, links and all. A postreg counts
     # toward the commitment of its ref whose signer it shares; one that counts toward none
     # is rejected under every commitment of that ref.
     notarization_only: list[dict[str, Any]] = []
-    for rref, links, sig in receipts:
+    for rref, links, sig in postregs:
         candidates = [pr for (ref, _keyid), pr in preregs.items() if ref == links.fulfills]
         if candidates:
             entry = {"ref": rref, "prev_hash": links.prev_hash, "keyid": sig.get("keyid")}
             reasons = [_get_postreg_rejection_reason(sig, pr) for pr in candidates]
             if None in reasons:
-                _add_once(candidates[reasons.index(None)]["receipts"], entry)
+                _add_once(candidates[reasons.index(None)]["counted_postregs"], entry)
             else:
                 for pr, reason in zip(candidates, reasons, strict=True):
-                    _add_once(pr["rejected_receipts"], {**entry, "reason": reason})
+                    _add_once(pr["rejected_postregs"], {**entry, "reason": reason})
         else:
             _add_once(
                 notarization_only,
@@ -384,10 +393,8 @@ def verify_paths(
     for pr in preregs.values():
         due_present, due_ts, due_naive = _parse_due(pr.get("due"))
         state = _commitment_state(pr, now, due_present, due_ts)
-        chain_ok, chain_note = _check_chain(pr["receipts"])
-        key_consistent = not any(
-            r["reason"].startswith("signed by a different key") for r in pr["rejected_receipts"]
-        )
+        chain_ok, chain_note = _check_chain(pr["counted_postregs"])
+        other_key = any(r["reason"] == REASON_DIFFERENT_KEY for r in pr["rejected_postregs"])
         commitments.append(
             {
                 **pr,
@@ -395,7 +402,8 @@ def verify_paths(
                 "due_naive": due_naive,
                 "chain_ok": chain_ok,
                 "chain_note": chain_note,
-                "key_consistent": key_consistent,
+                "key_checked": bool(pr["counted_postregs"]) or other_key,
+                "key_consistent": not other_key,
             }
         )
 
@@ -412,7 +420,7 @@ def verify_paths(
         "code": code,
         "ok": ok,
         "ceiling_trust": ceiling_trust,
-        "verified_at": _utc_timestamp(now),
+        "checked_at": _utc_timestamp(now),
     }
 
 
@@ -431,7 +439,7 @@ def _tally(units: list[bool], nowhere_reason: str, fail_noun: str) -> dict[str, 
 
     PASS iff there is at least one applicable unit and all of them pass;
     otherwise FAIL - distinguishing "applied nowhere" from "some failed" in the
-    human-readable reason (never a silent omission or a vacuous pass).
+    human-readable reason (never a silent omission or a pass with nothing examined).
     """
     n = len(units)
     if n == 0:
@@ -444,8 +452,11 @@ def _tally(units: list[bool], nowhere_reason: str, fail_noun: str) -> dict[str, 
 
 def _evaluate(tests, manifests, commitments, artifacts_dir) -> dict[str, dict[str, Any]]:
     res: dict[str, dict[str, Any]] = {}
-    with_receipts = [c for c in commitments if c["receipts"]]
-    referenced = [c for c in commitments if c["receipts"] or c["rejected_receipts"]]
+    with_counted = [c for c in commitments if c["counted_postregs"]]
+    # A commitment is key-checked only if it has a counted postreg or one rejected as signed
+    # by a different key: one whose postregs were all rejected for an invalid signature has
+    # no key to check (BDR judges them).
+    key_checked = [c for c in commitments if c["key_checked"]]
 
     if "BDR" in tests:
         units = [
@@ -487,16 +498,16 @@ def _evaluate(tests, manifests, commitments, artifacts_dir) -> dict[str, dict[st
         res["content"] = _tally(units, nowhere, "subject(s)")
 
     if "chain" in tests:
-        units = [c["chain_ok"] for c in with_receipts]
+        units = [c["chain_ok"] for c in with_counted]
         res["chain"] = _tally(
-            units, "requested but no commitment has receipts to chain-check", "chain(s)"
+            units, "requested but no commitment has counted postregs to chain-check", "chain(s)"
         )
 
     if "keyconsist" in tests:
-        units = [c["key_consistent"] for c in referenced]
+        units = [c["key_consistent"] for c in key_checked]
         res["keyconsist"] = _tally(
             units,
-            "requested but no commitment has receipts to key-check",
+            "requested but no validly signed postreg names a provided prereg",
             "commitment(s)",
         )
 
@@ -508,58 +519,72 @@ def _build_code(tests: list[str], results: dict[str, dict[str, Any]]) -> str:
     return VERIFY_CODE_VERSION + " " + " ".join(tokens)
 
 
+# Why a postreg that names a prereg does not count toward its commitment, as the report
+# shows it (docs/VERIFICATION.md). keyconsist compares against these constants, never
+# against the wording, so rewording one cannot change a verdict.
+REASON_INVALID_SIGNATURE = "invalid signature"
+REASON_DIFFERENT_KEY = "signed by a different key than the pre-registration"
+
+
 def _get_postreg_rejection_reason(sig: dict[str, Any], prereg: dict[str, Any]) -> str | None:
     """Why a postreg that references ``prereg`` does not count toward fulfilling
     it, or None if it counts: validly signed by the prereg's own key. Only a
     well-formed postreg gets here (a malformed one joins no commitment)."""
     if not (sig.get("signature_ok") and sig.get("keyid_ok")):
-        return "invalid signature"
+        return REASON_INVALID_SIGNATURE
     if sig.get("keyid") != prereg["keyid"]:
-        return "signed by a different key than the pre-registration"
+        return REASON_DIFFERENT_KEY
     return None
 
 
 def _commitment_state(
     pr: dict[str, Any], now: float, due_present: bool, due_ts: float | None
 ) -> str:
-    if pr["receipts"]:
+    if pr["counted_postregs"]:
         return "fulfilled"
     if not due_present:
         return "open"  # no deadline declared -> cannot elapse
     if due_ts is None:
         return "invalid-due"
-    return "elapsed-no-receipt" if now >= due_ts else "open"
+    return "elapsed-no-postreg" if now >= due_ts else "open"
 
 
-def _check_chain(receipts: list[dict[str, Any]]):
-    """A prev_hash chain: exactly one root (no prev_hash), each other points
-    to a present receipt, and no receipt has more than one successor (a single
-    linear chain: no forks, no cycles)."""
-    if not receipts:
-        return True, "no receipts"
-    refs = {r["ref"] for r in receipts}
-    roots = [r for r in receipts if r["prev_hash"] is None]
+def _check_chain(postregs: list[dict[str, Any]]):
+    """A prev_hash chain over a commitment's counted postregs: exactly one root
+    (no prev_hash), each other points to a present postreg, and no postreg has
+    more than one successor (a single linear chain: no forks, no cycles)."""
+    if not postregs:
+        return True, "no counted postregs"
+    refs = {r["ref"] for r in postregs}
+    roots = [r for r in postregs if r["prev_hash"] is None]
     if len(roots) != 1:
         return False, f"expected exactly one chain root, found {len(roots)}"
     successors: dict[Any, int] = {}
-    for r in receipts:
+    for r in postregs:
         prev = r["prev_hash"]
         if prev is not None and prev not in refs:
-            return False, "a receipt's prev_hash points to a missing receipt (gap)"
+            return False, "a postreg's prev_hash points to a missing postreg (gap)"
         if prev is not None:
             successors[prev] = successors.get(prev, 0) + 1
     if any(n > 1 for n in successors.values()):
-        return False, "a receipt has more than one successor (fork)"
+        return False, "a postreg has more than one successor (fork)"
     return True, "chain intact"
 
 
-def _expand(paths: list[str]) -> list[str]:
-    out = []
+def _expand(paths: list[str]) -> list[tuple[str, OSError | None]]:
+    """Each manifest file to examine, with the error that stops it being read, if any.
+
+    A directory stands for its ``*.json`` files. A directory that cannot be listed is
+    examined itself, as malformed, like a path that cannot be read."""
+    out: list[tuple[str, OSError | None]] = []
     for p in paths:
-        if os.path.isdir(p):
-            for name in sorted(os.listdir(p)):
-                if name.endswith(".json"):
-                    out.append(os.path.join(p, name))
-        else:
-            out.append(p)
+        if not os.path.isdir(p):
+            out.append((p, None))
+            continue
+        try:
+            names = sorted(os.listdir(p))
+        except OSError as e:
+            out.append((p, e))
+            continue
+        out.extend((os.path.join(p, name), None) for name in names if name.endswith(".json"))
     return out

@@ -16,14 +16,14 @@ asexec verify <manifest|dir>... --tests <name>[,<name>...] [--artifacts <dir>]
 paths from the envelope root, e.g. `payload.anchor.floor.round`, `signature.keyid`,
 `ceiling.nonce`. `[]` denotes array elements: `payload.subject[].name`.
 
-**Roles.** A *prereg* is a manifest with `payload.phase == "prereg"`; a *postreg* has
-`payload.phase == "postreg"`. `ref(m)` is `sha-256:<hex>` over the canonical bytes of
-`m.payload`.
+**Phases.** A manifest's phase is its `payload.phase`. A *prereg* is a manifest with
+`payload.phase == "prereg"`; a *postreg* has `payload.phase == "postreg"`. `ref(m)` is
+`sha-256:<hex>` over the canonical bytes of `m.payload`.
 
-**Hex.** A value required to be hex is a string that `bytes.fromhex` accepts: an even
-number of hex digits in either case, with ASCII whitespace allowed around and between bytes. Content
-#6 compares the bytes a digest's hex decodes to, so any such spelling matches. Ceiling #2
-and floor #4 compare exactly against the lowercase hex of the digest.
+**Hex.** A value required to be hex is a string that `bytes.fromhex` accepts: an even number
+of hex digits in either case, with ASCII whitespace allowed around and between bytes.
+Content #6 compares the bytes a digest's hex decodes to, so any such spelling matches.
+Ceiling #2 and floor #4 compare exactly against the lowercase hex of the digest.
 
 **JSON.** Valid JSON is what Python's `json.load` accepts (so `NaN` and `Infinity` are
 allowed), nested at most 64 deep: each array or object adds a level, and the outermost
@@ -35,43 +35,53 @@ value and no error state. Malformed input is never an exception: it is a failure
 tests that examine it.
 
 **Code.** One token `<name>=<RESULT>` per requested test, sorted by name, after the prefix
-`asexec-verify/1`. Exit status is `0` if every token is `PASS`, else `2`.
+`asexec-verify/1`. Exit status is `0` if every token is `PASS`, else `2`. A usage error
+(see Run rules) exits `64`, prints no code and verifies nothing. Every exit status is listed
+in the README's [Exit status](../README.md#exit-status).
 
 **Run rules.**
-- `--tests` is required, must name only catalog tests, and must include `BDR`.
+- `--tests` is required, must name only catalog tests, and must include `BDR`. Otherwise
+  the run is a usage error: it exits `64` and nothing is verified.
 - A test passes iff **all** of its *Passes when all* requirements hold for **every** manifest
   or commitment that has the *Examines* properties, and at least one such manifest or
   commitment exists.
 - A property is **absent** iff its key is missing or its value is `null`. Any other value,
   including `{}`, `[]`, `""`, `false` and `0`, is present. A property whose path runs
   through a present non-object (e.g. `payload.anchor` is `[]`) is present, and malformed.
-- (\*) If no provided manifest or commitment has the examined properties, the test is
-  vacuous and is judged `FAIL`. One that lacks them is not examined and cannot fail the
-  test; it also does not count toward passing.
+- (\*) A test is **empty** if no provided manifest or commitment has the properties it
+  examines. An empty test has nothing to examine and is judged `FAIL`. Each test's *When
+  empty* line gives the exact condition and the reason the report shows. A manifest or
+  commitment that lacks the examined properties is not examined and cannot fail the test;
+  it also does not count toward passing.
 - Verification is offline.
 - A file is **malformed** if it cannot be read, is not a JSON object, nests more than 64
-  deep, contains a duplicate JSON key at any level, lacks an object `payload` or `signature`, or its
-  `signature.pubkey` and `signature.sig` are not both hex. It fails `BDR`, and no other test
-  examines it: it joins no commitment, so it is neither counted nor rejected.
+  deep, contains a duplicate JSON key at any level, lacks an object `payload` or
+  `signature`, has a `payload` with no canonical bytes (a string in it, key or value, holds
+  an unpaired surrogate escape such as `"\ud800"`, which has no UTF-8 encoding), or its
+  `signature.pubkey` and `signature.sig` are not both hex. It fails
+  `BDR`, and only `BDR` examines it. It takes no part in any commitment: it is neither
+  counted nor rejected (see
+  [Matching postregs to commitments](#matching-postregs-to-commitments)).
 
 ## Output
 
 `asexec verify` prints a report for people to read, then the code, then when the run
-happened. Only the code line and the exit status are stable to script against. The report's wording may change, except for
-the reasons this document lists.
+happened. Only the code line and the exit status are stable to script against. The
+report's wording may change, except for the reasons this document lists.
 
 | Block | Printed | Shows |
 |---|---|---|
 | `=== manifests ===` | always | One line per file: `✓` if `BDR`'s signature and keyid conditions hold (else `✗`), the path, `payload.phase` and `signature.keyid`. Indented beneath: why a malformed file is malformed, and one line each for a floor, a ceiling and content hashes when the manifest has them. |
 | `=== commitments ===` | always | One entry per commitment (a prereg's `ref` and signer): its [state](#commitment-states), `ref`, signer keyid, `due`, the number of counted postregs, a chain problem if any, and each rejected postreg with its reason. |
-| `=== notarization-only … ===` | if any | Each postreg whose `payload.fulfills` matches no provided prereg. |
+| `=== notarization-only … ===` | if any | Each [notarization-only](#matching-postregs-to-commitments) postreg: one whose `payload.fulfills` matches no provided prereg. |
 | `=== tests ===` | always | One line per requested test: its result and a short reason. |
 | `=== ceiling trust … ===` | if a ceiling verified | Which witness you are trusting, and for what time. |
 | code | always | The [code](#conventions). |
-| `Verified at <time>` | always | When the run happened, in UTC to the second: the moment commitment states were judged against. Not part of the code. |
+| `Checked at <time>` | always | When the run happened, in UTC to the second: the moment commitment states were judged against. Not part of the code. |
 
-Exit status is `0` if every token in the code is `PASS`, else `2`. Commitment states never
-affect either: a run can show `ELAPSED-NO-RECEIPT` and still exit `0`.
+Exit status is `0` if every token in the code is `PASS`, else `2`; a usage error exits `64`
+with no report. Commitment states never affect either: a run can show `ELAPSED-NO-POSTREG`
+and still exit `0`.
 
 **Example.** The three files from the [`chain` example](#chain), checked with
 `BDR`, `chain` and `keyconsist`. Hashes are shortened with `…`.
@@ -95,22 +105,24 @@ $ asexec verify prereg.json postreg-1.json postreg-2.json --tests BDR,chain,keyc
   ✓ keyconsist=PASS  (1/1 commitment(s) ok)
 
 asexec-verify/1 BDR=PASS chain=PASS keyconsist=PASS
-Verified at 2026-12-31T23:59:59Z
+Checked at 2026-12-31T23:59:59Z
 ```
 
 ## Summary
 
 | Test | Examines (\*) | Passes when all |
 |---|---|---|
-| [`BDR`](#bdr) | `payload`<br>`signature.pubkey`<br>`signature.sig`<br>`signature.keyid` | file is well-formed JSON<br>`signature.sig` verifies over `payload`<br>`signature.keyid` derives from `signature.pubkey` |
-| [`ceiling`](#ceiling) | `ceiling.ceiling_type`<br>`ceiling.nonce`<br>`ceiling.witness_id`<br>`ceiling.pubkey`<br>`ceiling.response`<br>`payload` | `ceiling.ceiling_type` is `roughtime`<br>`ceiling.nonce` equals `ref(payload)`<br>`ceiling.witness_id` has a pinned key<br>`ceiling.pubkey`, if present, equals the pinned key<br>`ceiling.response` verifies against the pinned key |
-| [`chain`](#chain) | `payload.phase`<br>`payload.fulfills`<br>`payload.prev_hash`<br>`signature.pubkey`<br>`signature.sig`<br>`signature.keyid` | exactly one counted postreg has no `payload.prev_hash`<br>every other `payload.prev_hash` is the `ref` of a counted postreg<br>no `ref` is the `payload.prev_hash` of more than one counted postreg |
-| [`content`](#content) | `payload.subject`<br>`payload.subject[].name`<br>`payload.subject[].digest`<br>`payload.hash_alg`<br>`--artifacts` | `payload.subject` is a non-empty array of well-formed entries<br>`payload.hash_alg` is available<br>`name` resolves inside `--artifacts`<br>the artifact exists and is readable<br>recomputed digest equals `digest[hash_alg]` |
-| [`floor`](#floor) | `payload.anchor.floor.floor_type`<br>`payload.anchor.floor.chain_hash`<br>`payload.anchor.floor.round`<br>`payload.anchor.floor.signature`<br>`payload.anchor.floor.randomness` | `floor_type` is `drand`<br>`chain_hash` is pinned<br>`randomness`, if present, equals `sha256(signature)`<br>`signature` BLS-verifies for `round` under the pinned key |
-| [`keyconsist`](#keyconsist) | `payload.phase`<br>`payload.fulfills`<br>`signature.pubkey`<br>`signature.sig`<br>`signature.keyid` | every validly signed postreg referencing the prereg has the prereg's `signature.keyid` |
+| [`BDR`](#bdr) | • `payload`<br>• `signature.pubkey`<br>• `signature.sig`<br>• `signature.keyid` | 1. file is well-formed JSON<br>2. `signature.sig` verifies over `payload`<br>3. `signature.keyid` derives from `signature.pubkey` |
+| [`ceiling`](#ceiling) | • `ceiling.ceiling_type`<br>• `ceiling.nonce`<br>• `ceiling.witness_id`<br>• `ceiling.pubkey`<br>• `ceiling.response`<br>• `payload` | 1. `ceiling.ceiling_type` is `roughtime`<br>2. `ceiling.nonce` equals `ref(payload)`<br>3. `ceiling.witness_id` has a pinned key<br>4. `ceiling.pubkey`, if present, equals the pinned key<br>5. `ceiling.response` verifies against the pinned key |
+| [`chain`](#chain) | • `payload.phase`<br>• `payload.fulfills`<br>• `payload.prev_hash`<br>• `signature.pubkey`<br>• `signature.sig`<br>• `signature.keyid` | 1. exactly one counted postreg has no `payload.prev_hash`<br>2. every other `payload.prev_hash` is the `ref` of a counted postreg<br>3. no `ref` is the `payload.prev_hash` of more than one counted postreg |
+| [`content`](#content) | • `payload.subject`<br>• `payload.subject[].name`<br>• `payload.subject[].digest`<br>• `payload.hash_alg`<br>• `--artifacts` | 1. `payload.subject` is a non-empty array of well-formed entries<br>2. `payload.hash_alg` is available<br>3. `name` resolves inside `--artifacts`<br>4. the artifact exists<br>5. the artifact is readable<br>6. recomputed digest equals `digest[hash_alg]` |
+| [`floor`](#floor) | • `payload.anchor.floor.floor_type`<br>• `payload.anchor.floor.chain_hash`<br>• `payload.anchor.floor.round`<br>• `payload.anchor.floor.signature`<br>• `payload.anchor.floor.randomness` | 1. `floor_type` is `drand`<br>2. `chain_hash` is pinned<br>3. `round` is an integer and `signature` is hex<br>4. `randomness`, if present, equals `sha256(signature)`<br>5. `signature` BLS-verifies for `round` under the pinned key |
+| [`keyconsist`](#keyconsist) | • `payload.phase`<br>• `payload.fulfills`<br>• `signature.pubkey`<br>• `signature.sig`<br>• `signature.keyid` | 1. every validly signed postreg naming the prereg's `ref` has the `signature.keyid` of a provided prereg with that `ref` |
 
-(\*) per [Run rules](#conventions): examined properties absent from every manifest or
-commitment make the test vacuous, judged `FAIL`.
+Condition numbers match each test's *Passes when all* list below; the table shortens them.
+
+(\*) per [Run rules](#conventions): if no manifest or commitment has these properties, the
+test is empty and judged `FAIL` (see each test's *When empty* line).
 
 ---
 
@@ -128,13 +140,17 @@ Bedrock. Mandatory in every run.
 
 **Passes when all**
 1. The file is a JSON object, nested at most 64 deep, with no duplicate keys, containing
-   `payload` and `signature`.
+   `payload` and `signature`, and `payload` has canonical bytes (no string in it, key or
+   value, holds an unpaired surrogate escape).
 2. `signature.pubkey` and `signature.sig` are hex and `signature.sig` is a valid ed25519
    signature by `signature.pubkey` over the PAE signing input of the canonical bytes of
    `payload`.
 3. `signature.keyid == "sha-256:" + sha256(bytes.fromhex(signature.pubkey)).hexdigest()`.
 
-**Vacuous reason:** `no manifests to verify`.
+**When empty:** if no manifest file is found (every path given is a directory with no
+`*.json` file in it), `BDR` has nothing to examine and is `FAIL`, with the reason
+`no manifests to verify`. A path that is not a directory is always examined, even if it
+does not exist (it is malformed), and so is a directory that cannot be listed.
 
 **Does not establish:** who signed (internal consistency only); that `payload` is a
 well-formed asexec body (any validly signed object `payload` passes, whatever it holds).
@@ -170,7 +186,7 @@ Output (from `=== tests ===` on), exit status `0`:
   ✓ BDR=PASS  (1/1 manifest(s) ok)
 
 asexec-verify/1 BDR=PASS
-Verified at 2026-12-31T23:59:59Z
+Checked at 2026-12-31T23:59:59Z
 ```
 
 ---
@@ -199,7 +215,8 @@ Roughtime witness: the manifest was created no later than time T.
    - the Merkle path (`PATH`, `INDX`) roots `ceiling.nonce` at `SREP.ROOT`;
    - `DELE.MINT <= SREP.MIDP <= DELE.MAXT`.
 
-**Vacuous reason:** `requested but no manifest carries a ceiling witness`.
+**When empty:** if no well-formed manifest has a `ceiling`, the test has nothing to examine
+and is `FAIL`, with the reason `requested but no manifest carries a ceiling witness`.
 
 **Not examined:** a manifest that is malformed (see Run rules).
 
@@ -240,7 +257,7 @@ Output (from `=== tests ===` on), exit status `0`:
   - prereg.json: ceiling witnessed by int08h-Roughtime at … - you are trusting …
 
 asexec-verify/1 BDR=PASS ceiling=PASS
-Verified at 2026-12-31T23:59:59Z
+Checked at 2026-12-31T23:59:59Z
 ```
 
 ---
@@ -249,7 +266,8 @@ Verified at 2026-12-31T23:59:59Z
 
 Linearity of a commitment's postreg chain.
 
-A postreg is **counted** for a prereg if it meets the [counting rule](#counting-rule).
+A postreg is **counted** for a prereg if it meets the
+[conditions for counting](#matching-postregs-to-commitments).
 
 **Examines (\*)**
 - `payload.phase`
@@ -267,7 +285,9 @@ A postreg is **counted** for a prereg if it meets the [counting rule](#counting-
    of the same prereg (no gaps).
 3. No `ref` appears as `payload.prev_hash` of more than one counted postreg (no forks).
 
-**Vacuous reason:** `requested but no commitment has receipts to chain-check`.
+**When empty:** if no commitment has a counted postreg, the test has nothing to examine and
+is `FAIL`, with the reason `requested but no commitment has counted postregs to
+chain-check`.
 
 **Does not establish:** completeness. Dropping the last postreg(s) of a chain is not
 detectable.
@@ -302,7 +322,7 @@ Output (from `=== tests ===` on), exit status `0`:
   ✓ chain=PASS  (1/1 chain(s) ok)
 
 asexec-verify/1 BDR=PASS chain=PASS
-Verified at 2026-12-31T23:59:59Z
+Checked at 2026-12-31T23:59:59Z
 ```
 
 ---
@@ -330,7 +350,9 @@ Subject digests recomputed from the original artifacts.
 6. The recomputed digest of the file or directory under `hash_alg` equals the bytes of
    `digest[hash_alg]`, in either hex case.
 
-**Vacuous reason:** `requested but no content could be checked (need --artifacts and a
+**When empty:** if `--artifacts` is not given or is empty (`--artifacts ""`), or no
+well-formed manifest has a `payload.subject`, the test has nothing to examine and is
+`FAIL`, with the reason `requested but no content could be checked (need --artifacts and a
 manifest with a subject)`.
 
 **Entry failure reasons** (shown per entry in the report): `malformed subject entry`,
@@ -375,7 +397,7 @@ Output (from `=== tests ===` on), exit status `0`:
   ✓ content=PASS  (1/1 subject(s) ok)
 
 asexec-verify/1 BDR=PASS content=PASS
-Verified at 2026-12-31T23:59:59Z
+Checked at 2026-12-31T23:59:59Z
 ```
 
 ---
@@ -399,7 +421,9 @@ drand beacon: the manifest was created no earlier than time T.
 5. `signature` is a valid BLS12-381 signature over `sha256(round as 8-byte big-endian)`
    under the pinned group public key.
 
-**Vacuous reason:** `requested but no manifest carries an anchor.floor`.
+**When empty:** if no well-formed manifest has a `payload.anchor.floor`, the test has
+nothing to examine and is `FAIL`, with the reason `requested but no manifest carries an
+anchor.floor`.
 
 **Not examined:** a manifest that is malformed.
 
@@ -440,7 +464,7 @@ Output (from `=== tests ===` on), exit status `0`:
   ✓ floor=PASS  (1/1 floor(s) ok)
 
 asexec-verify/1 BDR=PASS floor=PASS
-Verified at 2026-12-31T23:59:59Z
+Checked at 2026-12-31T23:59:59Z
 ```
 
 ---
@@ -456,14 +480,19 @@ Whether a commitment's postregs were signed by its own key.
 - `signature.sig`
 - `signature.keyid`
 
-**Passes when all** (for each commitment referenced by at least one postreg, counted or not)
+**Passes when all** (for each commitment with a counted postreg or a postreg rejected as
+`signed by a different key than the pre-registration`; see
+[Matching postregs to commitments](#matching-postregs-to-commitments))
 1. Every postreg whose `payload.fulfills` equals the commitment's `ref` and whose signature
    is valid (the `BDR` signature and keyid conditions) has the `signature.keyid` of a
    provided prereg with that `ref`.
 
-A postreg with an invalid signature is not judged here (it fails `BDR`).
+A postreg with an invalid signature is not judged here (it fails `BDR`), so a commitment
+whose only postregs have invalid signatures has no key to check and is not examined.
 
-**Vacuous reason:** `requested but no commitment has receipts to key-check`.
+**When empty:** if no validly signed postreg names a provided prereg, the test has nothing
+to examine and is `FAIL`, with the reason `requested but no validly signed postreg names a
+provided prereg`.
 
 **Example** (all requirements pass)
 
@@ -490,12 +519,12 @@ Output (from `=== tests ===` on), exit status `0`:
   ✓ keyconsist=PASS  (1/1 commitment(s) ok)
 
 asexec-verify/1 BDR=PASS keyconsist=PASS
-Verified at 2026-12-31T23:59:59Z
+Checked at 2026-12-31T23:59:59Z
 ```
 
 ---
 
-## Counting rule
+## Matching postregs to commitments
 
 A **commitment** is a prereg's `ref` together with its signer, `signature.keyid`. The body
 holds no key, so the same body signed by two keys has one `ref` but is two commitments, each
@@ -506,15 +535,48 @@ A postreg `P` **counts** toward the commitment of prereg `R` iff all hold:
 2. `P` meets the `BDR` signature and keyid conditions.
 3. `P.signature.keyid == R.signature.keyid`.
 
-A postreg whose `payload.fulfills` equals `ref(R)` but that counts toward no commitment with
-that `ref` is **rejected**. It is listed under each such commitment with its reason
-(`invalid signature`, or `signed by a different key than the pre-registration`), and is
-never counted toward fulfillment or `chain`.
+A commitment is keyed by its signer, so a postreg counts toward at most one commitment: the
+one with its `payload.fulfills` as `ref` and its own `signature.keyid` as signer.
+
+A postreg that names a prereg (condition 1) but counts toward no commitment with that `ref`
+is **rejected**. It is left out of fulfillment and of `chain`, and is listed under each
+commitment with that `ref` with the reason it fails there: `invalid signature` (condition 2)
+or `signed by a different key than the pre-registration` (condition 3). A postreg that
+counts toward one commitment of a `ref` is not rejected under the others. If one prereg body
+is signed by keys A and B, a postreg signed by A counts toward A's commitment and is not
+listed under B's.
+
+A postreg that fails condition 1 for every provided prereg names none of them. It is
+**notarization-only**: there is no commitment to list it under, so it has no
+[state](#commitment-states) and is listed in its own block, whether or not its signature is
+valid.
+
+**In summary**, by kind of file:
+
+| Postreg situation | `BDR` | Outcome | In the report |
+|---|---|---|---|
+| Malformed (see [Run rules](#conventions)) | `FAIL` | none: not treated as a postreg | not listed under any commitment |
+| Well-formed, fails the `BDR` signature or keyid condition, `fulfills` a provided prereg | `FAIL` | not counted: `invalid signature` | **rejected** |
+| Valid signature by a key that signed no provided prereg with that `ref`, `fulfills` a provided prereg | `PASS` | not counted: `signed by a different key than the pre-registration` | **rejected**; also fails `keyconsist` |
+| Valid signature by the key of a provided prereg with that `ref` | `PASS` | **counted** toward that prereg's commitment | listed as a counted postreg of that commitment only |
+| Well-formed, `fulfills` matches no provided prereg | `PASS` if the signature is valid, else `FAIL` | not counted: names no provided prereg | **notarization-only** |
+
+**What affects a verdict.** Only the tests produce `PASS` or `FAIL`. *Counted* matters
+because `chain` examines counted postregs only. `keyconsist` fails a commitment only for a
+postreg rejected under it as `signed by a different key than the pre-registration`; a
+counted postreg, one rejected for `invalid signature` and a notarization-only postreg never
+fail it, and a commitment whose postregs all have invalid signatures is not examined.
+*Rejected* and *notarization-only* are only groupings in the report and add no failure of
+their own. The failures in the table come from `BDR` (the first two rows, and the last row
+when the signature is invalid) and `keyconsist` (the third row).
 
 A manifest is identified by its `ref`. Copies of a postreg, with the same `ref` and
-`signature.keyid`, are one receipt: counted, rejected or notarization-only once, however
-many are provided. Copies of a prereg, with the same `ref` and `signature.keyid`, are one
-commitment.
+`signature.keyid`, are listed once per outcome, however many are provided. Copies usually
+share an outcome, so they are counted, rejected or notarization-only once. A copy whose
+signature does not verify is judged on its own: it fails `BDR` and, if it names a provided
+prereg, is listed as rejected for `invalid signature` beside the valid copy's outcome (so a
+broken copy of a counted postreg shows the same `ref` as counted and as rejected). Copies of
+a prereg, with the same `ref` and `signature.keyid`, are one commitment.
 
 ## Commitment states
 
@@ -525,9 +587,11 @@ One per commitment, shown in the `=== commitments ===` block of the report (see
 |---|---|
 | `fulfilled` | at least one counted postreg |
 | `open` | no counted postreg, and `payload.due` is absent or in the future |
-| `elapsed-no-receipt` | no counted postreg, and `payload.due` is at or before now |
+| `elapsed-no-postreg` | no counted postreg, and `payload.due` is at or before now |
 | `invalid-due` | no counted postreg, and `payload.due` is present but not a parseable ISO-8601 string |
-| `notarization-only` | (postreg-side) a postreg whose `payload.fulfills` matches no provided prereg |
+
+A [notarization-only](#matching-postregs-to-commitments) postreg belongs to no commitment,
+so it has no state.
 
 A `payload.due` without a UTC offset or `Z` is read as UTC, never in the verifier's local
 timezone, and is flagged in the report. Timeliness (a postreg created before `due`) is not
@@ -545,10 +609,11 @@ chained postregs as in the [`chain` example](#chain):
 ```
 
 Each entry is the state in capitals and the prereg's `ref`, then its signer's keyid, `due`
-(or `(none declared)`) and the number of counted postregs. Problems follow as `✗` lines: a `due`
-without a timezone, an unparseable `due`, a chain problem (on the `postregs` line), or a
-rejected postreg and why it does not count. `notarization-only` postregs are listed in their
-own block, since they have no prereg to sit under.
+(or `(none declared)`) and the number of counted postregs. Problems follow as `✗` lines: a
+`due` without a timezone, an unparseable `due`, a chain problem (on the `postregs` line), or
+a rejected postreg and why it does not count.
+[`notarization-only`](#matching-postregs-to-commitments) postregs are listed in their own
+block, since they have no prereg to sit under.
 
 ## Not in this version
 

@@ -1,5 +1,7 @@
 """``BDR`` (bedrock): docs/VERIFICATION.md `### BDR`. Naming: see conftest.py."""
 
+import os
+
 import pytest
 
 from asexec import keys
@@ -127,8 +129,42 @@ def test_BDR__fail__3_keyid_derives_from_pubkey(scenario):
     assert scenario.code() == FAIL
 
 
-def test_BDR__fail__vacuous_no_manifests():
-    """BDR (*): with no manifest to verify, BDR fails rather than passing vacuously."""
+def test_BDR__fail__empty_no_manifests():
+    """BDR (*): with no manifest to verify, BDR fails rather than passing with nothing examined."""
     report = verify_paths([], ["BDR"])
     assert report["code"] == FAIL
     assert report["results"]["BDR"]["reason"] == "no manifests to verify"
+
+
+def test_BDR__fail__empty_directory_with_no_json_files(tmp_path):
+    """BDR (*): a directory with no *.json file in it yields no manifest file to examine."""
+    (tmp_path / "notes.txt").write_text("not a manifest")
+    report = verify_paths([str(tmp_path)], ["BDR"])
+    assert report["code"] == FAIL
+    assert report["results"]["BDR"]["applicable"] == 0
+    assert report["results"]["BDR"]["reason"] == "no manifests to verify"
+
+
+def test_BDR__fail__1_missing_file_is_examined_and_malformed(tmp_path):
+    """BDR #1: a path that is not a directory is examined even if it does not exist."""
+    report = verify_paths([str(tmp_path / "absent.json")], ["BDR"])
+    assert report["code"] == FAIL
+    assert report["results"]["BDR"]["applicable"] == 1
+
+
+def test_BDR__fail__1_unlistable_directory_is_examined_and_malformed(tmp_path, monkeypatch):
+    """BDR #1: a directory that cannot be listed is examined itself, as malformed, never
+    an exception."""
+
+    def denied(path):
+        raise PermissionError(13, "Permission denied", path)
+
+    monkeypatch.setattr(os, "listdir", denied)
+    report = verify_paths([str(tmp_path)], ["BDR"])
+    assert report["code"] == FAIL
+    assert report["results"]["BDR"]["applicable"] == 1
+    (entry,) = report["manifests"]
+    assert entry["path"] == str(tmp_path)
+    assert entry["signature"]["errors"] == [
+        f"malformed: [Errno 13] Permission denied: '{tmp_path}'"
+    ]

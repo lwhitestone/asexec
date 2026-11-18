@@ -1,9 +1,9 @@
 """Doc coverage: every numbered requirement in docs/VERIFICATION.md has a failing-case test.
 
 Reads the numbered *Passes when all* items of each `` ### `<test>` `` section (and the
-numbered items of `## Counting rule`), and the ``test_<name>__{pass,fail}__<N>_...`` names
-of this suite (see conftest.py). Black-box: it checks the suite against the doc, never
-against the verifier's code.
+numbered items of `## Matching postregs to commitments`), and the
+``test_<name>__{pass,fail}__<N>_...`` names of this suite (see conftest.py). Black-box: it
+checks the suite against the doc, never against the verifier's code.
 """
 
 import ast
@@ -16,7 +16,7 @@ HERE = Path(__file__).parent
 DOC = HERE.parents[1] / "docs" / "VERIFICATION.md"
 
 _TEST_NAME = re.compile(
-    r"^test_(?P<name>[A-Za-z_]+?)__(?P<kind>pass|fail)__(?P<item>\d+|all|vacuous)_?"
+    r"^test_(?P<name>[A-Za-z_]+?)__(?P<kind>pass|fail)__(?P<item>\d+|all|empty)_?"
 )
 _ITEM = re.compile(r"^(\d+)\. ")
 
@@ -31,8 +31,8 @@ def _doc_items() -> dict[str, set[int]]:
         if heading:
             section, listing = heading.group(1), False
             items[section] = set()
-        elif line == "## Counting rule":
-            section, listing = "counting_rule", True
+        elif line == "## Matching postregs to commitments":
+            section, listing = "matching", True
             items[section] = set()
         elif line.startswith("## "):
             section, listing = None, False
@@ -64,7 +64,7 @@ SUITE = _suite_tests()
 
 
 def test_doc_coverage__doc_lists_every_catalog_test():
-    assert set(TEST_CATALOG) == set(DOC_ITEMS) - {"counting_rule"}
+    assert set(TEST_CATALOG) == set(DOC_ITEMS) - {"matching"}
     assert all(DOC_ITEMS.values()), "a section with no numbered items was parsed"
 
 
@@ -80,7 +80,7 @@ def test_doc_coverage__every_numbered_test_names_a_doc_item():
     assert sorted(named - wanted) == []
 
 
-def test_doc_coverage__every_catalog_test_has_pass_all_and_vacuous_fail():
+def test_doc_coverage__every_catalog_test_has_pass_all_and_empty_fail():
     for name in TEST_CATALOG:
         assert (name, "pass", "all") in SUITE, name
-        assert (name, "fail", "vacuous") in SUITE, name
+        assert (name, "fail", "empty") in SUITE, name
