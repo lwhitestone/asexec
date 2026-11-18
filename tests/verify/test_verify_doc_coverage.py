@@ -1,7 +1,7 @@
 """Doc coverage: every numbered requirement in docs/VERIFICATION.md has a failing-case test.
 
 Reads the numbered *Passes when all* items of each `` ### `<test>` `` section (and the
-numbered items of `## Counting rule`), and the ``test_<name>__{pass,fail}__<N>_...`` names
+numbered items of `## Matching postregs to commitments`), and the ``test_<name>__{pass,fail}__<N>_...`` names
 of this suite (see conftest.py). Black-box: it checks the suite against the doc, never
 against the verifier's code.
 """
@@ -31,7 +31,7 @@ def _doc_items() -> dict[str, set[int]]:
         if heading:
             section, listing = heading.group(1), False
             items[section] = set()
-        elif line == "## Counting rule":
+        elif line == "## Matching postregs to commitments":
             section, listing = "counting_rule", True
             items[section] = set()
         elif line.startswith("## "):

@@ -53,7 +53,7 @@ tests that examine it.
   deep, contains a duplicate JSON key at any level, lacks an object `payload` or `signature`, or its
   `signature.pubkey` and `signature.sig` are not both hex. It fails `BDR`, and only `BDR`
   examines it. It takes no part in any commitment: it is neither counted nor rejected (see
-  [Counting rule](#counting-rule)).
+  [Matching postregs to commitments](#matching-postregs-to-commitments)).
 
 ## Output
 
@@ -65,7 +65,7 @@ the reasons this document lists.
 |---|---|---|
 | `=== manifests ===` | always | One line per file: `✓` if `BDR`'s signature and keyid conditions hold (else `✗`), the path, `payload.phase` and `signature.keyid`. Indented beneath: why a malformed file is malformed, and one line each for a floor, a ceiling and content hashes when the manifest has them. |
 | `=== commitments ===` | always | One entry per commitment (a prereg's `ref` and signer): its [state](#commitment-states), `ref`, signer keyid, `due`, the number of counted postregs, a chain problem if any, and each rejected postreg with its reason. |
-| `=== notarization-only … ===` | if any | Each [notarization-only](#counting-rule) postreg: one whose `payload.fulfills` matches no provided prereg. |
+| `=== notarization-only … ===` | if any | Each [notarization-only](#matching-postregs-to-commitments) postreg: one whose `payload.fulfills` matches no provided prereg. |
 | `=== tests ===` | always | One line per requested test: its result and a short reason. |
 | `=== ceiling trust … ===` | if a ceiling verified | Which witness you are trusting, and for what time. |
 | code | always | The [code](#conventions). |
@@ -252,7 +252,7 @@ Checked at 2026-12-31T23:59:59Z
 
 Linearity of a commitment's postreg chain.
 
-A postreg is **counted** for a prereg if it meets the [counting rule](#counting-rule).
+A postreg is **counted** for a prereg if it meets the [conditions for counting](#matching-postregs-to-commitments).
 
 **Examines (\*)**
 - `payload.phase`
@@ -498,7 +498,7 @@ Checked at 2026-12-31T23:59:59Z
 
 ---
 
-## Counting rule
+## Matching postregs to commitments
 
 A **commitment** is a prereg's `ref` together with its signer, `signature.keyid`. The body
 holds no key, so the same body signed by two keys has one `ref` but is two commitments, each
@@ -553,7 +553,7 @@ One per commitment, shown in the `=== commitments ===` block of the report (see
 
 A "receipt" in a state name (`elapsed-no-receipt`) means a counted postreg.
 
-A [notarization-only](#counting-rule) postreg belongs to no commitment, so it has no state.
+A [notarization-only](#matching-postregs-to-commitments) postreg belongs to no commitment, so it has no state.
 
 A `payload.due` without a UTC offset or `Z` is read as UTC, never in the verifier's local
 timezone, and is flagged in the report. Timeliness (a postreg created before `due`) is not
@@ -573,7 +573,7 @@ chained postregs as in the [`chain` example](#chain):
 Each entry is the state in capitals and the prereg's `ref`, then its signer's keyid, `due`
 (or `(none declared)`) and the number of counted postregs. Problems follow as `✗` lines: a `due`
 without a timezone, an unparseable `due`, a chain problem (on the `postregs` line), or a
-rejected postreg and why it does not count. [`notarization-only`](#counting-rule) postregs are listed in their
+rejected postreg and why it does not count. [`notarization-only`](#matching-postregs-to-commitments) postregs are listed in their
 own block, since they have no prereg to sit under.
 
 ## Not in this version
