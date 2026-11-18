@@ -85,17 +85,19 @@ def test_keys_save_does_not_follow_into_existing_file(tmp_path):
 
 # --- --due (finding 8) ----------------------------------------------------- #
 @pytest.mark.parametrize("due", ["2026-08-30T00:00:00", "2026-08-30", "2026-08-30 12:00"])
-def test_prereg_rejects_timezone_less_due(tmp_path, key, due):
+def test_prereg_rejects_timezone_less_due(tmp_path, key, due, capsys):
     out = tmp_path / "p.json"
     with pytest.raises(SystemExit) as e:
         run("prereg", "--key", key, "--target", "t", "--due", due, "--out", out)
-    assert "offset" in str(e.value) or "timezone" in str(e.value)
+    assert e.value.code == cli.EXIT_USAGE
+    assert "offset" in capsys.readouterr().err
     assert not out.exists()
 
 
 def test_prereg_rejects_garbage_due(tmp_path, key):
-    with pytest.raises(SystemExit):
+    with pytest.raises(SystemExit) as e:
         run("prereg", "--key", key, "--target", "t", "--due", "soon", "--out", tmp_path / "p")
+    assert e.value.code == cli.EXIT_USAGE
 
 
 @pytest.mark.parametrize("due", ["2026-08-30T00:00:00Z", "2026-08-30T00:00:00+02:00"])
@@ -106,11 +108,12 @@ def test_prereg_accepts_explicit_offset_due(tmp_path, key, due):
 
 
 def test_postreg_rejects_timezone_less_due_override(tmp_path, key, prereg):
-    with pytest.raises(SystemExit):
+    with pytest.raises(SystemExit) as e:
         run(
             "postreg", "--key", key, "--fulfills", prereg, "--due", "2030-01-01T00:00:00",
             "--out", tmp_path / "po.json",
         )  # fmt: skip
+    assert e.value.code == cli.EXIT_USAGE
 
 
 # --- --floor / --ceiling (finding 11) -------------------------------------- #
@@ -223,6 +226,21 @@ def test_verify_renders_rejected_postreg_and_invalid_due(tmp_path, key, capsys):
     assert "INVALID-DUE" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("due,shown", [("", '""'), (0, "0"), (None, "(none declared)")])
+def test_verify_shows_a_present_due_as_it_is(tmp_path, key, capsys, due, shown):
+    """A due that is present but holds no timestamp is shown, not "(none declared)"."""
+    out = tmp_path / "pre.json"
+    run("prereg", "--key", key, "--target", "t", "--out", out)
+    body = manifest.get_body(manifest.load(str(out)))
+    body["due"] = due
+    priv, pub = keys.load_signing_key(key)
+    manifest.save(manifest.sign(body, priv, pub), str(out))
+    run("verify", out, "--tests", "BDR")
+    text = capsys.readouterr().out
+    assert f"    due          : {shown}\n" in text
+    assert ("INVALID-DUE" in text) is (due is not None)
+
+
 @pytest.mark.parametrize("tests", ["chain", "BDR,nope", ","], ids=["no-BDR", "unknown", "none"])
 def test_verify_bad_tests_is_a_usage_error(prereg, tests, capsys):
     with pytest.raises(SystemExit) as e:
@@ -233,14 +251,74 @@ def test_verify_bad_tests_is_a_usage_error(prereg, tests, capsys):
 
 @pytest.mark.parametrize(
     "argv",
-    [("verify",), ("verify", "x.json"), ("nope",), ("identity",), ("keygen", "--bogus")],
-    ids=["no-args", "no-tests", "unknown-command", "no-subcommand", "unknown-option"],
+    [
+        ("verify",),
+        ("verify", "x.json"),
+        ("nope",),
+        ("identity",),
+        ("keygen", "--bogus"),
+        ("prereg", "--key", "k"),
+        ("prereg", "--key", "k", "--target", ""),
+        ("prereg", "--key", "k", "--target", "t", "--target-file", "t.json"),
+        ("prereg", "--key", "k", "--target", "t", "--declaration", "d", "--declaration-file", "d"),
+        ("prereg", "--key", "k", "--target", "t", "--notes", "n", "--notes-file", "n"),
+        ("postreg", "--key", "k", "--fulfills", REF, "--target", "t", "--target-file", "t"),
+        ("postreg", "--key", "k", "--fulfills", REF, "--repro-recipe", "{nope"),
+        ("identity", "match", "--domain", "d"),
+        ("identity", "match", "--domain", "d", "--keyid", "kid", "--key", "k"),
+        ("identity", "match", "--domain", "d", "--keyid", "kid", "--pubkey", "ab"),
+    ],
+    ids=[
+        "no-args",
+        "no-tests",
+        "unknown-command",
+        "no-subcommand",
+        "unknown-option",
+        "prereg-no-target",
+        "prereg-empty-target",
+        "target-and-target-file",
+        "declaration-and-file",
+        "notes-and-file",
+        "postreg-target-and-target-file",
+        "repro-recipe-not-json",
+        "match-no-key",
+        "match-keyid-and-key",
+        "match-keyid-and-pubkey",
+    ],
 )
-def test_usage_errors_exit_EXIT_USAGE_not_the_FAIL_status(argv):
-    """argparse's own exit status is 2, which verify uses for FAIL; usage errors get 64."""
+def test_usage_errors_exit_EXIT_USAGE_not_the_FAIL_status(argv, capsys):
+    """argparse's own exit status is 2, which verify uses for FAIL; usage errors get 64.
+    Every check that needs only the arguments is a usage error: nothing is read or run."""
     with pytest.raises(SystemExit) as e:
         run(*argv)
     assert e.value.code == cli.EXIT_USAGE != cli.EXIT_FAIL
+    assert capsys.readouterr().err.startswith("usage: ")
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("prereg", "--key", "{tmp}/absent.key", "--target", "t"),
+        ("prereg", "--key", "{tmp}/bad.key", "--target", "t"),
+        ("prereg", "--key", "{key}", "--target", "t", "--subject", "{tmp}/absent"),
+        ("identity", "emit", "--key", "{tmp}/absent.key"),
+    ],
+    ids=["missing-key-file", "invalid-key-file", "missing-subject", "emit-missing-key"],
+)
+def test_errors_exit_EXIT_ERROR_with_a_message_not_a_traceback(tmp_path, key, argv, capsys):
+    """Valid arguments that name an input the command cannot use: exit 1, one line."""
+    (tmp_path / "bad.key").write_text('{"alg": "ed25519", "private_key": "zz"}')
+    argv = [a.format(tmp=tmp_path, key=key) for a in argv]
+    assert run(*argv, "--out", tmp_path / "out.json") == cli.EXIT_ERROR
+    err = capsys.readouterr().err
+    assert err.startswith("error: ") and "Traceback" not in err
+    assert not (tmp_path / "out.json").exists()
+
+
+def test_identity_match_failed_fetch_exits_EXIT_ERROR(monkeypatch, capsys):
+    monkeypatch.setattr(identity, "fetch_wellknown", _boom)
+    assert run("identity", "match", "--domain", "d", "--keyid", "kid") == cli.EXIT_ERROR
+    assert capsys.readouterr().err == "error: offline\n"
 
 
 # --- verify printer ---------------------------------------------------------- #
@@ -386,7 +464,11 @@ def test_identity_match_exit_codes(tmp_path, key, capsys, monkeypatch, bound, co
     assert "caveat: point-in-time" in out
 
 
-def test_identity_match_passes_explicit_keyid_and_pubkey(monkeypatch):
+@pytest.mark.parametrize(
+    "flag,expected",
+    [("--keyid", {"keyid": "kid", "pubkey": None}), ("--pubkey", {"keyid": None, "pubkey": "kid"})],
+)
+def test_identity_match_passes_explicit_keyid_or_pubkey(monkeypatch, flag, expected):
     seen = {}
     monkeypatch.setattr(
         identity,
@@ -396,8 +478,8 @@ def test_identity_match_passes_explicit_keyid_and_pubkey(monkeypatch):
             or {"bound": True, "listed_count": 0, "caveat": ""}
         ),
     )
-    assert run("identity", "match", "--domain", "d", "--keyid", "kid", "--pubkey", "ab") == 0
-    assert seen == {"keyid": "kid", "pubkey": "ab"}
+    assert run("identity", "match", "--domain", "d", flag, "kid") == 0
+    assert seen == expected
 
 
 def test_identity_without_subcommand_is_usage_error():

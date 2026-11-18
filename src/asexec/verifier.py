@@ -320,8 +320,10 @@ def verify_paths(
     manifests_report = []
     ceiling_trust = []
 
-    for p in files:
+    for p, unlistable in files:
         try:
+            if unlistable is not None:
+                raise unlistable
             mani = manifest.load(p)
             sig = verify_signature(mani)
         except Exception as e:  # unreadable / not JSON / duplicate keys / not an object
@@ -569,13 +571,20 @@ def _check_chain(postregs: list[dict[str, Any]]):
     return True, "chain intact"
 
 
-def _expand(paths: list[str]) -> list[str]:
-    out = []
+def _expand(paths: list[str]) -> list[tuple[str, OSError | None]]:
+    """Each manifest file to examine, with the error that stops it being read, if any.
+
+    A directory stands for its ``*.json`` files. A directory that cannot be listed is
+    examined itself, as malformed, like a path that cannot be read."""
+    out: list[tuple[str, OSError | None]] = []
     for p in paths:
-        if os.path.isdir(p):
-            for name in sorted(os.listdir(p)):
-                if name.endswith(".json"):
-                    out.append(os.path.join(p, name))
-        else:
-            out.append(p)
+        if not os.path.isdir(p):
+            out.append((p, None))
+            continue
+        try:
+            names = sorted(os.listdir(p))
+        except OSError as e:
+            out.append((p, e))
+            continue
+        out.extend((os.path.join(p, name), None) for name in names if name.endswith(".json"))
     return out

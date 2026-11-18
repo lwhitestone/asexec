@@ -1,5 +1,7 @@
 """``BDR`` (bedrock): docs/VERIFICATION.md `### BDR`. Naming: see conftest.py."""
 
+import os
+
 import pytest
 
 from asexec import keys
@@ -148,3 +150,21 @@ def test_BDR__fail__1_missing_file_is_examined_and_malformed(tmp_path):
     report = verify_paths([str(tmp_path / "absent.json")], ["BDR"])
     assert report["code"] == FAIL
     assert report["results"]["BDR"]["applicable"] == 1
+
+
+def test_BDR__fail__1_unlistable_directory_is_examined_and_malformed(tmp_path, monkeypatch):
+    """BDR #1: a directory that cannot be listed is examined itself, as malformed, never
+    an exception (verify exits only 0, 2 or 64)."""
+
+    def denied(path):
+        raise PermissionError(13, "Permission denied", path)
+
+    monkeypatch.setattr(os, "listdir", denied)
+    report = verify_paths([str(tmp_path)], ["BDR"])
+    assert report["code"] == FAIL
+    assert report["results"]["BDR"]["applicable"] == 1
+    (entry,) = report["manifests"]
+    assert entry["path"] == str(tmp_path)
+    assert entry["signature"]["errors"] == [
+        f"malformed: [Errno 13] Permission denied: '{tmp_path}'"
+    ]

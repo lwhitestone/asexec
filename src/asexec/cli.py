@@ -19,17 +19,19 @@ from datetime import datetime
 
 from . import __version__, drand, hashing, identity, keys, manifest, verifier
 from .constants import DIGEST_REF_PREFIX, SUBJECT_DEFAULT_HASH_ALG
-from .errors import VerificationError
+from .errors import AsexecError, VerificationError
 
 REF_RE = re.compile(re.escape(DIGEST_REF_PREFIX) + r"[0-9a-f]{64}")
 OK = "✓"
 NO = "✗"
 
-# Exit statuses (README "Exit status"). A ``SystemExit("error: ...")`` exits EXIT_ERROR.
+# Exit statuses (README "Exit status"). A ``SystemExit("error: ...")`` exits EXIT_ERROR, as
+# does any error ``main`` catches. Checks that need only the arguments are argparse's, so
+# they exit EXIT_USAGE; checks that need a file or the network exit EXIT_ERROR.
 EXIT_OK = 0  # success; verify: every requested test PASS; identity match: bound
-EXIT_ERROR = 1  # the command could not complete (bad input file, failed fetch, ...)
+EXIT_ERROR = 1  # the arguments are valid but the command failed (input file, fetch, ...)
 EXIT_FAIL = 2  # verify: a requested test FAIL; identity match: not bound
-EXIT_USAGE = 64  # usage error (sysexits EX_USAGE): bad option, argument or --tests
+EXIT_USAGE = 64  # usage error (sysexits EX_USAGE): the arguments themselves are wrong
 
 
 # --------------------------------------------------------------------------- #
@@ -47,14 +49,9 @@ def _load_json(path: str) -> str | dict:
 def _get_arg_or_file[T](
     args, arg_name: str, file_arg_name: str, load_file: Callable[[str], T]
 ) -> str | T | None:
-    """Load a value from either ``--<arg>`` or ``--<file-arg>``, but not both."""
+    """Load a value from ``--<arg>`` or ``--<file-arg>`` (argparse allows at most one)."""
     value = getattr(args, arg_name, None)
     file_path = getattr(args, file_arg_name, None)
-    if value and file_path:
-        raise SystemExit(
-            f"error: provide --{arg_name.replace('_', '-')} "
-            f"OR --{file_arg_name.replace('_', '-')}, not both"
-        )
     if value:
         return value
     if file_path:
@@ -80,26 +77,6 @@ def _get_declaration(args) -> str | dict | None:
 def _get_notes(args) -> str | dict | None:
     """Retrieve the notes value (from arg xor file), if any."""
     return _get_arg_or_file(args, "notes", "notes_file", _load_json)
-
-
-def _get_due(args) -> str | None:
-    """Validate the provided ``--due`` ISO-8601 deadline; return it verbatim.
-
-    An explicit UTC offset (or ``Z``) is required: a timezone-less deadline
-    would mean different instants to verifiers in different timezones.
-    """
-    if not args.due:
-        return None
-    try:
-        parsed = datetime.fromisoformat(args.due.replace("Z", "+00:00"))
-    except ValueError:
-        raise SystemExit(f"error: --due is not a valid ISO-8601 timestamp: {args.due}") from None
-    if parsed.tzinfo is None:
-        raise SystemExit(
-            f"error: --due needs an explicit UTC offset or 'Z' "
-            f"(e.g. 2026-08-30T00:00:00Z or 2026-08-30T00:00:00+02:00): {args.due}"
-        )
-    return args.due
 
 
 def _get_floor(args) -> dict | None:
@@ -198,13 +175,13 @@ def cmd_keygen(args) -> int:
 def cmd_prereg(args) -> int:
     """Write a signed pre-registration, signalling the intended execution."""
     target = _get_target(args)
-    if target is None:
-        raise SystemExit("error: give --target or --target-file (the only mandatory claim)")
+    if target is None:  # argparse requires one; only a file holding null gets here
+        raise SystemExit(f"error: --target-file {args.target_file} holds no target")
     priv, pub = keys.load_signing_key(args.key)
     subject = _build_subject(args.subject, args.hash_alg)
     body = manifest.build_prereg(
         target,
-        due=_get_due(args),
+        due=args.due,
         declaration=_get_declaration(args),
         subject=subject,
         hash_alg=args.hash_alg,
@@ -240,7 +217,7 @@ def cmd_postreg(args) -> int:
             raise SystemExit("error: no --target and --fulfills is not a readable prereg")
         target = prereg_body["target"]
 
-    due = _get_due(args) or (prereg_body or {}).get("due")
+    due = args.due or (prereg_body or {}).get("due")
     declaration = _get_declaration(args) or (prereg_body or {}).get("declaration")
     hash_alg = args.hash_alg or (prereg_body or {}).get("hash_alg") or SUBJECT_DEFAULT_HASH_ALG
 
@@ -256,7 +233,7 @@ def cmd_postreg(args) -> int:
         floor=_get_floor(args),
         notes=_get_notes(args),
         provenance=args.provenance,
-        repro_recipe=json.loads(args.repro_recipe) if args.repro_recipe else None,
+        repro_recipe=args.repro_recipe,
     )
     mani = manifest.sign(body, priv, pub)
     _attach_ceiling(mani, body, args.ceiling, args.best_effort)
@@ -316,7 +293,12 @@ def cmd_verify(args) -> int:
     for c in report["commitments"]:
         print(f"  [{c['state'].upper()}] prereg {c['ref']}")
         print(f"    signer       : {c.get('keyid')}")
-        print(f"    due          : {c.get('due') or '(none declared)'}")
+        due = c.get("due")
+        if due is None:
+            due = "(none declared)"
+        elif not (isinstance(due, str) and due):
+            due = json.dumps(due)  # present but no timestamp, e.g. "" or 0: show it as is
+        print(f"    due          : {due}")
         if c["due_naive"]:
             print(f"    {NO} due has no timezone; read as UTC (re-sign with an explicit offset)")
         if c["state"] == "invalid-due":
@@ -362,21 +344,19 @@ def cmd_identity(args) -> int:
         print("  publish at: https://<your-domain>/.well-known/asexec.json")
         print(f"  keyid     : {pair['keyid']}")
         return EXIT_OK
-    if args.identity_cmd == "match":
-        keyid = args.keyid
-        pubkey = args.pubkey
-        if args.key:
-            _priv, pub = keys.load_signing_key(args.key)
-            keyid = keys.keyid_for(pub)
-        res = identity.match_binding(args.domain, keyid=keyid, pubkey_hex=pubkey)
-        s = OK if res["bound"] else NO
-        print(
-            f"{s} key {'IS' if res['bound'] else 'is NOT'} asserted by {args.domain} "
-            f"({res['listed_count']} key(s) listed)"
-        )
-        print(f"  caveat: {res['caveat']}")
-        return EXIT_OK if res["bound"] else EXIT_FAIL
-    raise SystemExit("error: use 'identity emit' or 'identity match'")
+    # match: argparse requires exactly one of --keyid, --pubkey, --key
+    keyid = args.keyid
+    if args.key:
+        _priv, pub = keys.load_signing_key(args.key)
+        keyid = keys.keyid_for(pub)
+    res = identity.match_binding(args.domain, keyid=keyid, pubkey_hex=args.pubkey)
+    s = OK if res["bound"] else NO
+    print(
+        f"{s} key {'IS' if res['bound'] else 'is NOT'} asserted by {args.domain} "
+        f"({res['listed_count']} key(s) listed)"
+    )
+    print(f"  caveat: {res['caveat']}")
+    return EXIT_OK if res["bound"] else EXIT_FAIL
 
 
 # --------------------------------------------------------------------------- #
@@ -412,12 +392,51 @@ class _Parser(argparse.ArgumentParser):
         self.exit(EXIT_USAGE, f"{self.prog}: error: {message}\n")
 
 
+# Argument types: each validates a value at parse time, so a bad one is a usage error.
 def _tests_arg(spec: str) -> list[str]:
-    """``--tests``, validated at parse time, so a bad value is a usage error."""
+    """``--tests``: known test names, including ``BDR``."""
     try:
         return verifier.parse_tests(spec)
     except VerificationError as e:
         raise argparse.ArgumentTypeError(str(e)) from e
+
+
+def _due_arg(value: str) -> str:
+    """``--due``: an ISO-8601 deadline, returned verbatim.
+
+    An explicit UTC offset (or ``Z``) is required: a timezone-less deadline
+    would mean different instants to verifiers in different timezones.
+    """
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a valid ISO-8601 timestamp: {value!r}") from None
+    if parsed.tzinfo is None:
+        raise argparse.ArgumentTypeError(
+            "needs an explicit UTC offset or 'Z' "
+            f"(e.g. 2026-08-30T00:00:00Z or 2026-08-30T00:00:00+02:00): {value!r}"
+        )
+    return value
+
+
+def _nonempty_arg(value: str) -> str:
+    if not value:
+        raise argparse.ArgumentTypeError("must not be empty")
+    return value
+
+
+def _json_arg(value: str):
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError as e:
+        raise argparse.ArgumentTypeError(f"not valid JSON: {e}") from None
+
+
+def _add_arg_or_file(p, name: str, required: bool = False, help=None, file_help=None, **kw):
+    """``--<name>`` and ``--<name>-file``: at most one (exactly one if ``required``)."""
+    group = p.add_mutually_exclusive_group(required=required)
+    group.add_argument(f"--{name}", help=help, **kw)
+    group.add_argument(f"--{name}-file", help=file_help)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -445,15 +464,26 @@ def build_parser() -> argparse.ArgumentParser:
     # asexec prereg
     pr = sub.add_parser("prereg", help="sign a pre-registration before a run")
     pr.add_argument("--key", required=True, help="key that signs the prereg")
-    pr.add_argument("--target", help="plain-text target details (what you commit to run)")
-    pr.add_argument("--target-file", help="structured JSON target details")
+    _add_arg_or_file(
+        pr,
+        "target",
+        required=True,
+        type=_nonempty_arg,
+        help="plain-text target details (what you commit to run)",
+        file_help="structured JSON target details",
+    )
     pr.add_argument(
         "--due",
+        type=_due_arg,
         help="disclosure deadline, ISO-8601 with an explicit offset or Z "
         "(optional; e.g. 2026-08-30T00:00:00Z)",
     )
-    pr.add_argument("--declaration", help="plain-language commitment text")
-    pr.add_argument("--declaration-file", help="structured JSON declaration")
+    _add_arg_or_file(
+        pr,
+        "declaration",
+        help="plain-language commitment text",
+        file_help="structured JSON declaration",
+    )
     pr.add_argument(
         "--subject",
         nargs="+",
@@ -464,8 +494,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=SUBJECT_DEFAULT_HASH_ALG,
         choices=hashing.available_algorithms(),
     )
-    pr.add_argument("--notes", help="free-form context (hypothesis/methodology)")
-    pr.add_argument("--notes-file", help="structured JSON notes")
+    _add_arg_or_file(
+        pr,
+        "notes",
+        help="free-form context (hypothesis/methodology)",
+        file_help="structured JSON notes",
+    )
     _add_anchor_flags(pr)
     pr.add_argument("--out", default="preregistration.json")
     pr.set_defaults(func=cmd_prereg)
@@ -478,15 +512,14 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="pre-registration file, or a literal sha-256:<64 hex> ref, this fulfils",
     )
-    po.add_argument("--target", help="override target (default: inherit from prereg)")
-    po.add_argument("--target-file")
+    _add_arg_or_file(po, "target", help="override target (default: inherit from prereg)")
     po.add_argument(
         "--due",
+        type=_due_arg,
         help="override disclosure deadline, ISO-8601 with an explicit offset or Z "
         "(default: inherit from prereg)",
     )
-    po.add_argument("--declaration")
-    po.add_argument("--declaration-file")
+    _add_arg_or_file(po, "declaration")
     po.add_argument("--subject", nargs="+", help="path(s) to outputs/transcript/harness to hash")
     po.add_argument("--hash-alg", default=None, choices=hashing.available_algorithms())
     po.add_argument(
@@ -496,10 +529,10 @@ def build_parser() -> argparse.ArgumentParser:
     po.add_argument("--provenance", choices=["asserted", "reproducible"], default="asserted")
     po.add_argument(
         "--repro-recipe",
+        type=_json_arg,
         help="JSON: {seed, decode, runtime} if provenance=reproducible",
     )
-    po.add_argument("--notes")
-    po.add_argument("--notes-file")
+    _add_arg_or_file(po, "notes")
     _add_anchor_flags(po)
     po.add_argument("--out", default="postregistration.json")
     po.set_defaults(func=cmd_postreg)
@@ -529,9 +562,10 @@ def build_parser() -> argparse.ArgumentParser:
         "match", help="check a key matches that which is asserted by a domain (network)"
     )
     iv.add_argument("--domain", required=True)
-    iv.add_argument("--keyid")
-    iv.add_argument("--pubkey")
-    iv.add_argument("--key", help="a key file, to derive the keyid")
+    which = iv.add_mutually_exclusive_group(required=True)  # exactly one key to look for
+    which.add_argument("--keyid")
+    which.add_argument("--pubkey")
+    which.add_argument("--key", help="a key file, to derive the keyid")
     iv.set_defaults(func=cmd_identity)
 
     return p
@@ -539,4 +573,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except (AsexecError, OSError) as e:
+        # an input the arguments name could not be used (missing or bad key file, failed
+        # fetch, ...): a message, not a traceback. verify turns these into FAILs itself.
+        sys.stderr.write(f"error: {e}\n")
+        return EXIT_ERROR

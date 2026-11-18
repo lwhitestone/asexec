@@ -150,7 +150,7 @@ Bedrock. Mandatory in every run.
 **When empty:** if no manifest file is found (every path given is a directory with no
 `*.json` file in it), `BDR` has nothing to examine and is `FAIL`, with the reason
 `no manifests to verify`. A path that is not a directory is always examined, even if it
-does not exist (it is malformed).
+does not exist (it is malformed), and so is a directory that cannot be listed.
 
 **Does not establish:** who signed (internal consistency only); that `payload` is a
 well-formed asexec body (any validly signed object `payload` passes, whatever it holds).
