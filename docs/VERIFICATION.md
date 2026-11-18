@@ -45,9 +45,11 @@ tests that examine it.
 - A property is **absent** iff its key is missing or its value is `null`. Any other value,
   including `{}`, `[]`, `""`, `false` and `0`, is present. A property whose path runs
   through a present non-object (e.g. `payload.anchor` is `[]`) is present, and malformed.
-- (\*) If no provided manifest or commitment has the examined properties, the test is
-  empty (nothing to examine) and is judged `FAIL`. One that lacks them is not examined and
-  cannot fail the test; it also does not count toward passing.
+- (\*) A test is **empty** if no provided manifest or commitment has the properties it
+  examines. An empty test has nothing to examine and is judged `FAIL`. Each test's *When
+  empty* line gives the exact condition and the reason the report shows. A manifest or
+  commitment that lacks the examined properties is not examined and cannot fail the test;
+  it also does not count toward passing.
 - Verification is offline.
 - A file is **malformed** if it cannot be read, is not a JSON object, nests more than 64
   deep, contains a duplicate JSON key at any level, lacks an object `payload` or
@@ -113,8 +115,8 @@ Checked at 2026-12-31T23:59:59Z
 
 Condition numbers match each test's *Passes when all* list below; the table shortens them.
 
-(\*) per [Run rules](#conventions): examined properties absent from every manifest or
-commitment leave the test with nothing to examine, judged `FAIL`.
+(\*) per [Run rules](#conventions): if no manifest or commitment has these properties, the
+test is empty and judged `FAIL` (see each test's *When empty* line).
 
 ---
 
@@ -138,7 +140,8 @@ Bedrock. Mandatory in every run.
    `payload`.
 3. `signature.keyid == "sha-256:" + sha256(bytes.fromhex(signature.pubkey)).hexdigest()`.
 
-**Nothing to examine:** `no manifests to verify`.
+**When empty:** if no file is provided, `BDR` has nothing to examine and is `FAIL`, with
+the reason `no manifests to verify`.
 
 **Does not establish:** who signed (internal consistency only); that `payload` is a
 well-formed asexec body (any validly signed object `payload` passes, whatever it holds).
@@ -203,7 +206,8 @@ Roughtime witness: the manifest was created no later than time T.
    - the Merkle path (`PATH`, `INDX`) roots `ceiling.nonce` at `SREP.ROOT`;
    - `DELE.MINT <= SREP.MIDP <= DELE.MAXT`.
 
-**Nothing to examine:** `requested but no manifest carries a ceiling witness`.
+**When empty:** if no well-formed manifest has a `ceiling`, the test has nothing to examine
+and is `FAIL`, with the reason `requested but no manifest carries a ceiling witness`.
 
 **Not examined:** a manifest that is malformed (see Run rules).
 
@@ -272,7 +276,9 @@ A postreg is **counted** for a prereg if it meets the
    of the same prereg (no gaps).
 3. No `ref` appears as `payload.prev_hash` of more than one counted postreg (no forks).
 
-**Nothing to examine:** `requested but no commitment has counted postregs to chain-check`.
+**When empty:** if no commitment has a counted postreg, the test has nothing to examine and
+is `FAIL`, with the reason `requested but no commitment has counted postregs to
+chain-check`.
 
 **Does not establish:** completeness. Dropping the last postreg(s) of a chain is not
 detectable.
@@ -335,8 +341,10 @@ Subject digests recomputed from the original artifacts.
 6. The recomputed digest of the file or directory under `hash_alg` equals the bytes of
    `digest[hash_alg]`, in either hex case.
 
-**Nothing to examine:** `requested but no content could be checked (need --artifacts and a
-manifest with a subject)`.
+**When empty:** if `--artifacts` is not given, or no well-formed manifest has a
+`payload.subject`, the test has nothing to examine and is `FAIL`, with the reason
+`requested but no content could be checked (need --artifacts and a manifest with a
+subject)`.
 
 **Entry failure reasons** (shown per entry in the report): `malformed subject entry`,
 `algorithm unavailable: <alg>`, `path resolves outside --artifacts`, `artifact not found`,
@@ -404,7 +412,9 @@ drand beacon: the manifest was created no earlier than time T.
 5. `signature` is a valid BLS12-381 signature over `sha256(round as 8-byte big-endian)`
    under the pinned group public key.
 
-**Nothing to examine:** `requested but no manifest carries an anchor.floor`.
+**When empty:** if no well-formed manifest has a `payload.anchor.floor`, the test has
+nothing to examine and is `FAIL`, with the reason `requested but no manifest carries an
+anchor.floor`.
 
 **Not examined:** a manifest that is malformed.
 
@@ -469,8 +479,9 @@ Whether a commitment's postregs were signed by its own key.
 
 A postreg with an invalid signature is not judged here (it fails `BDR`).
 
-**Nothing to examine:** `requested but no commitment has counted or rejected postregs to
-key-check`.
+**When empty:** if no commitment has a counted or rejected postreg, the test has nothing to
+examine and is `FAIL`, with the reason `requested but no commitment has counted or rejected
+postregs to key-check`.
 
 **Example** (all requirements pass)
 
