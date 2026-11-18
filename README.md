@@ -44,21 +44,23 @@ in the form of `asexec verify` providing a code regarding the checks applied.
 ### What `asexec` always proves
 
 Every `verify` run checks [`BDR`](./docs/VERIFICATION.md#bdr) and renders the state of each
-commitment:
+commitment (a pre-registration and its signer):
 
 - **Integrity and non-repudiation.** A manifest (pre-registration or post-registration) was
   not altered after signing, and was signed by the private key whose public key its `keyid`
   names, so the holder of that key cannot later deny signing it.
-- **What was committed to.** Every manifest carries a `target`, and every post-registration
-  names the pre-registration it `fulfills`.
-- **Commitment state.** Each pre-registration is rendered as `fulfilled`, `open`,
-  `elapsed-no-postreg` or `invalid-due`. A post-registration whose pre-registration was not
-  provided has no state: it is listed as `notarization-only`. A post-registration counts toward fulfilling a
-  pre-registration only if it is validly signed by that pre-registration's private key.
-  Silence is on the record too: a pre-registration with no counted post-registration reads
-  `elapsed-no-postreg` once its deadline (`due`) passes. But `asexec` does **not** yet check
-  that a post-registration was created before `due`, so a late one still turns it
-  `fulfilled`; that check (`timely`) arrives in 0.4.0.
+- **What was committed to.** The signature covers the whole `payload`: its `target` (which
+  `asexec prereg` and `postreg` always write) and, in a post-registration, the
+  pre-registration it `fulfills`.
+- **Commitment state.** Each commitment is rendered as `fulfilled`, `open`,
+  `elapsed-no-postreg` or `invalid-due`. A post-registration that names a pre-registration
+  counts toward fulfilling it only if validly signed by that pre-registration's private key;
+  otherwise it is listed under it as *rejected*, with the reason. A post-registration whose
+  pre-registration was not provided belongs to no commitment, so it has no state: it is
+  listed as *notarization-only*. Silence is on the record too: a pre-registration with no
+  counted post-registration reads `elapsed-no-postreg` once its deadline (`due`) passes. But
+  `asexec` does **not** yet check that a post-registration was created before `due`, so a
+  late one still turns it `fulfilled`; that check (`timely`) arrives in 0.4.0.
 
 ### What `asexec` can prove (optional fields and tests)
 
@@ -67,10 +69,10 @@ test:
 
 - **Content** (`subject`; [`content`](./docs/VERIFICATION.md#content) with `--artifacts`). The
   artifacts the verifier holds match the digests a manifest records.
-- **Chain** (`prev_hash`; [`chain`](./docs/VERIFICATION.md#chain)). The post-registrations of a
-  commitment form a single linear chain: one root, no gaps, no forks. *Dropping the last
-  post-registration(s) of a chain is **not** detectable yet; close-out manifests (`final`)
-  are deferred to 0.7.0 or later.*
+- **Chain** (`prev_hash`; [`chain`](./docs/VERIFICATION.md#chain)). The counted
+  post-registrations of a commitment form a single linear chain: one root, no gaps, no
+  forks. *Dropping the last post-registration(s) of a chain is **not** detectable yet;
+  close-out manifests (`final`) are deferred to 0.7.0 or later.*
 - **Key consistency** ([`keyconsist`](./docs/VERIFICATION.md#keyconsist)). Every validly
   signed post-registration of a commitment uses the pre-registration's key.
 - **Created no earlier than** (`anchor.floor`; [`floor`](./docs/VERIFICATION.md#floor)). A
@@ -149,11 +151,18 @@ For a worked end-to-end run, with faults replayed against the verifier, see
 What each test examines, its exact pass criteria, and what it does not establish are
 specified in the [verification catalog](./docs/VERIFICATION.md).
 
-`verify` runs the tests you name and prints one canonical code, e.g.:
+`verify` runs the tests you name and prints a report for people to read (each manifest,
+each commitment with its state, any notarization-only post-registrations, and each test's
+result with a short reason), then one canonical code, then `Checked at <time>` (UTC, the
+moment commitment states were judged against), e.g.:
 
 ```
 asexec-verify/1 BDR=PASS chain=PASS content=PASS keyconsist=PASS
+Checked at 2026-12-31T23:59:59Z
 ```
+
+Only the code line and the exit status (`0` if every token is `PASS`, else `2`) are stable
+to script against. Commitment states never affect either.
 
 Grammar (`asexec-verify/1` versions the code format): the literal prefix, then one
 `name=RESULT` token per requested test (`RESULT ∈ {PASS, FAIL}`), sorted alphabetically,
@@ -164,9 +173,10 @@ single-space delimited. The same result set is byte-identical everywhere.
   [What `asexec` can prove](#what-asexec-can-prove-optional-fields-and-tests)).
 - Named, not scored, so it's forward-compatible. Because the code names which tests
   ran, adding a test in a later version can never change the meaning of an older code. A code
-  means exactly one thing, permanently.
-- A requested test that applies nowhere is `FAIL`, never a silent omission (e.g.
-  `--tests BDR,ceiling` on manifests with no ceiling -> `ceiling=FAIL`).
+  means exactly one thing, permanently, from `0.4.0`; until then a test's documented meaning
+  may still be corrected (see [Status](#status)).
+- A requested test with nothing to examine is *empty* and `FAIL`, never a silent omission
+  or a pass (e.g. `--tests BDR,ceiling` on manifests with no ceiling -> `ceiling=FAIL`).
 - The code is not a certificate. Real verification comes from the verifier running the tool
   against the files and getting the code.
 
