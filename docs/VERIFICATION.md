@@ -52,10 +52,8 @@ tests that examine it.
 - A file is **malformed** if it cannot be read, is not a JSON object, nests more than 64
   deep, contains a duplicate JSON key at any level, lacks an object `payload` or `signature`, or its
   `signature.pubkey` and `signature.sig` are not both hex. It fails `BDR`, and only `BDR`
-  examines it. It also takes no part in any commitment: even if its `payload.fulfills`
-  names a prereg, it is not counted toward that commitment and not listed as rejected
-  (see [Counting rule](#counting-rule)). A postreg that is well-formed but whose signature
-  does not verify is different: it is rejected.
+  examines it. It takes no part in any commitment: it is neither counted nor rejected (see
+  [Counting rule](#counting-rule)).
 
 ## Output
 
@@ -516,6 +514,26 @@ that `ref` is **rejected**. It is listed under each such commitment with its rea
 (`invalid signature`, or `signed by a different key than the pre-registration`), and is
 never counted toward fulfillment or `chain`.
 
+A postreg whose `payload.fulfills` equals the `ref` of no provided prereg is
+**notarization-only**. It belongs to no commitment, so it is neither counted nor rejected and
+has no [state](#commitment-states). The report lists it in its own block.
+
+**In summary**, by kind of file:
+
+| The file | `BDR` | Toward the commitment | In the report |
+|---|---|---|---|
+| Malformed (see [Run rules](#conventions)) | `FAIL` | not counted | not listed under any commitment |
+| Well-formed, signature does not verify, `fulfills` a provided prereg | `FAIL` | not counted | **rejected**: `invalid signature` |
+| Valid signature by a different key than the prereg's, `fulfills` a provided prereg | `PASS` | not counted | **rejected**: `signed by a different key than the pre-registration`; also fails `keyconsist` |
+| Valid signature by the prereg's key, `fulfills` a provided prereg | `PASS` | **counted** | listed as a counted postreg |
+| Valid signature, `fulfills` matches no provided prereg | `PASS` | no commitment | **notarization-only** block |
+
+**What affects a verdict.** Only the tests produce `PASS` or `FAIL`. *Counted* matters
+because `chain` examines counted postregs only, and `keyconsist` examines every postreg that
+names a prereg, counted or not. *Rejected* and *notarization-only* are report labels and add no
+failure of their own. The failures in the table come from `BDR` (the first two rows) and
+`keyconsist` (the third row; it does not judge a postreg whose signature is invalid).
+
 A manifest is identified by its `ref`. Copies of a postreg, with the same `ref` and
 `signature.keyid`, count as one: counted, rejected or notarization-only once, however
 many are provided. Copies of a prereg, with the same `ref` and `signature.keyid`, are one
@@ -535,8 +553,7 @@ One per commitment, shown in the `=== commitments ===` block of the report (see
 
 A "receipt" in a state name (`elapsed-no-receipt`) means a counted postreg.
 
-A postreg whose `payload.fulfills` matches no provided prereg is **notarization-only**. It
-belongs to no commitment, so it has no state.
+A [notarization-only](#counting-rule) postreg belongs to no commitment, so it has no state.
 
 A `payload.due` without a UTC offset or `Z` is read as UTC, never in the verifier's local
 timezone, and is flagged in the report. Timeliness (a postreg created before `due`) is not
