@@ -102,4 +102,4 @@ A notarization-only tool (proving a receipt wasn't tampered with *after* publica
 - **Sigstore / in-toto / SLSA** — supply chain attestation patterns (though this project deliberately skips their identity/OIDC layer).
 - **OpenTimestamps** — trustless timestamp anchoring via blockchain.
 - **Clinical trial pre-registration (e.g., ClinicalTrials.gov)** — the direct conceptual ancestor of the commit-then-reveal mechanism; useful as a one-line explanation when pitching the project to non-technical audiences.
-- **Certificate Transparency** — append-only, publicly auditable log design, relevant only if a shared transparency log is ever pursued (explicitly not scheduled — see [`ROADMAP.md`](./ROADMAP.md)).
+- **Certificate Transparency** — append-only, publicly auditable log design, relevant only if a shared transparency log is ever pursued (explicitly not scheduled — see [`ROADMAP.md`](./ROADMAP.md)).
