@@ -10,6 +10,7 @@ from asexec import drand
 
 PASS = "asexec-verify/1 BDR=PASS floor=PASS"
 FAIL = "asexec-verify/1 BDR=PASS floor=FAIL"
+EMPTY = "requested but no manifest carries an anchor.floor"
 
 
 @pytest.fixture
@@ -142,3 +143,15 @@ def test_floor__fail__empty_no_manifest_carries_one(scenario, absent):
     report = scenario.verify("floor")
     assert report["code"] == FAIL
     assert report["results"]["floor"]["applicable"] == 0
+    assert report["results"]["floor"]["reason"] == EMPTY
+
+
+def test_floor__fail__empty_malformed_manifest_not_examined(scenario):
+    """floor (*): a malformed manifest is not examined, even if it carries an anchor.floor."""
+    scenario.add_raw(
+        "bad", '{"payload": {"anchor": {"floor": {"floor_type": "drand"}}}, "signature": {}}'
+    )
+    report = scenario.verify("floor")
+    assert report["results"]["floor"]["applicable"] == 0
+    assert report["code"] == "asexec-verify/1 BDR=FAIL floor=FAIL"
+    assert report["results"]["floor"]["reason"] == EMPTY

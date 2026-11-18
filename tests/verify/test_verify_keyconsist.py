@@ -7,6 +7,7 @@ from asexec import keys
 
 PASS = "asexec-verify/1 BDR=PASS keyconsist=PASS"
 FAIL = "asexec-verify/1 BDR=PASS keyconsist=FAIL"
+EMPTY = "requested but no commitment has counted or rejected postregs to key-check"
 
 
 def test_keyconsist__pass__all(scenario):
@@ -44,6 +45,17 @@ def test_keyconsist__fail__1_valid_postreg_has_prereg_keyid(scenario):
     assert report["commitments"][0]["key_consistent"] is False
 
 
+def test_keyconsist__fail__1_valid_postreg_has_prereg_keyid__all_rejected(scenario):
+    """keyconsist #1: with every postreg signed by another key, none counts, yet the
+    commitment has rejected postregs, so it is examined (not empty) and fails."""
+    other = keys.generate()
+    for name in ("postreg0", "postreg1", "postreg2"):
+        scenario.sign_with(name, other)
+    report = scenario.verify("keyconsist")
+    assert report["code"] == FAIL
+    assert report["results"]["keyconsist"]["applicable"] == 1
+
+
 def test_keyconsist__fail__empty_no_postreg_references_a_prereg(scenario):
     """keyconsist (*): a prereg that no postreg names has nothing to key-check."""
     for name in ("postreg0", "postreg1", "postreg2"):
@@ -51,3 +63,4 @@ def test_keyconsist__fail__empty_no_postreg_references_a_prereg(scenario):
     report = scenario.verify("keyconsist")
     assert report["code"] == FAIL
     assert report["results"]["keyconsist"]["applicable"] == 0
+    assert report["results"]["keyconsist"]["reason"] == EMPTY

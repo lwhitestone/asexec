@@ -6,6 +6,7 @@ from asexec import keys, roughtime
 
 PASS = "asexec-verify/1 BDR=PASS ceiling=PASS"
 FAIL = "asexec-verify/1 BDR=PASS ceiling=FAIL"
+EMPTY = "requested but no manifest carries a ceiling witness"
 
 
 @pytest.fixture
@@ -167,6 +168,7 @@ def test_ceiling__fail__empty_no_manifest_carries_one(scenario, absent):
     report = scenario.verify("ceiling")
     assert report["code"] == FAIL
     assert report["results"]["ceiling"]["applicable"] == 0
+    assert report["results"]["ceiling"]["reason"] == EMPTY
 
 
 def test_ceiling__fail__empty_malformed_manifest_not_examined(scenario):
@@ -177,3 +179,4 @@ def test_ceiling__fail__empty_malformed_manifest_not_examined(scenario):
     report = scenario.verify("ceiling")
     assert report["results"]["ceiling"]["applicable"] == 0
     assert report["code"] == "asexec-verify/1 BDR=FAIL ceiling=FAIL"
+    assert report["results"]["ceiling"]["reason"] == EMPTY
