@@ -112,7 +112,7 @@ def test_fault__fulfills_not_exactly_the_ref(tmp_path, post):
     """Counting #1 compares fulfills to ref(prereg) exactly; anything else links nowhere."""
     report = _run(tmp_path, d.sign(d.PREREG), d.sign(post), tests=TESTS_LINKED)
     assert report["code"] == PREFIX + "BDR=PASS chain=FAIL keyconsist=FAIL"
-    assert report["commitments"][0]["receipts"] == []
+    assert report["commitments"][0]["postregs"] == []
     assert len(report["notarization_only"]) == 1
 
 

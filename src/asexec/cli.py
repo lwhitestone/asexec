@@ -320,10 +320,10 @@ def cmd_verify(args) -> int:
         if c["state"] == "invalid-due":
             print(f"    {NO} due is not a parseable ISO-8601 timestamp")
         print(
-            f"    postregs     : {len(c['receipts'])}"
+            f"    postregs     : {len(c['postregs'])}"
             + ("" if c["chain_ok"] else f"  {NO} {c['chain_note']}")
         )
-        for r in c["rejected_receipts"]:
+        for r in c["rejected_postregs"]:
             print(f"    {NO} postreg {r['ref']} does NOT count toward fulfillment: {r['reason']}")
     if report["notarization_only"]:
         print("\n=== notarization-only (postregs with no matching pre-registration) ===")
@@ -449,7 +449,7 @@ def build_parser() -> argparse.ArgumentParser:
     pr.set_defaults(func=cmd_prereg)
 
     # asexec postreg
-    po = sub.add_parser("postreg", help="sign a post-registration (receipt) after a run")
+    po = sub.add_parser("postreg", help="sign a post-registration after a run")
     po.add_argument("--key", required=True)
     po.add_argument(
         "--fulfills",

@@ -45,10 +45,10 @@ def test_state__open__no_counted_postreg_and_due_absent_or_future(scenario, due)
 @pytest.mark.parametrize(
     "due", ["2026-01-01T12:30:00Z", "2000-01-01T00:00:00Z"], ids=["at", "before"]
 )
-def test_state__elapsed_no_receipt__due_at_or_before_now(scenario, due):
-    """elapsed-no-receipt: no counted postreg, and due is at or before now."""
+def test_state__elapsed_no_postreg__due_at_or_before_now(scenario, due):
+    """elapsed-no-postreg: no counted postreg, and due is at or before now."""
     _only_prereg(scenario, due)
-    assert _state(scenario, now=NOW) == "elapsed-no-receipt"
+    assert _state(scenario, now=NOW) == "elapsed-no-postreg"
 
 
 @pytest.mark.parametrize(
@@ -92,7 +92,7 @@ def test_due__without_offset_is_read_as_utc_and_flagged(scenario, monkeypatch):
     finally:
         monkeypatch.undo()  # restore TZ, then re-sync libc so later tests are unaffected
         time.tzset()
-    assert states == {"elapsed-no-receipt"}
+    assert states == {"elapsed-no-postreg"}
 
 
 def test_due__with_offset_is_not_flagged(scenario):

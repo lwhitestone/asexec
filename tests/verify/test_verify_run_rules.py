@@ -118,8 +118,8 @@ def test_run__file_unreadable_by_BDR_is_examined_by_no_other_test(scenario):
 
 
 def test_run__malformed_postreg_joins_no_commitment(scenario):
-    """A malformed postreg (here: non-hex pubkey) fulfilling the prereg is not a receipt,
-    counted or rejected, so chain and keyconsist have nothing to examine."""
+    """A malformed postreg (here: non-hex pubkey) fulfilling the prereg is neither counted
+    nor rejected, so chain and keyconsist have nothing to examine."""
     scenario.drop("postreg1")
     scenario.drop("postreg2")
     scenario.set("postreg0", "signature.pubkey", "zz")
@@ -127,7 +127,7 @@ def test_run__malformed_postreg_joins_no_commitment(scenario):
     assert report["code"] == "asexec-verify/1 BDR=FAIL chain=FAIL keyconsist=FAIL"
     assert report["results"]["keyconsist"]["applicable"] == 0
     (commitment,) = report["commitments"]
-    assert commitment["receipts"] == [] and commitment["rejected_receipts"] == []
+    assert commitment["postregs"] == [] and commitment["rejected_postregs"] == []
     assert report["notarization_only"] == []
 
 

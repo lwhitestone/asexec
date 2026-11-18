@@ -17,13 +17,13 @@ paths from the envelope root, e.g. `payload.anchor.floor.round`, `signature.keyi
 `ceiling.nonce`. `[]` denotes array elements: `payload.subject[].name`.
 
 **Phases.** A manifest's phase is its `payload.phase`. A *prereg* is a manifest with
-`payload.phase == "prereg"`; a *postreg* has `payload.phase == "postreg"`. `ref(m)` is `sha-256:<hex>` over the canonical bytes of
-`m.payload`.
+`payload.phase == "prereg"`; a *postreg* has `payload.phase == "postreg"`. `ref(m)` is
+`sha-256:<hex>` over the canonical bytes of `m.payload`.
 
-**Hex.** A value required to be hex is a string that `bytes.fromhex` accepts: an even
-number of hex digits in either case, with ASCII whitespace allowed around and between bytes. Content
-#6 compares the bytes a digest's hex decodes to, so any such spelling matches. Ceiling #2
-and floor #4 compare exactly against the lowercase hex of the digest.
+**Hex.** A value required to be hex is a string that `bytes.fromhex` accepts: an even number
+of hex digits in either case, with ASCII whitespace allowed around and between bytes.
+Content #6 compares the bytes a digest's hex decodes to, so any such spelling matches.
+Ceiling #2 and floor #4 compare exactly against the lowercase hex of the digest.
 
 **JSON.** Valid JSON is what Python's `json.load` accepts (so `NaN` and `Infinity` are
 allowed), nested at most 64 deep: each array or object adds a level, and the outermost
@@ -46,20 +46,21 @@ tests that examine it.
   including `{}`, `[]`, `""`, `false` and `0`, is present. A property whose path runs
   through a present non-object (e.g. `payload.anchor` is `[]`) is present, and malformed.
 - (\*) If no provided manifest or commitment has the examined properties, the test is
-  empty (nothing to examine) and is judged `FAIL`. One that lacks them is not examined and cannot fail the
-  test; it also does not count toward passing.
+  empty (nothing to examine) and is judged `FAIL`. One that lacks them is not examined and
+  cannot fail the test; it also does not count toward passing.
 - Verification is offline.
 - A file is **malformed** if it cannot be read, is not a JSON object, nests more than 64
-  deep, contains a duplicate JSON key at any level, lacks an object `payload` or `signature`, or its
-  `signature.pubkey` and `signature.sig` are not both hex. It fails `BDR`, and only `BDR`
-  examines it. It takes no part in any commitment: it is neither counted nor rejected (see
+  deep, contains a duplicate JSON key at any level, lacks an object `payload` or
+  `signature`, or its `signature.pubkey` and `signature.sig` are not both hex. It fails
+  `BDR`, and only `BDR` examines it. It takes no part in any commitment: it is neither
+  counted nor rejected (see
   [Matching postregs to commitments](#matching-postregs-to-commitments)).
 
 ## Output
 
 `asexec verify` prints a report for people to read, then the code, then when the run
-happened. Only the code line and the exit status are stable to script against. The report's wording may change, except for
-the reasons this document lists.
+happened. Only the code line and the exit status are stable to script against. The
+report's wording may change, except for the reasons this document lists.
 
 | Block | Printed | Shows |
 |---|---|---|
@@ -72,7 +73,7 @@ the reasons this document lists.
 | `Checked at <time>` | always | When the run happened, in UTC to the second: the moment commitment states were judged against. Not part of the code. |
 
 Exit status is `0` if every token in the code is `PASS`, else `2`. Commitment states never
-affect either: a run can show `ELAPSED-NO-RECEIPT` and still exit `0`.
+affect either: a run can show `ELAPSED-NO-POSTREG` and still exit `0`.
 
 **Example.** The three files from the [`chain` example](#chain), checked with
 `BDR`, `chain` and `keyconsist`. Hashes are shortened with `…`.
@@ -252,7 +253,8 @@ Checked at 2026-12-31T23:59:59Z
 
 Linearity of a commitment's postreg chain.
 
-A postreg is **counted** for a prereg if it meets the [conditions for counting](#matching-postregs-to-commitments).
+A postreg is **counted** for a prereg if it meets the
+[conditions for counting](#matching-postregs-to-commitments).
 
 **Examines (\*)**
 - `payload.phase`
@@ -270,7 +272,7 @@ A postreg is **counted** for a prereg if it meets the [conditions for counting](
    of the same prereg (no gaps).
 3. No `ref` appears as `payload.prev_hash` of more than one counted postreg (no forks).
 
-**Nothing to examine:** `requested but no commitment has receipts to chain-check`.
+**Nothing to examine:** `requested but no commitment has counted postregs to chain-check`.
 
 **Does not establish:** completeness. Dropping the last postreg(s) of a chain is not
 detectable.
@@ -459,14 +461,16 @@ Whether a commitment's postregs were signed by its own key.
 - `signature.sig`
 - `signature.keyid`
 
-**Passes when all** (for each commitment referenced by at least one postreg, counted or not)
+**Passes when all** (for each commitment with at least one counted or rejected postreg; see
+[Matching postregs to commitments](#matching-postregs-to-commitments))
 1. Every postreg whose `payload.fulfills` equals the commitment's `ref` and whose signature
    is valid (the `BDR` signature and keyid conditions) has the `signature.keyid` of a
    provided prereg with that `ref`.
 
 A postreg with an invalid signature is not judged here (it fails `BDR`).
 
-**Nothing to examine:** `requested but no commitment has receipts to key-check`.
+**Nothing to examine:** `requested but no commitment has counted or rejected postregs to
+key-check`.
 
 **Example** (all requirements pass)
 
@@ -509,41 +513,44 @@ A postreg `P` **counts** toward the commitment of prereg `R` iff all hold:
 2. `P` meets the `BDR` signature and keyid conditions.
 3. `P.signature.keyid == R.signature.keyid`.
 
-A postreg that names a prereg (condition 1) but fails condition 2 or 3 does not count toward
-that commitment: it is left out of fulfillment and of `chain`, and the report gives the reason,
-`invalid signature` (2) or `signed by a different key than the pre-registration` (3). A
-postreg that fails condition 1 for every provided prereg names none of them, so it belongs to
-no commitment.
+A commitment is keyed by its signer, so a postreg counts toward at most one commitment: the
+one with its `payload.fulfills` as `ref` and its own `signature.keyid` as signer.
 
-The report groups the postregs that do not count by whether there is a commitment to list
-them under:
-- **rejected**: its `payload.fulfills` equals the `ref` of a provided prereg. It is listed
-  under each commitment with that `ref`, with its reason.
-- **notarization-only**: its `payload.fulfills` equals the `ref` of no provided prereg. There
-  is no commitment to list it under, so it has no [state](#commitment-states) and is listed
-  in its own block.
+A postreg that names a prereg (condition 1) but counts toward no commitment with that `ref`
+is **rejected**. It is left out of fulfillment and of `chain`, and is listed under each
+commitment with that `ref` with the reason it fails there: `invalid signature` (condition 2)
+or `signed by a different key than the pre-registration` (condition 3). A postreg that
+counts toward one commitment of a `ref` is not rejected under the others. If one prereg body
+is signed by keys A and B, a postreg signed by A counts toward A's commitment and is not
+listed under B's.
+
+A postreg that fails condition 1 for every provided prereg names none of them. It is
+**notarization-only**: there is no commitment to list it under, so it has no
+[state](#commitment-states) and is listed in its own block, whether or not its signature is
+valid.
 
 **In summary**, by kind of file:
 
 | Postreg situation | `BDR` | Outcome | In the report |
 |---|---|---|---|
 | Malformed (see [Run rules](#conventions)) | `FAIL` | none: not treated as a postreg | not listed under any commitment |
-| Well-formed, signature does not verify, `fulfills` a provided prereg | `FAIL` | not counted: `invalid signature` | **rejected** |
-| Valid signature by a different key than the prereg's, `fulfills` a provided prereg | `PASS` | not counted: `signed by a different key than the pre-registration` | **rejected**; also fails `keyconsist` |
-| Valid signature by the prereg's key, `fulfills` a provided prereg | `PASS` | **counted** | listed as a counted postreg |
-| Valid signature, `fulfills` matches no provided prereg | `PASS` | not counted: names no provided prereg | **notarization-only** |
+| Well-formed, fails the `BDR` signature or keyid condition, `fulfills` a provided prereg | `FAIL` | not counted: `invalid signature` | **rejected** |
+| Valid signature by a key that signed no provided prereg with that `ref`, `fulfills` a provided prereg | `PASS` | not counted: `signed by a different key than the pre-registration` | **rejected**; also fails `keyconsist` |
+| Valid signature by the key of a provided prereg with that `ref` | `PASS` | **counted** toward that prereg's commitment | listed as a counted postreg of that commitment only |
+| Well-formed, `fulfills` matches no provided prereg | `PASS` if the signature is valid, else `FAIL` | not counted: names no provided prereg | **notarization-only** |
 
 **What affects a verdict.** Only the tests produce `PASS` or `FAIL`. *Counted* matters
-because `chain` examines counted postregs only, and `keyconsist` examines every postreg that
-names a prereg, counted or not. *Rejected* and *notarization-only* are only groupings in
-the report and add no failure of their own. The failures in the table come from `BDR` (the
-first two rows) and `keyconsist` (the third row; it does not judge a postreg whose signature
-is invalid).
+because `chain` examines counted postregs only. `keyconsist` fails a commitment only for a
+postreg rejected under it as `signed by a different key than the pre-registration`; a
+counted postreg, one rejected for `invalid signature` and a notarization-only postreg never
+fail it. *Rejected* and *notarization-only* are only groupings in the report and add no
+failure of their own. The failures in the table come from `BDR` (the first two rows, and
+the last row when the signature is invalid) and `keyconsist` (the third row).
 
 A manifest is identified by its `ref`. Copies of a postreg, with the same `ref` and
-`signature.keyid`, count as one: counted, rejected or notarization-only once, however
-many are provided. Copies of a prereg, with the same `ref` and `signature.keyid`, are one
-commitment.
+`signature.keyid`, are one postreg: it is counted, rejected or notarization-only once,
+however many copies are provided. Copies of a prereg, with the same `ref` and
+`signature.keyid`, are one commitment.
 
 ## Commitment states
 
@@ -554,12 +561,11 @@ One per commitment, shown in the `=== commitments ===` block of the report (see
 |---|---|
 | `fulfilled` | at least one counted postreg |
 | `open` | no counted postreg, and `payload.due` is absent or in the future |
-| `elapsed-no-receipt` | no counted postreg, and `payload.due` is at or before now |
+| `elapsed-no-postreg` | no counted postreg, and `payload.due` is at or before now |
 | `invalid-due` | no counted postreg, and `payload.due` is present but not a parseable ISO-8601 string |
 
-A "receipt" in a state name (`elapsed-no-receipt`) means a counted postreg.
-
-A [notarization-only](#matching-postregs-to-commitments) postreg belongs to no commitment, so it has no state.
+A [notarization-only](#matching-postregs-to-commitments) postreg belongs to no commitment,
+so it has no state.
 
 A `payload.due` without a UTC offset or `Z` is read as UTC, never in the verifier's local
 timezone, and is flagged in the report. Timeliness (a postreg created before `due`) is not
@@ -577,10 +583,11 @@ chained postregs as in the [`chain` example](#chain):
 ```
 
 Each entry is the state in capitals and the prereg's `ref`, then its signer's keyid, `due`
-(or `(none declared)`) and the number of counted postregs. Problems follow as `✗` lines: a `due`
-without a timezone, an unparseable `due`, a chain problem (on the `postregs` line), or a
-rejected postreg and why it does not count. [`notarization-only`](#matching-postregs-to-commitments) postregs are listed in their
-own block, since they have no prereg to sit under.
+(or `(none declared)`) and the number of counted postregs. Problems follow as `✗` lines: a
+`due` without a timezone, an unparseable `due`, a chain problem (on the `postregs` line), or
+a rejected postreg and why it does not count.
+[`notarization-only`](#matching-postregs-to-commitments) postregs are listed in their own
+block, since they have no prereg to sit under.
 
 ## Not in this version
 

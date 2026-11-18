@@ -52,11 +52,11 @@ commitment:
 - **What was committed to.** Every manifest carries a `target`, and every post-registration
   names the pre-registration it `fulfills`.
 - **Commitment state.** Each pre-registration is rendered as `fulfilled`, `open`,
-  `elapsed-no-receipt` or `invalid-due`; a post-registration whose pre-registration was not
+  `elapsed-no-postreg` or `invalid-due`; a post-registration whose pre-registration was not
   provided is `notarization-only`. A post-registration counts toward fulfilling a
   pre-registration only if it is validly signed by that pre-registration's private key.
   Silence is on the record too: a pre-registration with no counted post-registration reads
-  `elapsed-no-receipt` once its deadline (`due`) passes. But `asexec` does **not** yet check
+  `elapsed-no-postreg` once its deadline (`due`) passes. But `asexec` does **not** yet check
   that a post-registration was created before `due`, so a late one still turns it
   `fulfilled`; that check (`timely`) arrives in 0.4.0.
 
@@ -128,7 +128,7 @@ asexec prereg --key lab.key \
     --declaration "all runs of this harness against this model, in full" \
     --out preregistration.json
 
-# 3. Practitioner, AFTER each run: post-register a receipt of the run
+# 3. Practitioner, AFTER each run: post-register the run
 asexec postreg --key lab.key --fulfills preregistration.json \
     --subject ./transcript.txt ./harness \
     --out postregistration.json
@@ -286,7 +286,7 @@ A post-registration counts toward a pre-registration only if both were signed wi
 private key. So:
 
 - **Lose the private key** and your open commitments can never be fulfilled: they stay `open`,
-  or turn `elapsed-no-receipt` once `due` passes. Back up `lab.key` offline (e.g. in an
+  or turn `elapsed-no-postreg` once `due` passes. Back up `lab.key` offline (e.g. in an
   encrypted password manager or vault) before you pre-register.
 - **Leak the private key** and anyone can sign pre- and post-registrations as you, including
   post-registrations that count toward your commitments. `asexec` has no revocation: stop

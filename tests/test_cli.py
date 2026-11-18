@@ -212,7 +212,7 @@ def test_verify_exit_codes_and_malformed_file(tmp_path, key, prereg, capsys):
     assert "asexec-verify/1 BDR=FAIL" in out and "malformed" in out
 
 
-def test_verify_renders_rejected_receipt_and_invalid_due(tmp_path, key, capsys):
+def test_verify_renders_rejected_postreg_and_invalid_due(tmp_path, key, capsys):
     out = tmp_path / "pre.json"
     run("prereg", "--key", key, "--target", "t", "--out", out)
     body = manifest.get_body(manifest.load(str(out)))
