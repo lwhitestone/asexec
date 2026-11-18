@@ -509,30 +509,36 @@ A postreg `P` **counts** toward the commitment of prereg `R` iff all hold:
 2. `P` meets the `BDR` signature and keyid conditions.
 3. `P.signature.keyid == R.signature.keyid`.
 
-A postreg whose `payload.fulfills` equals `ref(R)` but that counts toward no commitment with
-that `ref` is **rejected**. It is listed under each such commitment with its reason
-(`invalid signature`, or `signed by a different key than the pre-registration`), and is
-never counted toward fulfillment or `chain`.
+A postreg that names a prereg (condition 1) but fails condition 2 or 3 does not count toward
+that commitment: it is left out of fulfillment and of `chain`, and the report gives the reason,
+`invalid signature` (2) or `signed by a different key than the pre-registration` (3). A
+postreg that fails condition 1 for every provided prereg names none of them, so it belongs to
+no commitment.
 
-A postreg whose `payload.fulfills` equals the `ref` of no provided prereg is
-**notarization-only**. It belongs to no commitment, so it is neither counted nor rejected and
-has no [state](#commitment-states). The report lists it in its own block.
+The report groups the postregs that do not count by whether there is a commitment to list
+them under:
+- **rejected**: its `payload.fulfills` equals the `ref` of a provided prereg. It is listed
+  under each commitment with that `ref`, with its reason.
+- **notarization-only**: its `payload.fulfills` equals the `ref` of no provided prereg. There
+  is no commitment to list it under, so it has no [state](#commitment-states) and is listed
+  in its own block.
 
 **In summary**, by kind of file:
 
-| Postreg situation | `BDR` | Toward the commitment | In the report |
+| Postreg situation | `BDR` | Outcome | In the report |
 |---|---|---|---|
-| Malformed (see [Run rules](#conventions)) | `FAIL` | not counted | not listed under any commitment |
-| Well-formed, signature does not verify, `fulfills` a provided prereg | `FAIL` | not counted | **rejected**: `invalid signature` |
-| Valid signature by a different key than the prereg's, `fulfills` a provided prereg | `PASS` | not counted | **rejected**: `signed by a different key than the pre-registration`; also fails `keyconsist` |
+| Malformed (see [Run rules](#conventions)) | `FAIL` | none: not treated as a postreg | not listed under any commitment |
+| Well-formed, signature does not verify, `fulfills` a provided prereg | `FAIL` | not counted: `invalid signature` | **rejected** |
+| Valid signature by a different key than the prereg's, `fulfills` a provided prereg | `PASS` | not counted: `signed by a different key than the pre-registration` | **rejected**; also fails `keyconsist` |
 | Valid signature by the prereg's key, `fulfills` a provided prereg | `PASS` | **counted** | listed as a counted postreg |
-| Valid signature, `fulfills` matches no provided prereg | `PASS` | no commitment | **notarization-only** block |
+| Valid signature, `fulfills` matches no provided prereg | `PASS` | not counted: names no provided prereg | **notarization-only** |
 
 **What affects a verdict.** Only the tests produce `PASS` or `FAIL`. *Counted* matters
 because `chain` examines counted postregs only, and `keyconsist` examines every postreg that
-names a prereg, counted or not. *Rejected* and *notarization-only* are report labels and add no
-failure of their own. The failures in the table come from `BDR` (the first two rows) and
-`keyconsist` (the third row; it does not judge a postreg whose signature is invalid).
+names a prereg, counted or not. *Rejected* and *notarization-only* are only groupings in
+the report and add no failure of their own. The failures in the table come from `BDR` (the
+first two rows) and `keyconsist` (the third row; it does not judge a postreg whose signature
+is invalid).
 
 A manifest is identified by its `ref`. Copies of a postreg, with the same `ref` and
 `signature.keyid`, count as one: counted, rejected or notarization-only once, however
