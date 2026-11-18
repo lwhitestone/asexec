@@ -65,7 +65,7 @@ the reasons this document lists.
 |---|---|---|
 | `=== manifests ===` | always | One line per file: `✓` if `BDR`'s signature and keyid conditions hold (else `✗`), the path, `payload.phase` and `signature.keyid`. Indented beneath: why a malformed file is malformed, and one line each for a floor, a ceiling and content hashes when the manifest has them. |
 | `=== commitments ===` | always | One entry per commitment (a prereg's `ref` and signer): its [state](#commitment-states), `ref`, signer keyid, `due`, the number of counted postregs, a chain problem if any, and each rejected postreg with its reason. |
-| `=== notarization-only … ===` | if any | Each postreg whose `payload.fulfills` matches no provided prereg. |
+| `=== notarization-only … ===` | if any | Each [notarization-only](#counting-rule) postreg: one whose `payload.fulfills` matches no provided prereg. |
 | `=== tests ===` | always | One line per requested test: its result and a short reason. |
 | `=== ceiling trust … ===` | if a ceiling verified | Which witness you are trusting, and for what time. |
 | code | always | The [code](#conventions). |
@@ -520,7 +520,7 @@ has no [state](#commitment-states). The report lists it in its own block.
 
 **In summary**, by kind of file:
 
-| The file | `BDR` | Toward the commitment | In the report |
+| Postreg situation | `BDR` | Toward the commitment | In the report |
 |---|---|---|---|
 | Malformed (see [Run rules](#conventions)) | `FAIL` | not counted | not listed under any commitment |
 | Well-formed, signature does not verify, `fulfills` a provided prereg | `FAIL` | not counted | **rejected**: `invalid signature` |
@@ -573,7 +573,7 @@ chained postregs as in the [`chain` example](#chain):
 Each entry is the state in capitals and the prereg's `ref`, then its signer's keyid, `due`
 (or `(none declared)`) and the number of counted postregs. Problems follow as `✗` lines: a `due`
 without a timezone, an unparseable `due`, a chain problem (on the `postregs` line), or a
-rejected postreg and why it does not count. `notarization-only` postregs are listed in their
+rejected postreg and why it does not count. [`notarization-only`](#counting-rule) postregs are listed in their
 own block, since they have no prereg to sit under.
 
 ## Not in this version
