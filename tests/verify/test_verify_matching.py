@@ -8,6 +8,8 @@ with its reason. Observed through the report: ``commitments[].counted_postregs``
 ``rejected_postregs`` / ``state`` and ``notarization_only``.
 """
 
+import json
+
 from asexec import keys
 from asexec.verifier import verify_paths
 
@@ -101,6 +103,22 @@ def test_matching__copies_of_a_rejected_postreg_are_rejected_once(scenario):
     scenario.sign_with("postreg0", keys.generate())
     scenario.add_raw("copy", scenario.read("postreg0"))
     assert len(_commitment(scenario.verify())["rejected_postregs"]) == 1
+
+
+def test_matching__broken_copy_of_a_counted_postreg_is_also_rejected(scenario):
+    """A copy whose signature does not verify is judged on its own: the same ref is listed
+    as counted (the valid copy) and as rejected for invalid signature (the broken one)."""
+    copy = json.loads(scenario.read("postreg0"))
+    sig = copy["signature"]["sig"]
+    copy["signature"]["sig"] = ("00" if sig[:2] != "00" else "11") + sig[2:]
+    scenario.add_raw("copy", json.dumps(copy))
+    report = scenario.verify()
+    assert report["code"] == "asexec-verify/1 BDR=FAIL"
+    commitment = _commitment(report)
+    assert len(commitment["counted_postregs"]) == 3
+    (rejected,) = commitment["rejected_postregs"]
+    assert rejected["reason"] == "invalid signature"
+    assert rejected["ref"] in {p["ref"] for p in commitment["counted_postregs"]}
 
 
 def test_matching__copies_of_a_notarization_only_postreg_are_listed_once(scenario):

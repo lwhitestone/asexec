@@ -25,6 +25,12 @@ REF_RE = re.compile(re.escape(DIGEST_REF_PREFIX) + r"[0-9a-f]{64}")
 OK = "✓"
 NO = "✗"
 
+# Exit statuses (README "Exit status"). A ``SystemExit("error: ...")`` exits EXIT_ERROR.
+EXIT_OK = 0  # success; verify: every requested test PASS; identity match: bound
+EXIT_ERROR = 1  # the command could not complete (bad input file, failed fetch, ...)
+EXIT_FAIL = 2  # verify: a requested test FAIL; identity match: not bound
+EXIT_USAGE = 64  # usage error (sysexits EX_USAGE): bad option, argument or --tests
+
 
 # --------------------------------------------------------------------------- #
 # input helpers
@@ -186,7 +192,7 @@ def cmd_keygen(args) -> int:
     print(f"  secret : {out} (keep private; mode 0600)")
     print(f"  public : {out}.pub")
     print(f"  keyid  : {kid}")
-    return 0
+    return EXIT_OK
 
 
 def cmd_prereg(args) -> int:
@@ -212,7 +218,7 @@ def cmd_prereg(args) -> int:
     print(f"  ref : {manifest.ref(body)}")
     if body.get("due"):
         print(f"  due : {body['due']}")
-    return 0
+    return EXIT_OK
 
 
 def cmd_postreg(args) -> int:
@@ -260,19 +266,15 @@ def cmd_postreg(args) -> int:
     print(f"  fulfills : {body['fulfills']}")
     if body.get("prev_hash"):
         print(f"  prev     : {body['prev_hash']}")
-    return 0
+    return EXIT_OK
 
 
 def cmd_verify(args) -> int:
     """Run a series of verification tests on the prereg-postreg cycle to prove that
     this execution met the desired standards. Produces a code summarizing the tests
-    performed and the results of each."""
-    try:
-        tests = verifier.parse_tests(args.tests)
-    except VerificationError as e:
-        raise SystemExit(f"error: {e}") from e
-
-    report = verifier.verify_paths(args.paths, tests, artifacts_dir=args.artifacts)
+    performed and the results of each. ``args.tests`` is already validated (see
+    ``_tests_arg``)."""
+    report = verifier.verify_paths(args.paths, args.tests, artifacts_dir=args.artifacts)
 
     print("=== manifests ===")
     for m in report["manifests"]:
@@ -343,7 +345,7 @@ def cmd_verify(args) -> int:
 
     print(f"\n{report['code']}")
     print(f"Checked at {report['checked_at']}")
-    return 0 if report["ok"] else 2
+    return EXIT_OK if report["ok"] else EXIT_FAIL
 
 
 def cmd_identity(args) -> int:
@@ -359,7 +361,7 @@ def cmd_identity(args) -> int:
         print(f"{OK} wrote {args.out}")
         print("  publish at: https://<your-domain>/.well-known/asexec.json")
         print(f"  keyid     : {pair['keyid']}")
-        return 0
+        return EXIT_OK
     if args.identity_cmd == "match":
         keyid = args.keyid
         pubkey = args.pubkey
@@ -373,7 +375,7 @@ def cmd_identity(args) -> int:
             f"({res['listed_count']} key(s) listed)"
         )
         print(f"  caveat: {res['caveat']}")
-        return 0 if res["bound"] else 2
+        return EXIT_OK if res["bound"] else EXIT_FAIL
     raise SystemExit("error: use 'identity emit' or 'identity match'")
 
 
@@ -401,13 +403,33 @@ def _add_anchor_flags(p):
     )
 
 
+class _Parser(argparse.ArgumentParser):
+    """An ``ArgumentParser`` whose usage errors exit ``EXIT_USAGE``, not argparse's 2,
+    so they cannot be mistaken for a verify ``FAIL``. Subparsers inherit the class."""
+
+    def error(self, message: str):
+        self.print_usage(sys.stderr)
+        self.exit(EXIT_USAGE, f"{self.prog}: error: {message}\n")
+
+
+def _tests_arg(spec: str) -> list[str]:
+    """``--tests``, validated at parse time, so a bad value is a usage error."""
+    try:
+        return verifier.parse_tests(spec)
+    except VerificationError as e:
+        raise argparse.ArgumentTypeError(str(e)) from e
+
+
 def build_parser() -> argparse.ArgumentParser:
     """``asexec`` parsing core."""
-    p = argparse.ArgumentParser(
+    p = _Parser(
         prog="asexec",
         description="Pre-registration & notarization primitive for AI evaluations. "
         "Does NOT prove identity, eval quality, provenance, or cryptographic "
         "'pre' (see 'verify' output).",
+        epilog=f"exit status: {EXIT_OK} success (verify: every test PASS; identity match: "
+        f"bound), {EXIT_ERROR} error, {EXIT_FAIL} verify: a test FAIL (identity match: "
+        f"not bound), {EXIT_USAGE} usage error.",
     )
     p.add_argument("--version", action="version", version=f"asexec {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -488,6 +510,7 @@ def build_parser() -> argparse.ArgumentParser:
     vy.add_argument(
         "--tests",
         required=True,
+        type=_tests_arg,
         help="comma-separated tests to run (MUST include 'BDR'). "
         f"available: {', '.join(verifier.TEST_CATALOG)}",
     )

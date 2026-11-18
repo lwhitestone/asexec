@@ -74,7 +74,8 @@ test:
   forks. *Dropping the last post-registration(s) of a chain is **not** detectable yet;
   close-out manifests (`final`) are deferred to 0.7.0 or later.*
 - **Key consistency** ([`keyconsist`](./docs/VERIFICATION.md#keyconsist)). Every validly
-  signed post-registration of a commitment uses the pre-registration's key.
+  signed post-registration that names a pre-registration was signed with the key of a
+  provided pre-registration with that body.
 - **Created no earlier than** (`anchor.floor`; [`floor`](./docs/VERIFICATION.md#floor)). A
   manifest was created after a public moment: a [drand](https://drand.love/) beacon round it
   embeds.
@@ -146,6 +147,17 @@ For a detailed look at parameters and options, see: `asexec --help`.
 For a worked end-to-end run, with faults replayed against the verifier, see
 [`examples/adequacy-test`](examples/adequacy-test): `python examples/adequacy-test/run.py`.
 
+### Exit status
+
+| Status | Meaning |
+|---|---|
+| `0` | Success. For `verify`, every requested test is `PASS`; for `identity match`, the key is bound to the domain. |
+| `1` | Error: the command could not complete, e.g. an unreadable input file, an invalid `--due`, a key file it refuses to overwrite, or a failed `--floor`/`--ceiling` fetch (without `--best-effort`). An error message is printed. |
+| `2` | `verify`: at least one requested test is `FAIL`. `identity match`: the key is not bound. |
+| `64` | Usage error: an unknown command or option, a missing argument, or a `--tests` that names an unknown test, names none, or omits `BDR`. Usage is printed and nothing runs (`verify` prints no code). |
+
+`verify` exits only `0`, `2` or `64`: malformed input is a `FAIL`, never an error.
+
 ### Verification output
 
 What each test examines, its exact pass criteria, and what it does not establish are
@@ -161,8 +173,8 @@ asexec-verify/1 BDR=PASS chain=PASS content=PASS keyconsist=PASS
 Checked at 2026-12-31T23:59:59Z
 ```
 
-Only the code line and the exit status (`0` if every token is `PASS`, else `2`) are stable
-to script against. Commitment states never affect either.
+Only the code line and the [exit status](#exit-status) are stable to script against.
+Commitment states never affect either.
 
 Grammar (`asexec-verify/1` versions the code format): the literal prefix, then one
 `name=RESULT` token per requested test (`RESULT ∈ {PASS, FAIL}`), sorted alphabetically,

@@ -39,9 +39,10 @@ Tests (the catalog - only verifiable claims, no self-declarations)
                      subject is present.
   - ``floor``      : the drand freshness floor BLS-verifies. Applies to
                      manifests that carry an anchor.floor.
-  - ``keyconsist`` : validly signed postregs that name a pre-registration
-                     share its key. Applies to commitments with a counted
-                     postreg or one rejected as signed by a different key.
+  - ``keyconsist`` : each validly signed postreg that names a pre-registration's
+                     ref has the key of a provided pre-registration with that
+                     ref. Applies to commitments with a counted postreg or one
+                     rejected as signed by a different key.
 
 A requested test is ``PASS`` iff it holds everywhere it applies AND it applies
 somewhere; a requested test that applies **nowhere** is ``FAIL``
@@ -450,8 +451,9 @@ def _tally(units: list[bool], nowhere_reason: str, fail_noun: str) -> dict[str, 
 def _evaluate(tests, manifests, commitments, artifacts_dir) -> dict[str, dict[str, Any]]:
     res: dict[str, dict[str, Any]] = {}
     with_counted = [c for c in commitments if c["counted_postregs"]]
-    # A commitment is key-checked only if a validly signed postreg names it: one rejected
-    # for an invalid signature alone has no key to check (BDR judges it).
+    # A commitment is key-checked only if it has a counted postreg or one rejected as signed
+    # by a different key: one whose postregs were all rejected for an invalid signature has
+    # no key to check (BDR judges them).
     key_checked = [c for c in commitments if c["key_checked"]]
 
     if "BDR" in tests:

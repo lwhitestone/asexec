@@ -223,9 +223,24 @@ def test_verify_renders_rejected_postreg_and_invalid_due(tmp_path, key, capsys):
     assert "INVALID-DUE" in capsys.readouterr().out
 
 
-def test_verify_requires_BDR(prereg):
-    with pytest.raises(SystemExit):
-        run("verify", prereg, "--tests", "chain")
+@pytest.mark.parametrize("tests", ["chain", "BDR,nope", ","], ids=["no-BDR", "unknown", "none"])
+def test_verify_bad_tests_is_a_usage_error(prereg, tests, capsys):
+    with pytest.raises(SystemExit) as e:
+        run("verify", prereg, "--tests", tests)
+    assert e.value.code == cli.EXIT_USAGE
+    assert "asexec-verify/1" not in capsys.readouterr().out  # nothing ran
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [("verify",), ("verify", "x.json"), ("nope",), ("identity",), ("keygen", "--bogus")],
+    ids=["no-args", "no-tests", "unknown-command", "no-subcommand", "unknown-option"],
+)
+def test_usage_errors_exit_EXIT_USAGE_not_the_FAIL_status(argv):
+    """argparse's own exit status is 2, which verify uses for FAIL; usage errors get 64."""
+    with pytest.raises(SystemExit) as e:
+        run(*argv)
+    assert e.value.code == cli.EXIT_USAGE != cli.EXIT_FAIL
 
 
 # --- verify printer ---------------------------------------------------------- #

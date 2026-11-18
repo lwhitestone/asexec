@@ -132,3 +132,19 @@ def test_BDR__fail__empty_no_manifests():
     report = verify_paths([], ["BDR"])
     assert report["code"] == FAIL
     assert report["results"]["BDR"]["reason"] == "no manifests to verify"
+
+
+def test_BDR__fail__empty_directory_with_no_json_files(tmp_path):
+    """BDR (*): a directory with no *.json file in it yields no manifest file to examine."""
+    (tmp_path / "notes.txt").write_text("not a manifest")
+    report = verify_paths([str(tmp_path)], ["BDR"])
+    assert report["code"] == FAIL
+    assert report["results"]["BDR"]["applicable"] == 0
+    assert report["results"]["BDR"]["reason"] == "no manifests to verify"
+
+
+def test_BDR__fail__1_missing_file_is_examined_and_malformed(tmp_path):
+    """BDR #1: a path that is not a directory is examined even if it does not exist."""
+    report = verify_paths([str(tmp_path / "absent.json")], ["BDR"])
+    assert report["code"] == FAIL
+    assert report["results"]["BDR"]["applicable"] == 1

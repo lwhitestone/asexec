@@ -7,6 +7,7 @@ plus one transcript file for each postreg) that matches ``scenario.artifacts``.
 import pytest
 
 from asexec import hashing
+from asexec.verifier import verify_paths
 
 PASS = "asexec-verify/1 BDR=PASS content=PASS"
 FAIL = "asexec-verify/1 BDR=PASS content=FAIL"
@@ -164,6 +165,14 @@ def test_content__pass__6_digest_hex_accepts_either_case_and_whitespace(scenario
 def test_content__fail__empty_no_artifacts_provided(scenario):
     """content (*): without --artifacts, nothing is examined."""
     report = scenario.verify("content", artifacts=False)
+    assert report["code"] == FAIL
+    assert report["results"]["content"]["applicable"] == 0
+    assert report["results"]["content"]["reason"] == EMPTY
+
+
+def test_content__fail__empty_artifacts_given_as_empty_string(scenario):
+    """content (*): ``--artifacts ""`` is read as not given, so nothing is examined."""
+    report = verify_paths(scenario.write(), ["BDR", "content"], artifacts_dir="")
     assert report["code"] == FAIL
     assert report["results"]["content"]["applicable"] == 0
     assert report["results"]["content"]["reason"] == EMPTY

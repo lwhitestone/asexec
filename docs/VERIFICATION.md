@@ -35,10 +35,13 @@ value and no error state. Malformed input is never an exception: it is a failure
 tests that examine it.
 
 **Code.** One token `<name>=<RESULT>` per requested test, sorted by name, after the prefix
-`asexec-verify/1`. Exit status is `0` if every token is `PASS`, else `2`.
+`asexec-verify/1`. Exit status is `0` if every token is `PASS`, else `2`. A usage error
+(see Run rules) exits `64`, prints no code and verifies nothing. Every exit status is listed
+in the README's [Exit status](../README.md#exit-status).
 
 **Run rules.**
-- `--tests` is required, must name only catalog tests, and must include `BDR`.
+- `--tests` is required, must name only catalog tests, and must include `BDR`. Otherwise
+  the run is a usage error: it exits `64` and nothing is verified.
 - A test passes iff **all** of its *Passes when all* requirements hold for **every** manifest
   or commitment that has the *Examines* properties, and at least one such manifest or
   commitment exists.
@@ -76,8 +79,9 @@ report's wording may change, except for the reasons this document lists.
 | code | always | The [code](#conventions). |
 | `Checked at <time>` | always | When the run happened, in UTC to the second: the moment commitment states were judged against. Not part of the code. |
 
-Exit status is `0` if every token in the code is `PASS`, else `2`. Commitment states never
-affect either: a run can show `ELAPSED-NO-POSTREG` and still exit `0`.
+Exit status is `0` if every token in the code is `PASS`, else `2`; a usage error exits `64`
+with no report. Commitment states never affect either: a run can show `ELAPSED-NO-POSTREG`
+and still exit `0`.
 
 **Example.** The three files from the [`chain` example](#chain), checked with
 `BDR`, `chain` and `keyconsist`. Hashes are shortened with `…`.
@@ -113,7 +117,7 @@ Checked at 2026-12-31T23:59:59Z
 | [`chain`](#chain) | • `payload.phase`<br>• `payload.fulfills`<br>• `payload.prev_hash`<br>• `signature.pubkey`<br>• `signature.sig`<br>• `signature.keyid` | 1. exactly one counted postreg has no `payload.prev_hash`<br>2. every other `payload.prev_hash` is the `ref` of a counted postreg<br>3. no `ref` is the `payload.prev_hash` of more than one counted postreg |
 | [`content`](#content) | • `payload.subject`<br>• `payload.subject[].name`<br>• `payload.subject[].digest`<br>• `payload.hash_alg`<br>• `--artifacts` | 1. `payload.subject` is a non-empty array of well-formed entries<br>2. `payload.hash_alg` is available<br>3. `name` resolves inside `--artifacts`<br>4. the artifact exists<br>5. the artifact is readable<br>6. recomputed digest equals `digest[hash_alg]` |
 | [`floor`](#floor) | • `payload.anchor.floor.floor_type`<br>• `payload.anchor.floor.chain_hash`<br>• `payload.anchor.floor.round`<br>• `payload.anchor.floor.signature`<br>• `payload.anchor.floor.randomness` | 1. `floor_type` is `drand`<br>2. `chain_hash` is pinned<br>3. `round` is an integer and `signature` is hex<br>4. `randomness`, if present, equals `sha256(signature)`<br>5. `signature` BLS-verifies for `round` under the pinned key |
-| [`keyconsist`](#keyconsist) | • `payload.phase`<br>• `payload.fulfills`<br>• `signature.pubkey`<br>• `signature.sig`<br>• `signature.keyid` | 1. every validly signed postreg referencing the prereg has the prereg's `signature.keyid` |
+| [`keyconsist`](#keyconsist) | • `payload.phase`<br>• `payload.fulfills`<br>• `signature.pubkey`<br>• `signature.sig`<br>• `signature.keyid` | 1. every validly signed postreg naming the prereg's `ref` has the `signature.keyid` of a provided prereg with that `ref` |
 
 Condition numbers match each test's *Passes when all* list below; the table shortens them.
 
@@ -143,8 +147,10 @@ Bedrock. Mandatory in every run.
    `payload`.
 3. `signature.keyid == "sha-256:" + sha256(bytes.fromhex(signature.pubkey)).hexdigest()`.
 
-**When empty:** if no file is provided, `BDR` has nothing to examine and is `FAIL`, with
-the reason `no manifests to verify`.
+**When empty:** if no manifest file is found (every path given is a directory with no
+`*.json` file in it), `BDR` has nothing to examine and is `FAIL`, with the reason
+`no manifests to verify`. A path that is not a directory is always examined, even if it
+does not exist (it is malformed).
 
 **Does not establish:** who signed (internal consistency only); that `payload` is a
 well-formed asexec body (any validly signed object `payload` passes, whatever it holds).
@@ -344,10 +350,10 @@ Subject digests recomputed from the original artifacts.
 6. The recomputed digest of the file or directory under `hash_alg` equals the bytes of
    `digest[hash_alg]`, in either hex case.
 
-**When empty:** if `--artifacts` is not given, or no well-formed manifest has a
-`payload.subject`, the test has nothing to examine and is `FAIL`, with the reason
-`requested but no content could be checked (need --artifacts and a manifest with a
-subject)`.
+**When empty:** if `--artifacts` is not given or is empty (`--artifacts ""`), or no
+well-formed manifest has a `payload.subject`, the test has nothing to examine and is
+`FAIL`, with the reason `requested but no content could be checked (need --artifacts and a
+manifest with a subject)`.
 
 **Entry failure reasons** (shown per entry in the report): `malformed subject entry`,
 `algorithm unavailable: <alg>`, `path resolves outside --artifacts`, `artifact not found`,
@@ -565,9 +571,12 @@ their own. The failures in the table come from `BDR` (the first two rows, and th
 when the signature is invalid) and `keyconsist` (the third row).
 
 A manifest is identified by its `ref`. Copies of a postreg, with the same `ref` and
-`signature.keyid`, are one postreg: it is counted, rejected or notarization-only once,
-however many copies are provided. Copies of a prereg, with the same `ref` and
-`signature.keyid`, are one commitment.
+`signature.keyid`, are listed once per outcome, however many are provided. Copies usually
+share an outcome, so they are counted, rejected or notarization-only once. A copy whose
+signature does not verify is judged on its own: it fails `BDR` and, if it names a provided
+prereg, is listed as rejected for `invalid signature` beside the valid copy's outcome (so a
+broken copy of a counted postreg shows the same `ref` as counted and as rejected). Copies of
+a prereg, with the same `ref` and `signature.keyid`, are one commitment.
 
 ## Commitment states
 
