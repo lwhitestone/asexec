@@ -51,8 +51,11 @@ tests that examine it.
 - Verification is offline.
 - A file is **malformed** if it cannot be read, is not a JSON object, nests more than 64
   deep, contains a duplicate JSON key at any level, lacks an object `payload` or `signature`, or its
-  `signature.pubkey` and `signature.sig` are not both hex. It fails `BDR`, and no other test
-  examines it: it joins no commitment, so it is neither counted nor rejected.
+  `signature.pubkey` and `signature.sig` are not both hex. It fails `BDR`, and only `BDR`
+  examines it. It also takes no part in any commitment: even if its `payload.fulfills`
+  names a prereg, it is not counted toward that commitment and not listed as rejected
+  (see [Counting rule](#counting-rule)). A postreg that is well-formed but whose signature
+  does not verify is different: it is rejected.
 
 ## Output
 
