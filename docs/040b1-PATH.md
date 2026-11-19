@@ -194,6 +194,6 @@ breaks any vector that hardcodes it. The options:
 - [ ] 5. #44 (D2), then #42 and #43
 - [ ] 6. #32: DSSE envelope
 - [ ] 7. #33 → #36 → #46 → #37
-- [ ] 8. #34 and #38 (in parallel with step 7 if a second person is working)
+- [ ] 8. #34 and #38
 - [ ] 9. #45 (after #38)
 - [ ] 10. #39 → #40
