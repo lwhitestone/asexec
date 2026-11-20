@@ -39,14 +39,22 @@ from pydantic import (
     Field,
     Strict,
     TypeAdapter,
-    ValidationInfo,
     field_validator,
     model_validator,
 )
 
 from . import drand
 from .constants import MANIFEST_PAYLOAD_TYPE, MANIFEST_PREDICATE_TYPE
-from .fields import Base64, Hex, Link, LowerHex, PinnedChain, SignatureBase64, StrictInt
+from .fields import (
+    Base64,
+    Hex,
+    Link,
+    LowerHex,
+    NormalName,
+    PinnedChain,
+    SignatureBase64,
+    StrictInt,
+)
 
 # A field the caller may express either as a plain string or as structured JSON.
 # "take what is provided and compile it" - more disclosure buys more trust, but
@@ -129,28 +137,19 @@ class CeilingInput(InputModel):
 
 
 class SubjectEntryInput(InputModel):
-    """One ``body.subject[]`` entry (content #1). Must be validated with
-    ``context={"hash_alg": ...}``: ``digest[hash_alg]`` must be hex."""
+    """One ``body.subject[]`` entry (content #1): a string ``name``, the entry's own string
+    ``hash_alg``, and ``digest[hash_alg]`` hex. There is no default ``hash_alg``. That the
+    name is in normal form (#3) and unique (#4) is code."""
 
     name: str  # content #1
+    hash_alg: str  # content #1 (that it is available, #2, is code)
     digest: dict[str, Any]  # content #1
 
-    # The writer subclass turns this off: it types every digest as a string, and
-    # ManifestBody pairs the subject with its hash_alg.
-    digest_needs_hash_alg: ClassVar[bool] = True
-
     @model_validator(mode="after")
-    def _digest_for_alg(self, info: ValidationInfo) -> SubjectEntryInput:
-        if not self.digest_needs_hash_alg:
-            return self
-        if info.context is None or "hash_alg" not in info.context:
-            # A caller bug, not a malformed entry: TypeError is not turned into a
-            # ValidationError, so it can never pass silently as a FAIL or a PASS.
-            raise TypeError('SubjectEntryInput needs context={"hash_alg": ...}')
-        alg = info.context["hash_alg"]
-        if not isinstance(alg, str) or not isinstance(self.digest.get(alg), str):
+    def _digest_for_alg(self) -> SubjectEntryInput:
+        if not isinstance(self.digest.get(self.hash_alg), str):
             raise ValueError("digest[hash_alg] is not a string")
-        bytes.fromhex(self.digest[alg])  # a ValueError here: digest[hash_alg] is not hex
+        bytes.fromhex(self.digest[self.hash_alg])  # a ValueError here: not hex
         return self
 
 
@@ -178,12 +177,13 @@ class DueInput(InputModel):
 # writer models (what this tool writes)
 # --------------------------------------------------------------------------- #
 class SubjectItem(SubjectEntryInput):
-    """One hashed artifact: ``{"name": ..., "digest": {alg: hexhash}}``."""
+    """One hashed file: ``{"name": <normalized relative path>, "hash_alg": alg,
+    "digest": {alg: hexhash}}``."""
 
     model_config = ConfigDict(extra="forbid")
     null_is_absent = False
-    digest_needs_hash_alg = False
 
+    name: NormalName
     digest: dict[str, str]
 
 
@@ -237,9 +237,8 @@ class ManifestBody(BaseModel):
     due: str | None = None
     declaration: Freeform | None = None
 
-    # optional content claim (subject requires its algorithm)
+    # optional content claim: files, each with its own algorithm
     subject: list[SubjectItem] | None = None
-    hash_alg: str | None = None
 
     # postreg linkage
     fulfills: str | None = None
@@ -264,9 +263,11 @@ class ManifestBody(BaseModel):
         # semantic bedrock: target is the only mandatory claim (due is optional).
         if self.target in (None, "", {}, []):
             raise ValueError("manifest body missing mandatory 'target'")
-        # conditional: a content claim is meaningless without its algorithm.
-        if self.subject and not self.hash_alg:
-            raise ValueError("manifest body has a 'subject' but no 'hash_alg'")
+        # content #4: one file, one entry.
+        names = [entry.name for entry in self.subject or []]
+        repeated = sorted({name for name in names if names.count(name) > 1})
+        if repeated:
+            raise ValueError(f"subject lists {', '.join(map(repr, repeated))} twice")
         # a postreg without a link cannot be checked against any commitment.
         if self.phase == "postreg" and not self.fulfills:
             raise ValueError("postreg manifest missing mandatory 'fulfills'")

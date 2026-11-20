@@ -127,9 +127,10 @@ pip install 'asexec[blake3]'  # optional: blake3 as a content-hash algorithm
 # 1. Practitioner, one-time: generate a pseudonymous keypair (no CA, no registration)
 asexec keygen --out lab.key   # refuses to overwrite an existing key unless --force
 
-# 2. Practitioner, BEFORE the run: pre-register the target
+# 2. Practitioner, BEFORE the run: pre-register the target. A subject lists files (no
+#    directories), each named by its path relative to the current directory.
 asexec prereg --key lab.key \
-    --subject ./harness \
+    --subject harness/run.py harness/config.yaml \
     --target "claude-opus-4-8 via the anthropic API" \
     --due 2099-01-01T00:00:00Z \
     --declaration "all runs of this harness against this model, in full" \
@@ -137,12 +138,13 @@ asexec prereg --key lab.key \
 
 # 3. Practitioner, AFTER each run: post-register the run
 asexec postreg --key lab.key --fulfills preregistration.json \
-    --subject ./transcript.txt ./harness \
+    --subject transcript.txt harness/run.py harness/config.yaml \
     --out postregistration.json
 
 # 4. Any verifier, anytime: verify the cycle and render the commitment state.
 #    --tests names exactly which checks to run; 'format' (the file can be read) and
-#    'selfsig' (sig + keyid) are required.
+#    'selfsig' (sig + keyid) are required. --artifacts is the directory the subjects'
+#    names are relative to.
 asexec verify preregistration.json postregistration.json \
     --tests format,selfsig,content,chain,keyconsist --artifacts .
 ```
@@ -249,10 +251,9 @@ The body (`dsse.payload` decoded):
   "target": "claude-opus-4-8 via the anthropic API",    // always: text or JSON
   "due": "2099-01-01T00:00:00Z",                        // deadline; none = stays open
   "declaration": "all runs of this harness against this model, in full", // text or JSON
-  "subject": [                                          // artifacts, hashed
-    { "name": "harness/", "digest": { "sha-256": "2c26b46b…" } }
+  "subject": [                                          // files, each hashed as listed
+    { "name": "harness/run.py", "hash_alg": "sha-256", "digest": { "sha-256": "2c26b46b…" } }
   ],
-  "hash_alg": "sha-256",                                // always with subject
   "anchor": {
     "floor": {                                          // drand (--floor): not before
       "floor_type": "drand",
@@ -290,11 +291,10 @@ The body (`dsse.payload` decoded):
   "target": "claude-opus-4-8 via the anthropic API",    // always: text or JSON
   "due": "2099-01-01T00:00:00Z",                        // deadline; none = stays open
   "declaration": "all runs of this harness against this model, in full", // text or JSON
-  "subject": [                                          // artifacts, hashed
-    { "name": "transcript.txt", "digest": { "sha-256": "9f86d081…" } },
-    { "name": "harness/", "digest": { "sha-256": "2c26b46b…" } }
+  "subject": [                                          // files, each hashed as listed
+    { "name": "transcript.txt", "hash_alg": "sha-256", "digest": { "sha-256": "9f86d081…" } },
+    { "name": "harness/run.py", "hash_alg": "sha-256", "digest": { "sha-256": "2c26b46b…" } }
   ],
-  "hash_alg": "sha-256",                                // always with subject
   "fulfills": "sha-256:4be1c1f8…",                      // always in a postreg
   "prev_hash": "sha-256:07ad3b2e…",                     // previous postreg
   "anchor": {
@@ -436,16 +436,6 @@ explicitly not.
 > verifiable: a format change adds a new format version and keeps accepting the old ones.
 > Manifests from `0.3.x` are not supported. The verifier support for this is
 > [designed](./docs/MULTIVERSION.md) but not built yet.
-
-## Known issues
-
-Where `asexec` deviates from the [verification contract](./docs/VERIFICATION.md) (`0.4.0`
-closes this by accepting only files as subjects):
-
-- **Directory hashes (v1) are ambiguous**, so `content` can pass for a different tree: a
-  filename containing a newline can make two trees hash identically, and symlinks, empty
-  directories and executable bits inside a directory aren't covered. Use file subjects, such
-  as an archive of the directory, for anything that matters.
 
 ## License
 

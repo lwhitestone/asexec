@@ -129,8 +129,8 @@ edited. A `0.4.0` beta build reads only its own beta type, so every test that re
 skipped there (the `frozen_v1` mark, reason "a 0.4.0 beta build does not read v1, the frozen
 vectors' format (D6b)"). In its place, `test_current_format_sign_then_verify_roundtrip`,
 which runs in every build, signs two files under the current entry (one from the production
-writer, one with no `hash_alg`) and checks through `verify_paths` that they pass `format`,
-`selfsig` and `content` (the second with the entry's own default `hash_alg`), and that
+writer, one signed by hand) and checks through `verify_paths` that they pass `format`,
+`selfsig` and `content` (each subject entry read under its own `hash_alg`), and that
 copies changed after signing fail `selfsig`. So on main after `0.4.0b1`, the pinned checks
 don't run until the `0.4.0` release commit sets `v1` again, and that commit's `check.sh` is
 the first to compare format changes made between betas against the frozen vectors.

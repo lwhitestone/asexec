@@ -154,7 +154,9 @@ manifest, even if that manifest happens to carry it; there, it stays an unknown 
 - `dsse.payloadType` selects the format version, and unknown values fail `format`
   ([`docs/MULTIVERSION.md`](docs/MULTIVERSION.md)). (Done ahead of 0.4.0.)
 - `hash_alg` moves into each subject entry. A body-level `hash_alg` is no longer read, and is
-  shown as unknown and unchecked, like any unknown field.
+  shown as unknown and unchecked, like any unknown field. (Done ahead of 0.4.0, except the
+  showing, which is the unknown-field display below. An entry without its own `hash_alg`
+  fails `content`: no format supplies a default.)
 - Subjects are an explicit list of files, each hashed exactly as listed, because directory
   hash v1 is ambiguous and skips what it can't encode.
   - An entry's `name` is the relative path as given (normalized, `/`-separated), not its
@@ -167,6 +169,10 @@ manifest, even if that manifest happens to carry it; there, it stays an unknown 
     that resolves outside `--artifacts`.
   - The README examples change to match. Nothing is kept for compatibility with
     directory subjects.
+
+  (Done ahead of 0.4.0. The name is relative to the directory signing runs in, and verify
+  resolves it under `--artifacts`. Signing also refuses an absolute path, a `..` component
+  and a backslash, and `content` fails a name not in that normal form.)
 - The claim record: `plan`, `items`, and per-postreg `item_id`, `status` and `evidence`
   (see *New properties*).
 - Convention: one prereg per commitment (a promise, or an assessment's plan). No

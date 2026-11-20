@@ -29,14 +29,14 @@ from asexec import keys
 from asexec.canonical import canonical_bytes, pae, signing_input
 from asexec.constants import FORMATS, MANIFEST_PAYLOAD_TYPE
 
-# The files a verify scenario writes under --artifacts, and their sha-256 digests
-# ("harness/" is the directory hash of hashing.py's v1 scheme).
+# The files a verify scenario writes under --artifacts, and their sha-256 digests. A subject
+# entry names one file by its relative path under --artifacts.
 ARTIFACTS = {
     "harness/eval.py": "def run():\n    return 42\n",
     **{f"transcript{i}.txt": f"run {i}: score=0.{i}\n" for i in range(3)},
 }
 DIGESTS = {
-    "harness/": "2edb1fb893693308cab35ab8fa26f2be6a8a459b02f6f3fcd2100c712115ce09",
+    "harness/eval.py": "2d748fe25f2542176478b701458b2650b9a5dabd66b226f1565d0745c473e915",
     "transcript0.txt": "95df040e723a615372bc3d293ffef85be5b530e678fcb26e18f7177a41524691",
     "transcript1.txt": "0d576426c32f17c207749e124f2aa222dd863f92d7a810dcf8097f078398239b",
     "transcript2.txt": "9e692c724057f5d7662349313efb4420cc2b3d1124dda2d61d068eccaa074d4e",
@@ -62,7 +62,8 @@ TEST_KEY = (_SEED, bytes(nacl.signing.SigningKey(_SEED).verify_key))
 
 
 def subject_entry(name: str) -> dict[str, Any]:
-    return {"name": name, "digest": {"sha-256": DIGESTS[name]}}
+    """A subject entry for one of ``ARTIFACTS``, carrying its own ``hash_alg``."""
+    return {"name": name, "hash_alg": "sha-256", "digest": {"sha-256": DIGESTS[name]}}
 
 
 def body_bytes(body: dict[str, Any]) -> bytes:
@@ -83,14 +84,13 @@ PREREG = {
     "target": TARGET,
     "due": DUE,
     "declaration": "all runs in full",
-    "subject": [subject_entry("harness/")],
-    "hash_alg": "sha-256",
+    "subject": [subject_entry("harness/eval.py")],
     "notes": "prereg",
 }
 POSTREG = {
     **PREREG,
     "phase": "postreg",
-    "subject": [subject_entry("transcript0.txt"), subject_entry("harness/")],
+    "subject": [subject_entry("transcript0.txt"), subject_entry("harness/eval.py")],
     "fulfills": ref(PREREG),
     "notes": "postreg0",
 }

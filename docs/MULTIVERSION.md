@@ -66,7 +66,6 @@ FORMATS: dict[str, dict] = {
         "digest_ref_prefix": "sha-256:",
         "signing_key_alg": "ed25519",
         "signing_pae_version": b"DSSEv1",
-        "subject_default_hash_alg": "sha-256",
     },
 }
 ```
@@ -79,8 +78,9 @@ the literal `application/vnd.asexec.v1+json`, which never changes after that. Ot
 next release commit would re-key the released `v1` entry, and every `v1` manifest would
 read as an unknown format.
 
-- **Known `payloadType`:** verify under that entry's rules: the PAE signing input, the prefix
-  of `ref` and `keyid`, and the `hash_alg` a subject without one is read with.
+- **Known `payloadType`:** verify under that entry's rules: the PAE signing input and the
+  prefix of `ref` and `keyid`. (A subject entry carries its own `hash_alg`, so no format
+  supplies a default.)
 - **Unknown `payloadType`:** `format=FAIL`, with a reason that says what the type is: a
   format newer than this release (upgrade), a beta's (unsupported), or the format asexec
   wrote before `0.4.0` (unsupported, re-sign). Never fall back to another entry. `selfsig`
@@ -102,7 +102,7 @@ selector. The per-format ones are now fields of a `FORMATS` entry.
 | `SIGNING_PAE_VERSION` | Built: the entry's `signing_pae_version`, now `DSSEv1`, which DSSE fixes. |
 | `MANIFEST_PAYLOAD_TYPE` | Built: the selector, and the key of the entry signing uses. Signing uses the newest value. |
 | `DIGEST_REF_PREFIX` | Built: the entry's `digest_ref_prefix`. A format's refs and keyids must all use its prefix. |
-| `SUBJECT_DEFAULT_HASH_ALG` | Built, split in two: the entry's `subject_default_hash_alg` is the verify fallback and never changes, and `SUBJECT_DEFAULT_HASH_ALG` stays as the signing default, which can, because signing always writes `hash_alg`. |
+| `SUBJECT_DEFAULT_HASH_ALG` | The signing default only, which can change, because signing writes `hash_alg` into every subject entry. Verify has no fallback: each entry carries its own `hash_alg` (the entry's `subject_default_hash_alg`, which was the fallback, is removed). |
 | `SIGNING_KEY_ALG` | Built: the entry's `signing_key_alg`, which avoids selecting an algorithm from an unsigned field. A manifest names no algorithm, and ed25519 is the only algorithm verify checks. Existing key files keep working only if the format still uses their algorithm, so signing with a new algorithm needs a new key. |
 | `VERIFY_CODE_VERSION` | Independent of the manifest format. See below. |
 | `IDENTITY_WELL_KNOWN_PATH` | Not manifest format. Fetch the new path, then fall back to the old one. |

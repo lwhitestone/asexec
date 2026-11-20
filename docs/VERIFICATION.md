@@ -32,9 +32,8 @@ claim. Properties are written as dotted paths of two kinds:
 under that format's rules only, never another format's. This release reads one format,
 `application/vnd.asexec.v1+json`, and this document gives its rules: the PAE signing input
 is DSSE's, `DSSEv1 SP len(type) SP type SP len(body) SP body` over `dsse.payloadType` and
-the body bytes; `ref` and `keyid` start `sha-256:`; and a subject with no `body.hash_alg` is
-read as `sha-256`. A file whose `dsse.payloadType` names any other format fails
-[`format`](#format) #3.
+the body bytes; and `ref` and `keyid` start `sha-256:`. A file whose `dsse.payloadType`
+names any other format fails [`format`](#format) #3.
 
 **Phases.** A manifest's phase is its `body.phase`. A *prereg* is a manifest with
 `body.phase == "prereg"`; a *postreg* has `body.phase == "postreg"`. `ref(m)` is
@@ -44,7 +43,7 @@ way (other spacing, other key order) is another body, with another `ref`.
 
 **Hex.** A value required to be hex is a string that `bytes.fromhex` accepts: an even number
 of hex digits in either case, with ASCII whitespace allowed around and between bytes.
-Content #6 compares the bytes a digest's hex decodes to, so any such spelling matches.
+Content #9 compares the bytes a digest's hex decodes to, so any such spelling matches.
 Ceiling #2 and floor #4 compare exactly against the lowercase hex of the digest.
 
 **Base64.** A value required to be strict base64 is a string in the standard alphabet
@@ -165,7 +164,7 @@ Checked at 2026-12-31T23:59:59Z
 |---|---|---|
 | [`ceiling`](#ceiling) | • `ceiling.ceiling_type`<br>• `ceiling.nonce`<br>• `ceiling.witness_id`<br>• `ceiling.pubkey`<br>• `ceiling.response`<br>• `dsse.payload` | 1. `ceiling.ceiling_type` is `roughtime`<br>2. `ceiling.nonce` equals `ref`<br>3. `ceiling.witness_id` has a pinned key<br>4. `ceiling.pubkey`, if present, equals the pinned key<br>5. `ceiling.response` verifies against the pinned key |
 | [`chain`](#chain) | • `body.phase`<br>• `body.fulfills`<br>• `body.prev_hash`<br>• `pubkey`<br>• `dsse.signatures`<br>• `dsse.signatures[0].sig`<br>• `dsse.signatures[0].keyid` | 1. exactly one counted postreg has no `body.prev_hash`<br>2. every other `body.prev_hash` is the `ref` of a counted postreg<br>3. no `ref` is the `body.prev_hash` of more than one counted postreg |
-| [`content`](#content) | • `body.subject`<br>• `body.subject[].name`<br>• `body.subject[].digest`<br>• `body.hash_alg`<br>• `dsse.payloadType`<br>• `--artifacts` | 1. `body.subject` is a non-empty array of well-formed entries<br>2. `body.hash_alg` is available<br>3. `name` resolves inside `--artifacts`<br>4. the artifact exists<br>5. the artifact is readable<br>6. recomputed digest equals `digest[hash_alg]` |
+| [`content`](#content) | • `body.subject`<br>• `body.subject[].name`<br>• `body.subject[].hash_alg`<br>• `body.subject[].digest`<br>• `--artifacts` | 1. `body.subject` is a non-empty array of well-formed entries<br>2. the entry's `hash_alg` is available<br>3. `name` is a normalized relative path<br>4. no other entry has the same `name`<br>5. `name` resolves inside `--artifacts`<br>6. the artifact exists<br>7. the artifact is a regular file<br>8. the artifact is readable<br>9. recomputed digest equals `digest[hash_alg]` |
 | [`floor`](#floor) | • `body.anchor.floor.floor_type`<br>• `body.anchor.floor.chain_hash`<br>• `body.anchor.floor.round`<br>• `body.anchor.floor.signature`<br>• `body.anchor.floor.randomness` | 1. `floor_type` is `drand`<br>2. `chain_hash` is pinned<br>3. `round` is an integer and `signature` is hex<br>4. `randomness`, if present, equals `sha256(signature)`<br>5. `signature` BLS-verifies for `round` under the pinned key |
 | [`format`](#format) | • the file<br>• `dsse`<br>• `dsse.payloadType`<br>• `dsse.signatures`<br>• `dsse.payload` | 1. file is a well-formed JSON object with the `dsse` frame<br>2. `dsse.payload` is strict base64 of a well-formed JSON object<br>3. `dsse.payloadType` names a format this release reads |
 | [`keyconsist`](#keyconsist) | • `body.phase`<br>• `body.fulfills`<br>• `pubkey`<br>• `dsse.signatures`<br>• `dsse.signatures[0].sig`<br>• `dsse.signatures[0].keyid` | 1. every validly signed postreg naming the commitment's `ref` has the `dsse.signatures[0].keyid` of a commitment with that `ref` |
@@ -325,25 +324,37 @@ Checked at 2026-12-31T23:59:59Z
 
 Subject digests recomputed from the original artifacts.
 
+A subject is an explicit list of files. Each entry names one file by its relative path under
+`--artifacts` and carries its own `hash_alg`; there is no default algorithm, and a
+body-level `body.hash_alg` (where asexec before 0.4.0 wrote it) is not read. Nothing hashes
+a directory: to commit to a tree, list its files, or pack it (a tar, for example) and list
+the archive.
+
 **Examines (\*)**
 - `body.subject`
 - `body.subject[].name`
+- `body.subject[].hash_alg`
 - `body.subject[].digest`
-- `body.hash_alg` (if absent, the default of the format `dsse.payloadType` names: `sha-256`)
-- `dsse.payloadType` (only for that default)
 - `--artifacts`
 
 **Passes when all** (for each manifest that has a `body.subject`, and each of its entries)
-1. `body.subject` is a non-empty array, and each entry's `name` is a string and
-   `digest[hash_alg]` is hex.
+1. `body.subject` is a non-empty array, and each entry is an object whose `name` is a
+   string, whose own `hash_alg` is a string, and whose `digest[hash_alg]` is hex. An entry
+   without a `hash_alg` fails here.
 2. `hash_alg` is available in this install: `sha-256` always, `blake3` only if installed.
-3. `name` (trailing `/` removed) resolved with symlinks against `--artifacts` is the
-   `--artifacts` directory or beneath it. `..` components, absolute names, and symlinks
-   that point outside fail here.
-4. The resolved path exists. A `name` that no path on this system can have (one holding a
+3. `name` is a relative path in normal form: segments separated by `/`, none of them empty,
+   `.` or `..`, and no backslash. So an absolute name, `./a.txt`, `a//b.txt`, `a/`,
+   `a/../b.txt` and `a\b.txt` fail, and one file has exactly one name on every system.
+4. No other entry of the same `body.subject` has the same `name`. Each entry that shares
+   its name fails.
+5. `name` resolved with symlinks against `--artifacts` is the `--artifacts` directory or
+   beneath it. A symlink that points outside fails here.
+6. The resolved path exists. A `name` that no path on this system can have (one holding a
    NUL, or a lone surrogate the filesystem cannot encode) names no artifact.
-5. The resolved path is readable.
-6. The recomputed digest of the file or directory under `hash_alg` equals the bytes of
+7. The resolved path is a regular file. A directory, or a FIFO, socket or device, fails and
+   is never read. A listed symlink to a file is hashed as the bytes read through it.
+8. The file is readable.
+9. The recomputed digest of the file under `hash_alg` equals the bytes of
    `digest[hash_alg]`, in either hex case.
 
 **When empty:** if `--artifacts` is not given or is empty (`--artifacts ""`), or no
@@ -351,9 +362,12 @@ manifest that passes `format` has a `body.subject`, the test has nothing to exam
 `FAIL`, with the reason `requested but no content could be checked (need --artifacts and a
 manifest with a subject)`.
 
-**Entry failure reasons** (shown per entry in the report): `malformed subject entry`,
-`algorithm unavailable: <alg>`, `path resolves outside --artifacts`, `artifact not found`,
-`artifact unreadable: <error>`, or a digest mismatch with `expected`/`actual`.
+**Entry failure reasons** (shown per entry in the report), by item: `malformed subject entry`
+(or `malformed subject` for a `body.subject` that is no non-empty array) (#1),
+`algorithm unavailable: <alg>` (#2), `name is not a normalized relative path` (#3),
+`duplicate name` (#4), `path resolves outside --artifacts` (#5), `artifact not found` (#6),
+`artifact is not a file` (#7), `artifact unreadable: <error>` (#8), or a digest mismatch
+with `expected`/`actual` (#9).
 
 **Not examined:** a manifest that fails `format`; any manifest when `--artifacts` is absent.
 
@@ -366,18 +380,19 @@ is the output of the named harness and model.
 $ asexec verify prereg.json --tests format,selfsig,content --artifacts artifacts
 ```
 
-`artifacts/transcript.txt` contains `hello` and a newline. The body of `prereg.json`
-(unexamined fields elided):
+`artifacts/runs/transcript.txt` contains `hello` and a newline. `prereg.json` was signed
+from the directory `artifacts` stands for, with `asexec prereg --subject
+runs/transcript.txt …`. Its body (unexamined fields elided):
 
 ```jsonc
 {
   "subject": [
     {
-      "name": "transcript.txt",
+      "name": "runs/transcript.txt",
+      "hash_alg": "sha-256",
       "digest": { "sha-256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03" }
     }
   ],
-  "hash_alg": "sha-256",
   …
 }
 ```

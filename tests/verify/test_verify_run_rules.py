@@ -151,7 +151,7 @@ def test_run__malformed_file_fails_format_and_no_other_test_examines_it(scenario
 _JUNK_BODY = {
     "phase": "prereg",
     "anchor": {"floor": {"floor_type": "drand", "round": 1001, "signature": "00"}},
-    "subject": [{"name": "harness/", "digest": {"sha-256": "00"}}],
+    "subject": [{"name": "harness/eval.py", "hash_alg": "sha-256", "digest": {"sha-256": "00"}}],
 }
 
 
@@ -304,7 +304,10 @@ SIGNED_JUNK = [
     pytest.param("anchor", {"floor": {"round": "nope", "signature": 5}}, id="floor-fields"),
     pytest.param("subject", "x", id="subject-not-list"),
     pytest.param("subject", [{"name": 3}], id="subject-entry-fields"),
-    pytest.param("hash_alg", ["a"], id="hash_alg-not-string"),
+    pytest.param("hash_alg", ["a"], id="body-hash_alg-not-string"),
+    pytest.param("subject", [{"name": "a", "hash_alg": ["a"], "digest": {}}], id="entry-hash_alg"),
+    pytest.param("subject", [{"name": "a", "hash_alg": {}, "digest": []}], id="entry-hash_alg-obj"),
+    pytest.param("subject", [{"name": ["a"], "hash_alg": "sha-256"}], id="entry-name-list"),
     pytest.param("fulfills", {"a": 1}, id="fulfills-not-string"),
     pytest.param("prev_hash", ["a"], id="prev_hash-not-string"),
     pytest.param("due", ["a"], id="due-not-string"),
@@ -399,7 +402,7 @@ def _lone(scenario, name, path):
         ("prereg", "body.declaration"),
         ("prereg", "body.notes"),
         ("prereg", "body.due"),
-        ("prereg", "body.hash_alg"),
+        ("prereg", "body.subject.0.hash_alg"),
         ("prereg", "body.subject.0.name"),
         ("prereg", "body.subject.0.digest.sha-256"),
         ("postreg0", "body.fulfills"),
@@ -415,9 +418,9 @@ def test_never_raises__lone_surrogate_escape_in_the_body(scenario, name, path):
     assert {"format=PASS", "selfsig=PASS", "ceiling=PASS"} <= set(report["code"].split()[1:])
 
 
-@pytest.mark.parametrize("name", ["\ud800", "harness\x00/"], ids=["lone-surrogate", "nul"])
+@pytest.mark.parametrize("name", ["\ud800", "harness\x00.py"], ids=["lone-surrogate", "nul"])
 def test_never_raises__subject_named_as_no_path_can_be(scenario, name):
-    """content #4: a subject name that no path on this system can have (a lone surrogate,
+    """content #6: a subject name that no path on this system can have (a lone surrogate,
     or a NUL) names no artifact: it is not found, and verify does not raise."""
     if name == "\ud800":
         _lone(scenario, "prereg", "body.subject.0.name")

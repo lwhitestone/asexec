@@ -30,7 +30,7 @@ from typing import Any
 
 from . import keys
 from .canonical import b64decode, b64encode, canonical_bytes, signing_input
-from .constants import FORMATS, MANIFEST_PAYLOAD_TYPE, SUBJECT_DEFAULT_HASH_ALG
+from .constants import FORMATS, MANIFEST_PAYLOAD_TYPE
 from .errors import ManifestError
 from .models import Anchor, Dsse, Manifest, ManifestBody, Signature
 
@@ -45,10 +45,9 @@ from .models import Anchor, Dsse, Manifest, ManifestBody, Signature
 #                with no deadline simply stays ``open`` forever, so it is not
 #                bedrock.
 #
-# Everything else - the drand floor, the Roughtime ceiling witness, subject/hash_alg,
-# declaration, free-text - is individually optional. `subject`/`hash_alg` are
-# *conditionally* required together: a content claim is meaningless without its
-# algorithm, so `hash_alg` is required iff `subject` is present.
+# Everything else - the drand floor, the Roughtime ceiling witness, subject, declaration,
+# free-text - is individually optional. Each subject entry carries its own `hash_alg`:
+# a digest is meaningless without its algorithm, and no default supplies one.
 _BEDROCK_STRUCTURAL = ("predicateType", "phase")
 _BEDROCK_SEMANTIC = ("target",)
 
@@ -60,7 +59,6 @@ def _build(
     due=None,
     declaration=None,
     subject=None,
-    hash_alg=None,
     fulfills=None,
     prev_hash=None,
     floor=None,
@@ -70,10 +68,6 @@ def _build(
     notes=None,
 ) -> dict[str, Any]:
     """Construct + validate a body via the model, return the plain signed dict."""
-    if subject:
-        hash_alg = hash_alg or SUBJECT_DEFAULT_HASH_ALG
-    else:
-        hash_alg = None  # never a dangling algorithm without a subject
     anchor = Anchor(floor=floor) if floor is not None else None
     body = ManifestBody(
         phase=phase,
@@ -81,7 +75,6 @@ def _build(
         due=due,
         declaration=declaration,
         subject=subject,
-        hash_alg=hash_alg,
         fulfills=fulfills,
         prev_hash=prev_hash,
         anchor=anchor,
@@ -93,16 +86,13 @@ def _build(
     return body.to_body()
 
 
-def build_prereg(
-    target, *, due=None, declaration=None, subject=None, hash_alg=None, **optional
-) -> dict[str, Any]:
+def build_prereg(target, *, due=None, declaration=None, subject=None, **optional) -> dict[str, Any]:
     return _build(
         "prereg",
         target,
         due=due,
         declaration=declaration,
         subject=subject,
-        hash_alg=hash_alg,
         **optional,
     )
 
@@ -115,7 +105,6 @@ def build_postreg(
     declaration=None,
     subject=None,
     prev_hash=None,
-    hash_alg=None,
     **optional,
 ) -> dict[str, Any]:
     return _build(
@@ -124,7 +113,6 @@ def build_postreg(
         due=due,
         declaration=declaration,
         subject=subject,
-        hash_alg=hash_alg,
         fulfills=fulfills,
         prev_hash=prev_hash,
         **optional,
@@ -170,10 +158,24 @@ def _check_bedrock(body: dict[str, Any]) -> None:
     ]
     if missing:
         raise ManifestError(f"manifest body missing mandatory field(s): {', '.join(missing)}")
-    if body.get("subject") and not body.get("hash_alg"):
-        raise ManifestError("manifest body has a 'subject' but no 'hash_alg'")
+    _check_entries(body.get("subject"), "subject")
     if body["phase"] == "postreg" and "fulfills" not in body:
         raise ManifestError("postreg manifest missing mandatory 'fulfills'")
+
+
+def _check_entries(entries: Any, field: str) -> None:
+    """Each entry of a hand-built ``subject`` carries its own ``hash_alg``, and no two share
+    a ``name`` (what ``content`` would fail)."""
+    if not isinstance(entries, list):
+        return
+    names = []
+    for entry in entries:
+        if isinstance(entry, dict) and not entry.get("hash_alg"):
+            raise ManifestError(f"a {field} entry has no 'hash_alg'")
+        names.append(entry.get("name") if isinstance(entry, dict) else None)
+    repeated = sorted({n for n in names if isinstance(n, str) and names.count(n) > 1})
+    if repeated:
+        raise ManifestError(f"{field} lists {', '.join(map(repr, repeated))} twice")
 
 
 def read_body(manifest: dict[str, Any]) -> tuple[bytes, dict[str, Any]]:

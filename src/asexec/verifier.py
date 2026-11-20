@@ -31,10 +31,11 @@ Tests (the catalog - only verifiable claims, no self-declarations)
   - ``chain``      : prev_hash chain integrity (one root, no gaps, no forks: a
                      single linear chain). Applies to
                      commitments that have counted postregs.
-  - ``content``    : subject digests recomputed from --artifacts match. Subject
-                     names must resolve inside --artifacts (an escape is a
-                     mismatch). Applies where artifacts are provided and a
-                     subject is present.
+  - ``content``    : subject digests recomputed from --artifacts match. Each
+                     entry names one regular file by a normalized relative
+                     path, unique in its list, that resolves inside --artifacts,
+                     and carries its own hash_alg (no default). Applies where
+                     artifacts are provided and a subject is present.
   - ``floor``      : the drand freshness floor BLS-verifies. Applies to
                      manifests that carry an anchor.floor.
   - ``format``     : the file can be read: a JSON object (unique keys, nested at
@@ -104,6 +105,7 @@ from . import drand, hashing, keys, manifest
 from .canonical import b64decode, signing_input
 from .constants import FORMATS, VERIFY_CODE_VERSION
 from .errors import ManifestError, VerificationError
+from .fields import is_normal_name
 from .models import (
     CeilingInput,
     DueInput,
@@ -357,17 +359,17 @@ def verify_ceiling(
 
 
 # A subject name that no path on this system can have (it holds a NUL, or a lone surrogate
-# the filesystem encoding can't encode): it names no artifact (content #4).
+# the filesystem encoding can't encode): it names no artifact (content #6).
 _NO_SUCH_PATH = object()
 
 
 def _resolve_inside(artifacts_dir: str, name: str) -> Any:
-    """Resolve a subject ``name`` under ``artifacts_dir``; None if it escapes
-    (``..``, an absolute name, or a symlink pointing outside), ``_NO_SUCH_PATH`` if no path
-    can have it."""
+    """Resolve a normalized subject ``name`` under ``artifacts_dir``, following symlinks;
+    None if it escapes (a symlink pointing outside), ``_NO_SUCH_PATH`` if no path can have
+    it."""
     root = os.path.realpath(artifacts_dir)
     try:
-        path = os.path.realpath(os.path.join(root, name.rstrip("/")))
+        path = os.path.realpath(os.path.join(root, name))
     except ValueError:  # embedded NUL, or UnicodeEncodeError
         return _NO_SUCH_PATH
     if path != root and not path.startswith(root + os.sep):
@@ -375,35 +377,45 @@ def _resolve_inside(artifacts_dir: str, name: str) -> Any:
     return path
 
 
-def _verify_subject_item(item: Any, alg: Any, artifacts_dir: str) -> dict[str, Any]:
+def _verify_entry(item: Any, artifacts_dir: str, repeated: set[str]) -> dict[str, Any]:
+    """content #1-#9 for one entry, in order; the first that fails is its reason."""
     label = str(item.get("name") if isinstance(item, dict) else item)[:80]
-    if not isinstance(alg, str):  # content #2: no install has a non-string algorithm
-        return {"name": label, "ok": False, "reason": f"algorithm unavailable: {alg!r}"}
     try:
-        entry = SubjectEntryInput.model_validate(item, context={"hash_alg": alg})  # content #1
+        entry = SubjectEntryInput.model_validate(item)  # content #1
     except ValidationError:
         return {"name": label, "ok": False, "reason": "malformed subject entry"}
-    name, expected = entry.name, entry.digest[alg]
-    if alg not in hashing.available_algorithms():
+    name, alg = entry.name, entry.hash_alg
+    expected = entry.digest[alg]
+    if alg not in hashing.available_algorithms():  # content #2
         return {"name": name, "ok": False, "reason": f"algorithm unavailable: {alg!r}"}
+    if not is_normal_name(name):  # content #3
+        return {"name": name, "ok": False, "reason": "name is not a normalized relative path"}
+    if name in repeated:  # content #4
+        return {"name": name, "ok": False, "reason": "duplicate name"}
     path = _resolve_inside(artifacts_dir, name)
-    if path is None:
+    if path is None:  # content #5
         return {"name": name, "ok": False, "reason": "path resolves outside --artifacts"}
-    if path is _NO_SUCH_PATH or not os.path.exists(path):
+    if path is _NO_SUCH_PATH or not os.path.exists(path):  # content #6
         return {"name": name, "ok": False, "reason": "artifact not found"}
+    if not os.path.isfile(path):  # content #7: never read a directory, FIFO or device
+        return {"name": name, "ok": False, "reason": "artifact is not a file"}
     try:
-        actual = hashing.digest_path(path, alg)
-    except OSError as e:
+        actual = hashing.hash_file(path, alg)
+    except OSError as e:  # content #8
         return {"name": name, "ok": False, "reason": f"artifact unreadable: {e.strerror or e}"}
-    ok = bytes.fromhex(actual) == bytes.fromhex(expected)  # content #6: any hex spelling
+    ok = bytes.fromhex(actual) == bytes.fromhex(expected)  # content #9: any hex spelling
     return {"name": name, "ok": ok, **({} if ok else {"expected": expected, "actual": actual})}
 
 
-def verify_content(
-    body: dict[str, Any], artifacts_dir: str | None, payload_type: str
-) -> dict[str, Any]:
-    """``content`` for a manifest that passed ``format``, of format ``payload_type``: a
-    subject with no ``hash_alg`` is read with that format's default."""
+def _repeated_names(entries: list[Any]) -> set[str]:
+    """The names more than one entry of one list has (content #4)."""
+    names = [e.get("name") for e in entries if isinstance(e, dict)]
+    return {n for n in names if isinstance(n, str) and names.count(n) > 1}
+
+
+def verify_content(body: dict[str, Any], artifacts_dir: str | None) -> dict[str, Any]:
+    """``content`` for a manifest that passed ``format``: each ``body.subject`` entry, read
+    under its own ``hash_alg`` (there is no default)."""
     if not artifacts_dir:
         return {"status": "skipped", "reason": "no artifacts provided"}
     present, subject = _lookup(body, "subject")
@@ -416,9 +428,8 @@ def verify_content(
             "status": "mismatch",
             "entries": [{"name": "(subject)", "ok": False, "reason": "malformed subject"}],
         }
-    present, alg = _lookup(body, "hash_alg")
-    alg = alg if present else FORMATS[payload_type]["subject_default_hash_alg"]
-    entries = [_verify_subject_item(item, alg, artifacts_dir) for item in subject]
+    repeated = _repeated_names(subject)
+    entries = [_verify_entry(item, artifacts_dir, repeated) for item in subject]
     return {"status": "ok" if all(e["ok"] for e in entries) else "mismatch", "entries": entries}
 
 
@@ -468,11 +479,7 @@ def verify_paths(
         )
         floor = verify_floor(body) if clean else {"status": "absent"}
         ceiling = verify_ceiling(mani, fmt["ref"], servers) if clean else {"status": "absent"}
-        content = (
-            verify_content(body, artifacts_dir, fmt["payload_type"])
-            if clean
-            else {"status": "skipped"}
-        )
+        content = verify_content(body, artifacts_dir) if clean else {"status": "skipped"}
         if ceiling.get("status") == "verified":
             ceiling_trust.append(
                 f"{p}: ceiling witnessed by {ceiling.get('witness_id')} at "

@@ -49,11 +49,21 @@ def _content_reasons(report):
 # --- subject and hash_alg -------------------------------------------------------- #
 
 
-def test_fault__hash_alg_missing_beside_a_subject(tmp_path):
-    """The writer refuses a subject without hash_alg; verify reads it as sha-256."""
-    pre, post = (d.sign(d.without_field(b, "hash_alg")) for b in (d.PREREG, d.POSTREG))
+def test_fault__hash_alg_only_at_the_body_level(tmp_path):
+    """Before 0.4.0 hash_alg sat beside the subject. A body laid out that way, with no
+    hash_alg in its entries, fails content: an entry's own hash_alg is the only one read,
+    and there is no default."""
+
+    def old_layout(body):
+        body = d.with_field(body, "hash_alg", "sha-256")
+        for i in range(len(body["subject"])):
+            body = d.without_field(body, f"subject.{i}.hash_alg")
+        return body
+
+    pre, post = (d.sign(old_layout(b)) for b in (d.PREREG, d.POSTREG))
     report = _run(tmp_path, pre, post, tests=(*REQUIRED, "content"))
-    assert report["code"] == PREFIX + "content=PASS format=PASS selfsig=PASS"
+    assert report["code"] == PREFIX + "content=FAIL format=PASS selfsig=PASS"
+    assert set(_content_reasons(report)) == {"malformed subject entry"}
 
 
 def test_fault__subject_entry_without_a_digest(tmp_path):

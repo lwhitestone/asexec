@@ -26,7 +26,7 @@ ALL_PASS = "asexec-verify/1 " + " ".join(f"{name}=PASS" for name in TESTS)
 
 def _built(raw):
     """What the writer builds from the same inputs as the raw body."""
-    args = {k: raw[k] for k in ("due", "declaration", "subject", "hash_alg", "notes") if k in raw}
+    args = {k: raw[k] for k in ("due", "declaration", "subject", "notes") if k in raw}
     if "anchor" in raw:
         args["floor"] = raw["anchor"]["floor"]
     if raw["phase"] == "prereg":

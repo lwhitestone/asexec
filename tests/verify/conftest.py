@@ -134,7 +134,7 @@ class Scenario:
 
     # --- declaring manifests ------------------------------------------------ #
     def add_prereg(self, name: str) -> None:
-        self.specs[name] = _Spec("prereg", self._subject(["harness/"]))
+        self.specs[name] = _Spec("prereg", self._subject(["harness/eval.py"]))
 
     def add_postreg(
         self,
@@ -143,7 +143,7 @@ class Scenario:
         prev: str | None = None,
         transcript: str = "transcript0.txt",
     ) -> None:
-        subject = self._subject([transcript, "harness/"])
+        subject = self._subject([transcript, "harness/eval.py"])
         self.specs[name] = _Spec("postreg", subject, fulfills=fulfills, prev=prev)
 
     def with_floor(self, name: str = "prereg") -> None:

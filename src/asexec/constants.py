@@ -44,8 +44,6 @@ FORMATS: dict[str, dict] = {
         # requires, so asexec does not version it. The payloadType beside it in the PAE is
         # what ties a signature to this format.
         "signing_pae_version": b"DSSEv1",
-        # The algorithm ``content`` reads a subject with when the manifest names none.
-        "subject_default_hash_alg": "sha-256",
     },
 }
 
@@ -53,9 +51,9 @@ FORMATS: dict[str, dict] = {
 # in the body.
 MANIFEST_PREDICATE_TYPE = "https://asexec.org/manifest/v1"
 
-# The ``hash_alg`` signing hashes a subject with when the signer does not choose one. Signing
-# always writes ``hash_alg`` beside a subject, so verify never reads this: its fallback is the
-# format's own ``subject_default_hash_alg``.
+# The ``hash_alg`` signing hashes a subject entry with when the signer does not choose one.
+# Signing writes it into every entry, so verify never reads this: it has no fallback, and
+# reads each entry's own ``hash_alg``.
 SUBJECT_DEFAULT_HASH_ALG = "sha-256"
 
 # The first token of the verify code. It versions the *code format*, independently of the

@@ -99,8 +99,8 @@ def _get_floor(args) -> dict | None:
 
 
 def _build_subject(paths: list[str] | None, hash_alg: str) -> list | None:
-    """Construct subject data (a list of filenames/dirnames and their associated
-    digest hashes) given source paths and a hash algorithm."""
+    """Construct subject data: one entry per file path, named by its normalized path
+    relative to the current directory, with its own hash_alg and digest."""
     return hashing.build_subject(paths, hash_alg) if paths else None
 
 
@@ -196,7 +196,6 @@ def cmd_prereg(args) -> int:
         due=args.due,
         declaration=_get_declaration(args),
         subject=subject,
-        hash_alg=args.hash_alg,
         floor=_get_floor(args),
         notes=_get_notes(args),
     )
@@ -222,8 +221,8 @@ def cmd_postreg(args) -> int:
     if os.path.isfile(args.fulfills):
         prereg_body = _load_manifest_body(args.fulfills, "--fulfills")[1]
 
-    # target / due / declaration / hash_alg inherit from the fulfilled prereg
-    # unless overridden on this postreg.
+    # target / due / declaration inherit from the fulfilled prereg unless overridden on this
+    # postreg. Each subject entry names its own hash_alg: --hash-alg, or the default.
     target = _get_target(args)
     if target is None:
         if prereg_body is None:
@@ -232,16 +231,13 @@ def cmd_postreg(args) -> int:
 
     due = args.due or (prereg_body or {}).get("due")
     declaration = _get_declaration(args) or (prereg_body or {}).get("declaration")
-    hash_alg = args.hash_alg or (prereg_body or {}).get("hash_alg") or SUBJECT_DEFAULT_HASH_ALG
-
-    subject = _build_subject(args.subject, hash_alg)
+    subject = _build_subject(args.subject, args.hash_alg)
     body = manifest.build_postreg(
         target,
         fulfills=fulfills,
         due=due,
         declaration=declaration,
         subject=subject,
-        hash_alg=hash_alg,
         prev_hash=prev_hash,
         floor=_get_floor(args),
         notes=_get_notes(args),
@@ -512,12 +508,14 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument(
         "--subject",
         nargs="+",
-        help="path(s) to harness/eval to hash (optional at prereg time)",
+        help="file(s) to hash, each named by its path relative to the current directory "
+        "(no directories; verify finds them under --artifacts; optional at prereg time)",
     )
     pr.add_argument(
         "--hash-alg",
         default=SUBJECT_DEFAULT_HASH_ALG,
         choices=hashing.available_algorithms(),
+        help="algorithm each hashed file's entry names (default: %(default)s)",
     )
     _add_arg_or_file(
         pr,
@@ -545,8 +543,18 @@ def build_parser() -> argparse.ArgumentParser:
         "(default: inherit from prereg)",
     )
     _add_arg_or_file(po, "declaration")
-    po.add_argument("--subject", nargs="+", help="path(s) to outputs/transcript/harness to hash")
-    po.add_argument("--hash-alg", default=None, choices=hashing.available_algorithms())
+    po.add_argument(
+        "--subject",
+        nargs="+",
+        help="file(s) to hash (outputs, transcript, harness files), each named by its path "
+        "relative to the current directory (no directories)",
+    )
+    po.add_argument(
+        "--hash-alg",
+        default=SUBJECT_DEFAULT_HASH_ALG,
+        choices=hashing.available_algorithms(),
+        help="algorithm each hashed file's entry names (default: %(default)s)",
+    )
     po.add_argument(
         "--prev",
         help="prior postreg file (or sha-256:<64 hex> ref) in this commitment's chain",

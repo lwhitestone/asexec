@@ -19,8 +19,8 @@ def _target():
 DUE = "2099-01-01T00:00:00Z"
 
 
-def _subj():
-    return [{"name": "h/", "digest": {"sha-256": "00"}}]
+def _subj(name="h.py"):
+    return [{"name": name, "hash_alg": "sha-256", "digest": {"sha-256": "00"}}]
 
 
 def test_predicate_type_is_the_only_format_identifier_in_the_body():
@@ -116,13 +116,47 @@ def test_due_optional_at_prereg():
     assert "due" not in body
 
 
-def test_subject_requires_hash_alg():
-    # a subject present but its algorithm stripped -> conditional bedrock fails.
+def test_subject_entry_requires_its_own_hash_alg():
+    # Each entry carries its own hash_alg; one stripped from a hand-built body is refused.
     priv, pub = keys.generate()
     body = manifest.build_prereg(_target(), due=DUE, subject=_subj())
-    del body["hash_alg"]
-    with pytest.raises(ManifestError):
+    assert body["subject"][0]["hash_alg"] == "sha-256"
+    assert "hash_alg" not in body  # no body-level hash_alg is written
+    del body["subject"][0]["hash_alg"]
+    with pytest.raises(ManifestError, match="hash_alg"):
         manifest.sign(body, priv, pub)
+
+
+def test_builders_take_no_body_level_hash_alg():
+    with pytest.raises(TypeError):
+        manifest.build_prereg(_target(), subject=_subj(), hash_alg="sha-256")
+
+
+def test_writer_subject_entry_requires_hash_alg():
+    entry = {"name": "h.py", "digest": {"sha-256": "00"}}
+    with pytest.raises(ValidationError):
+        manifest.build_prereg(_target(), subject=[entry])
+
+
+def test_writer_refuses_duplicate_subject_names():
+    with pytest.raises(ValidationError, match="twice"):
+        manifest.build_prereg(_target(), subject=_subj() + _subj())
+
+
+def test_sign_refuses_a_hand_built_body_with_duplicate_subject_names():
+    priv, pub = keys.generate()
+    body = manifest.build_prereg(_target(), subject=_subj())
+    body["subject"].append(dict(body["subject"][0]))
+    with pytest.raises(ManifestError, match="twice"):
+        manifest.sign(body, priv, pub)
+
+
+@pytest.mark.parametrize(
+    "name", ["/abs.py", "./h.py", "a//h.py", "a/../h.py", "h/", "a\\h.py", "", "."]
+)
+def test_writer_refuses_a_name_that_is_not_a_normalized_relative_path(name):
+    with pytest.raises(ValidationError):
+        manifest.build_prereg(_target(), subject=_subj(name))
 
 
 def test_missing_semantic_bedrock_rejected():

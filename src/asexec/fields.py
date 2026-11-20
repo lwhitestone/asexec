@@ -49,6 +49,23 @@ def _pinned_chain(value: str) -> str:
     return value
 
 
+def is_normal_name(name: str) -> bool:
+    """Whether ``name`` is a relative path in normal form (content #3): ``/``-separated
+    segments, none of them empty, ``.`` or ``..``, and no backslash. So an absolute name,
+    ``./a``, ``a//b``, ``a/``, ``a/../b`` and ``a\\b`` are not, and one file has one name."""
+    return (
+        bool(name)
+        and "\\" not in name
+        and all(seg not in ("", ".", "..") for seg in name.split("/"))
+    )
+
+
+def _normal_name(value: str) -> str:
+    if not is_normal_name(value):
+        raise ValueError("not a normalized relative path")
+    return value
+
+
 # A link that is present but not a string can never equal a ref, so it is read as this
 # marker: it links to nothing (a gap), and it is never mistaken for an absent link (a root).
 DANGLING = "(malformed link)"
@@ -77,6 +94,9 @@ Base64 = Annotated[str, AfterValidator(_base64_ok)]
 # A DSSE ``sig`` (selfsig #2): strict base64, as DSSE has it, of an ed25519 signature's 64
 # bytes. Used by the writer too, so the tool writes only what verify reads.
 SignatureBase64 = Annotated[str, AfterValidator(_signature_ok)]
+
+# A subject, plan or evidence ``name`` as this tool writes it (content #3).
+NormalName = Annotated[str, AfterValidator(_normal_name)]
 
 # A drand chain hash the verifier pins (floor #2). ``drand.CHAINS`` is fixed at import.
 PinnedChain = Annotated[str, AfterValidator(_pinned_chain)]

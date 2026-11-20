@@ -313,7 +313,7 @@ def test_verify_shows_lone_surrogates_escaped(tmp_path, key, capsys):
         post,
         key,
         b'{"phase":"postreg","target":"t","fulfills":"\\udfff",'
-        b'"subject":[{"name":"\\ud801","digest":{"sha-256":"00"}}],"hash_alg":"sha-256"}',
+        b'"subject":[{"name":"\\ud801","hash_alg":"sha-256","digest":{"sha-256":"00"}}]}',
     )
     (tmp_path / "art").mkdir()
     capsys.readouterr()
@@ -516,13 +516,34 @@ def test_usage_errors_exit_EXIT_USAGE_not_the_FAIL_status(argv, capsys):
     [
         ("prereg", "--key", "{tmp}/absent.key", "--target", "t"),
         ("prereg", "--key", "{tmp}/bad.key", "--target", "t"),
-        ("prereg", "--key", "{key}", "--target", "t", "--subject", "{tmp}/absent"),
+        ("prereg", "--key", "{key}", "--target", "t", "--subject", "absent"),
+        ("prereg", "--key", "{key}", "--target", "t", "--subject", "d"),
+        ("prereg", "--key", "{key}", "--target", "t", "--subject", "{tmp}/c.txt"),
+        ("prereg", "--key", "{key}", "--target", "t", "--subject", "../c.txt"),
+        ("prereg", "--key", "{key}", "--target", "t", "--subject", "c.txt", "./c.txt"),
+        ("postreg", "--key", "{key}", "--target", "t", "--fulfills", REF, "--subject", "d"),
         ("identity", "emit", "--key", "{tmp}/absent.key"),
     ],
-    ids=["missing-key-file", "invalid-key-file", "missing-subject", "emit-missing-key"],
+    ids=[
+        "missing-key-file",
+        "invalid-key-file",
+        "missing-subject",
+        "subject-directory",
+        "subject-absolute",
+        "subject-dotdot",
+        "subject-twice",
+        "postreg-subject-directory",
+        "emit-missing-key",
+    ],
 )
-def test_errors_exit_EXIT_ERROR_with_a_message_not_a_traceback(tmp_path, key, argv, capsys):
-    """Valid arguments that name an input the command cannot use: exit 1, one line."""
+def test_errors_exit_EXIT_ERROR_with_a_message_not_a_traceback(
+    tmp_path, key, argv, capsys, monkeypatch
+):
+    """Valid arguments that name an input the command cannot use: exit 1, one line. A
+    subject is one file, named by its path relative to the current directory."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "d").mkdir()
+    (tmp_path / "c.txt").write_text("c")
     (tmp_path / "bad.key").write_text('{"alg": "ed25519", "private_key": "zz"}')
     argv = [a.format(tmp=tmp_path, key=key) for a in argv]
     assert run(*argv, "--out", tmp_path / "out.json") == cli.EXIT_ERROR
@@ -601,12 +622,13 @@ def test_verify_prints_invalid_ceiling_error(tmp_path, key, prereg, capsys):
     assert "ceiling trust" not in out
 
 
-def test_verify_prints_content_mismatch(tmp_path, key, capsys):
+def test_verify_prints_content_mismatch(tmp_path, key, capsys, monkeypatch):
     art = tmp_path / "art"
     art.mkdir()
     (art / "a.txt").write_text("one")
     out = tmp_path / "pre.json"
-    assert run("prereg", "--key", key, "--target", "t", "--subject", art / "a.txt",
+    monkeypatch.chdir(art)
+    assert run("prereg", "--key", key, "--target", "t", "--subject", "a.txt",
                "--out", out) == 0  # fmt: skip
     (art / "a.txt").write_text("two")
     capsys.readouterr()
@@ -617,15 +639,39 @@ def test_verify_prints_content_mismatch(tmp_path, key, capsys):
     assert "a.txt: digest mismatch" in text
 
 
-def test_verify_prints_content_ok(tmp_path, key, capsys):
+def test_verify_prints_content_ok(tmp_path, key, capsys, monkeypatch):
     art = tmp_path / "art"
     art.mkdir()
     (art / "a.txt").write_text("one")
     out = tmp_path / "pre.json"
-    run("prereg", "--key", key, "--target", "t", "--subject", art / "a.txt", "--out", out)
+    monkeypatch.chdir(art)
+    run("prereg", "--key", key, "--target", "t", "--subject", "a.txt", "--out", out)
     capsys.readouterr()
     assert run("verify", out, "--tests", "format,selfsig,content", "--artifacts", art) == 0
     assert "content hashes ok" in capsys.readouterr().out
+
+
+def test_subjects_are_files_named_by_their_relative_paths(tmp_path, key, monkeypatch):
+    """--subject names each file by its normalized relative path, with its own hash_alg, so
+    two files with one basename stay distinct, and verify finds each under --artifacts."""
+    art = tmp_path / "art"
+    for name in ("a/run.py", "b/run.py"):
+        (art / name).parent.mkdir(parents=True, exist_ok=True)
+        (art / name).write_text(name)
+    monkeypatch.chdir(art)
+    pre, post = tmp_path / "pre.json", tmp_path / "post.json"
+    assert run("prereg", "--key", key, "--target", "t", "--subject", "./a/run.py",
+               "--out", pre) == 0  # fmt: skip
+    assert run("postreg", "--key", key, "--fulfills", pre, "--subject", "a/run.py",
+               "b//run.py", "--out", post) == 0  # fmt: skip
+    sha = {n: hashlib.sha256(n.encode()).hexdigest() for n in ("a/run.py", "b/run.py")}
+    assert _body(pre)["subject"] == [
+        {"name": "a/run.py", "hash_alg": "sha-256", "digest": {"sha-256": sha["a/run.py"]}}
+    ]
+    assert [e["name"] for e in _body(post)["subject"]] == ["a/run.py", "b/run.py"]
+    assert "hash_alg" not in _body(pre) and "hash_alg" not in _body(post)
+    tests = "format,selfsig,content"
+    assert run("verify", pre, post, "--tests", tests, "--artifacts", art) == 0
 
 
 def test_verify_ends_with_code_then_time(prereg, capsys):
