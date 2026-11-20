@@ -293,7 +293,8 @@ scope.
   `"schema_id" not in body` assertion); `tests/test_manifest.py` (the same assertion);
   `tests/verify/test_verify_planted_faults.py` (the `schema_id` input case). The *History*
   table in `ROADMAP.md` never named these values, so nothing historical needed keeping.
-- CI: see below.
+- CI on PR #50 at `59cf77c` (run 44669645652): lint, python-matrix, test (3.12, 3.13, 3.14)
+  and build all pass.
 
 **Release-note entries** (the rule in `tests/test_constants.py`'s header). Release notes are
 the GitHub release body (`publish.yml` runs `gh release create --generate-notes`; no
