@@ -384,3 +384,12 @@ Nothing to change.
   lines have. `declaration` still runs past the column, as it already did.
 - Commits: `50a9054` (README, FORMAT.md); the release-note draft and these notes are
   in the commit that follows it. `scripts/check.sh`: clean, 402 passed. CI: see the PR.
+
+**Merged** (orchestrator): PR #50 merged into `feature/0321` as `f17e083`, a merge commit,
+with no further review findings open. The #35 change is `da7cbb2`; the review fixes are
+`50a9054` and `04dfe45`. The review agent changed each identifier in turn and saw the
+pinned tests fail (payloadType `v2`: 8 tests; the old payloadType: 9; an unversioned
+predicateType: 6; `schema_id` back on `ManifestBody`: 6), and it re-derived every frozen
+vector with an independent PyNaCl script. Post-merge on `feature/0321` at `f17e083`:
+`scripts/check.sh` clean, 402 passed; `examples/adequacy-test/run.py` exit 0. CI on the last
+PR push (`04dfe45`, run 44670856152): lint, build, test on 3.12, 3.13 and 3.14 pass.
