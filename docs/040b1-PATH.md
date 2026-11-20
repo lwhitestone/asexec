@@ -1210,6 +1210,8 @@ that the `v1` key exists, as the review round 1 notes above say.
   - the pre-0.4.0 type in `src/asexec/verifier.py`;
   - the made-up `v2`, `v10`, `other` and `0.3.0b1` types in the verify, CLI and selector
     tests.
+- CI on PR #53 at `dd45abf` (run 44684208161): lint, python-matrix, test (3.12, 3.13, 3.14)
+  and build pass.
 
 **Observations (out of scope):**
 - `--no-check` leaves `uv.lock`'s asexec version at the previous release. `uv.lock` changes
