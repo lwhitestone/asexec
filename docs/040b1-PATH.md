@@ -1005,3 +1005,16 @@ Action: none
 - **#40:** its body has the release notes name `SIGNING_PAE_VERSION` (#32's change). That
   constant no longer exists. Its value is `FORMATS[MANIFEST_PAYLOAD_TYPE]["signing_pae_version"]`,
   so the release-note entry for the PAE prefix should name that field.
+
+**Merged** (orchestrator): PR #52 merged into `feature/0321` as `0c9c580`, a merge commit,
+with no review findings left open. The #31 change is `6e6c7cf` and `80689ab`, and the review
+fixes are `514ba6c` and `58ce175`. The review agent reverted each per-file rule to the global
+default in turn (PAE type, keyid prefix, ref prefix, `content`'s default `hash_alg`, the #3
+check, its order before the frame, normalising `payloadType` with `.strip()`): a test caught
+every one. The only exception is the ceiling nonce, where the prefix has no effect because
+Roughtime binds the hex. It also ran about 25 junk or near-miss `payloadType` values through
+`verify_paths` and the CLI, and none raised. Post-merge on `feature/0321` at `0c9c580`:
+`scripts/check.sh` clean, 444 passed; `examples/adequacy-test/run.py` exit 0. CI on the last
+PR push (`f12368c`, run 44681499571): lint, build, test on 3.12, 3.13 and 3.14 pass.
+Carried forward to checkpoint 4 (#30): limit the frozen-vector skip to 0.4.0 betas, or pin
+that the `v1` key exists, as the review round 1 notes above say.
