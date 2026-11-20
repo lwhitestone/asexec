@@ -3272,3 +3272,6 @@ Action: none
   commitment copies; `--floor-round`'s shape is exactly drand's HTTP API response for a round
   of the default chain, unknown keys refused; an inline round that does not verify is a usage
   error (64).
+
+**CI:** PR #57 at `1fddc55` (run 44827998188): lint, python-matrix, test (3.12, 3.13, 3.14,
+each with the CLI smoke) and build pass.
