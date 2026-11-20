@@ -2693,3 +2693,14 @@ Action: none
   shown with `timely` requested only; any counted copy's valid ceiling counts.
 - #37: any qualifying postreg satisfies an item; unlisted `item_id`s are shown, not failed;
   `items: []` is not examined.
+
+**CI round 1** (PR #56, run 44782181471): lint passed, and pytest passed on 3.12, 3.13 and
+3.14 (842 each), but each `test` job's CLI smoke failed: `.github/workflows/ci.yml` ran
+`asexec prereg --subject src`, a directory, and #33 refuses it (`error: 'src' is a directory;
+list its files, or pack it (a tar, say) and list that`, exit 1). #33's leftover grep had
+covered `src`, `tests`, `docs`, `examples` and the READMEs but not `.github`. → The smoke now
+signs two files (`--subject src/asexec/__init__.py src/asexec/verifier.py`) and verifies them
+with `--tests format,selfsig,content --artifacts .`, and `docs/DEVELOPMENT.md` says so.
+Rehearsed locally (`content=PASS format=PASS selfsig=PASS`); `actionlint` clean.
+`publish.yml`'s release smoke already signs a file (`ci.key.pub`). `git grep -n -- '--subject'
+.github scripts` finds no other directory subject.
