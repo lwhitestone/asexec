@@ -45,7 +45,7 @@ in the form of `asexec verify` providing a code regarding the checks applied.
 
 Every `verify` run checks [`format`](./docs/VERIFICATION.md#format) and
 [`selfsig`](./docs/VERIFICATION.md#selfsig), and renders the state of each commitment (a
-pre-registration and its signer):
+validly signed pre-registration and its signer):
 
 - **Integrity and non-repudiation.** A manifest (pre-registration or post-registration) was
   not altered after signing, and was signed by the private key whose public key its `keyid`
@@ -56,9 +56,12 @@ pre-registration and its signer):
 - **Commitment state.** Each commitment is rendered as `fulfilled`, `open`,
   `elapsed-no-postreg` or `invalid-due`. A post-registration that names a pre-registration
   counts toward fulfilling it only if validly signed by that pre-registration's private key;
-  otherwise it is listed under it as *rejected*, with the reason. A post-registration whose
-  pre-registration was not provided belongs to no commitment, so it has no state: it is
-  listed as *notarization-only*. Silence is on the record too: a pre-registration with no
+  otherwise it is listed under it as *rejected*, with the reason. A pre-registration whose
+  own signature is invalid is no commitment, so it has no state and nothing counts toward
+  it: it is listed as a *rejected pre-registration*, and each post-registration that names
+  it is listed beneath it as rejected. A post-registration whose pre-registration was not
+  provided belongs to no commitment, so it has no state: it is listed as
+  *notarization-only*. Silence is on the record too: a pre-registration with no
   counted post-registration reads `elapsed-no-postreg` once its deadline (`due`) passes. But
   `asexec` does **not** yet check that a post-registration was created before `due`, so a
   late one still turns it `fulfilled`; that check (`timely`) arrives in 0.4.0.
@@ -75,8 +78,8 @@ test:
   forks. *Dropping the last post-registration(s) of a chain is **not** detectable yet;
   close-out manifests (`final`) are deferred to 0.7.0 or later.*
 - **Key consistency** ([`keyconsist`](./docs/VERIFICATION.md#keyconsist)). Every validly
-  signed post-registration that names a pre-registration was signed with the key of a
-  provided pre-registration with that body.
+  signed post-registration that names a commitment was signed with the key of a validly
+  signed pre-registration with that body.
 - **Created no earlier than** (`anchor.floor`; [`floor`](./docs/VERIFICATION.md#floor)). A
   manifest was created after a public moment: a [drand](https://drand.love/) beacon round it
   embeds.
@@ -166,8 +169,8 @@ What each test examines, its exact pass criteria, and what it does not establish
 specified in the [verification catalog](./docs/VERIFICATION.md).
 
 `verify` runs the tests you name and prints a report for people to read (each manifest,
-each commitment with its state, any notarization-only post-registrations, and each test's
-result with a short reason), then one canonical code, then `Checked at <time>` (UTC, the
+each commitment with its state, any rejected pre-registrations, any notarization-only
+post-registrations, and each test's result with a short reason), then one canonical code, then `Checked at <time>` (UTC, the
 moment commitment states were judged against), e.g.:
 
 ```

@@ -291,7 +291,9 @@ def cmd_verify(args) -> int:
                     print(f"        {NO} {e['name']}: {e.get('reason', 'digest mismatch')}")
 
     print("\n=== commitments ===")
-    if not report["commitments"]:
+    if not report["commitments"] and report["rejected_preregs"]:
+        print("  (no commitments: no pre-registration provided is validly signed)")
+    elif not report["commitments"]:
         print("  (no pre-registrations among the provided manifests)")
     for c in report["commitments"]:
         print(f"  [{c['state'].upper()}] prereg {c['ref']}")
@@ -312,6 +314,15 @@ def cmd_verify(args) -> int:
         )
         for r in c["rejected_postregs"]:
             print(f"    {NO} postreg {r['ref']} does NOT count toward fulfillment: {r['reason']}")
+    if report["rejected_preregs"]:  # pass format, fail selfsig: no commitment, no state
+        print("\n=== rejected pre-registrations ===")
+        for rp in report["rejected_preregs"]:
+            print(f"  {NO} prereg {rp['ref']} is NOT a commitment: {rp['reason']}")
+            print(f"    keyid        : {rp.get('keyid')}")
+            for r in rp["rejected_postregs"]:
+                print(
+                    f"    {NO} postreg {r['ref']} does NOT count toward fulfillment: {r['reason']}"
+                )
     if report["notarization_only"]:
         print("\n=== notarization-only (postregs with no matching pre-registration) ===")
         for n in report["notarization_only"]:

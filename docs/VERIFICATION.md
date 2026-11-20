@@ -86,7 +86,8 @@ report's wording may change, except for the reasons this document lists.
 | Block | Printed | Shows |
 |---|---|---|
 | `=== manifests ===` | always | One line per file: `✓` if it passes `format` and meets `selfsig`'s conditions (else `✗`), the path, `payload.phase` and `signature.keyid`. Indented beneath: why a file fails `format` (`format: malformed: …`, or the [reason](#format) for an unknown format), and one line each for a floor, a ceiling and content hashes when the manifest has them. |
-| `=== commitments ===` | always | One entry per commitment (a prereg's `ref` and signer): its [state](#commitment-states), `ref`, signer keyid, `due`, the number of counted postregs, a chain problem if any, and each rejected postreg with its reason. |
+| `=== commitments ===` | always | One entry per [commitment](#matching-postregs-to-commitments) (a validly signed prereg's `ref` and signer): its [state](#commitment-states), `ref`, signer keyid, `due`, the number of counted postregs, a chain problem if any, and each rejected postreg with its reason. |
+| `=== rejected pre-registrations ===` | if any | Each [rejected pre-registration](#matching-postregs-to-commitments) (a prereg that passes `format` but fails a `selfsig` condition, so is no commitment): its `ref` and its reason, `invalid signature`; the `signature.keyid` it claims, which nothing authenticated; and each postreg rejected under it, with the reason `the pre-registration's signature is invalid`. It has no state. |
 | `=== notarization-only … ===` | if any | Each [notarization-only](#matching-postregs-to-commitments) postreg: one whose `payload.fulfills` matches no provided prereg. |
 | `=== tests ===` | always | One line per requested test: its result and a short reason. |
 | `=== ceiling trust … ===` | if a ceiling verified | Which witness you are trusting, and for what time. |
@@ -132,7 +133,7 @@ Checked at 2026-12-31T23:59:59Z
 | [`content`](#content) | • `payload.subject`<br>• `payload.subject[].name`<br>• `payload.subject[].digest`<br>• `payload.hash_alg`<br>• `payloadType`<br>• `--artifacts` | 1. `payload.subject` is a non-empty array of well-formed entries<br>2. `payload.hash_alg` is available<br>3. `name` resolves inside `--artifacts`<br>4. the artifact exists<br>5. the artifact is readable<br>6. recomputed digest equals `digest[hash_alg]` |
 | [`floor`](#floor) | • `payload.anchor.floor.floor_type`<br>• `payload.anchor.floor.chain_hash`<br>• `payload.anchor.floor.round`<br>• `payload.anchor.floor.signature`<br>• `payload.anchor.floor.randomness` | 1. `floor_type` is `drand`<br>2. `chain_hash` is pinned<br>3. `round` is an integer and `signature` is hex<br>4. `randomness`, if present, equals `sha256(signature)`<br>5. `signature` BLS-verifies for `round` under the pinned key |
 | [`format`](#format) | • the file<br>• `payloadType`<br>• `payload`<br>• `signature`<br>• `signature.pubkey`<br>• `signature.sig` | 1. file is a well-formed JSON envelope<br>2. `signature.pubkey` and `signature.sig` are hex<br>3. `payloadType` names a format this release reads |
-| [`keyconsist`](#keyconsist) | • `payload.phase`<br>• `payload.fulfills`<br>• `signature.pubkey`<br>• `signature.sig`<br>• `signature.keyid` | 1. every validly signed postreg naming the prereg's `ref` has the `signature.keyid` of a provided prereg with that `ref` |
+| [`keyconsist`](#keyconsist) | • `payload.phase`<br>• `payload.fulfills`<br>• `signature.pubkey`<br>• `signature.sig`<br>• `signature.keyid` | 1. every validly signed postreg naming the commitment's `ref` has the `signature.keyid` of a commitment with that `ref` |
 | [`selfsig`](#selfsig) | • `payloadType`<br>• `payload`<br>• `signature.pubkey`<br>• `signature.sig`<br>• `signature.keyid` | 1. `signature.sig` verifies over `payload` by `signature.pubkey`<br>2. `signature.keyid` derives from `signature.pubkey` |
 
 Condition numbers match each test's *Passes when all* list below; the table shortens them.
@@ -243,7 +244,8 @@ A postreg is **counted** for a prereg if it meets the
 
 **When empty:** if no commitment has a counted postreg, the test has nothing to examine and
 is `FAIL`, with the reason `requested but no commitment has counted postregs to
-chain-check`.
+chain-check`. A rejected pre-registration is no commitment, so its postregs are never
+chain-checked.
 
 **Does not establish:** completeness. Dropping the last postreg(s) of a chain is not
 detectable.
@@ -580,14 +582,18 @@ Whether a commitment's postregs were signed by its own key.
 [Matching postregs to commitments](#matching-postregs-to-commitments))
 1. Every postreg whose `payload.fulfills` equals the commitment's `ref` and whose signature
    is valid (it meets the [`selfsig`](#selfsig) conditions) has the `signature.keyid` of a
-   provided prereg with that `ref`.
+   commitment with that `ref`.
 
 A postreg with an invalid signature is not judged here (it fails `selfsig`), so a commitment
-whose only postregs have invalid signatures has no key to check and is not examined.
+whose only postregs have invalid signatures has no key to check and is not examined. A
+[rejected pre-registration](#matching-postregs-to-commitments) is no commitment, so it is
+never examined, and its `signature.keyid`, which nothing authenticated, is compared with no
+postreg's.
 
-**When empty:** if no validly signed postreg names a provided prereg, the test has nothing
-to examine and is `FAIL`, with the reason `requested but no validly signed postreg names a
-provided prereg`.
+**When empty:** if no validly signed postreg names a commitment (its `payload.fulfills` is
+the `ref` of no commitment; a postreg that names only rejected pre-registrations names
+none), the test has nothing to examine and is `FAIL`, with the reason `requested but no
+validly signed postreg names a commitment`.
 
 **Example** (all requirements pass)
 
@@ -650,6 +656,9 @@ its format)
 
 **Not examined:** a manifest that fails `format`.
 
+A prereg that passes `format` but fails `selfsig` is a
+[rejected pre-registration](#matching-postregs-to-commitments), not a commitment.
+
 **Does not establish:** who signed (internal consistency only). A body changed and
 re-signed with another key, under that key's `keyid`, passes.
 
@@ -678,63 +687,125 @@ With every requirement holding, `selfsig` prints `✓ selfsig=PASS`, as in the
 
 ## Matching postregs to commitments
 
-A **commitment** is a prereg's `ref` together with its signer, `signature.keyid`. The body
-holds no key, so the same body signed by two keys has one `ref` but is two commitments, each
-judged on its own.
+Three terms, each narrower than the one before:
+- A **provided prereg** is a prereg among the files given that passes [`format`](#format). A
+  prereg that fails `format` (malformed, or of an unknown format) is not a provided prereg:
+  nothing can be said about what it names, so a postreg that names it is notarization-only.
+- A **commitment** is a provided prereg that also meets the [`selfsig`](#selfsig)
+  conditions, identified by its `ref` together with its signer, `signature.keyid`. The body
+  holds no key, so the same body signed by two keys has one `ref` but is two commitments,
+  each judged on its own.
+- A **rejected pre-registration** is a provided prereg that fails a `selfsig` condition. Its
+  signature does not verify, or its `signature.keyid` does not derive from its
+  `signature.pubkey`, so nothing authenticated the keyid it claims. It is no commitment: it
+  has no [state](#commitment-states), no postreg counts toward it, and `chain` and
+  `keyconsist` never examine it, so no state and no `chain` or `keyconsist` result rests on
+  its keyid. It is listed under its own heading, *rejected pre-registrations*, with the
+  reason `invalid signature`. It fails `selfsig`, which is its only failure.
 
-A **provided prereg** is a prereg among the files given that passes [`format`](#format). A
-prereg that fails `format` (malformed, or of an unknown format) is not a provided prereg and
-is no commitment, so a postreg that names it is notarization-only.
+| Prereg situation | `format` | `selfsig` | Outcome | In the report |
+|---|---|---|---|---|
+| Malformed, or of an unknown format | `FAIL` | not examined | not a provided prereg | the manifests block only; a postreg naming it is notarization-only |
+| Passes `format`, fails a `selfsig` condition | `PASS` | `FAIL` | a **rejected pre-registration**: no commitment, no state | *rejected pre-registrations*, with `invalid signature` |
+| Passes `format` and `selfsig` | `PASS` | `PASS` | a **commitment** | *commitments*, with its state |
 
 A postreg `P` **counts** toward the commitment of prereg `R` iff all hold:
 1. `P.payload.phase == "postreg"` and `P.payload.fulfills == ref(R)`.
 2. `P` meets the [`selfsig`](#selfsig) conditions.
 3. `P.signature.keyid == R.signature.keyid`.
+4. `R` meets the [`selfsig`](#selfsig) conditions: `R` is a commitment, not a rejected
+   pre-registration. This is condition 2 for the prereg, so a postreg is never matched to
+   a keyid that nothing authenticated.
 
 A commitment is keyed by its signer, so a postreg counts toward at most one commitment: the
-one with its `payload.fulfills` as `ref` and its own `signature.keyid` as signer.
+one with its `payload.fulfills` as `ref` and its own `signature.keyid` as signer. A copy of
+a prereg that fails `selfsig` is a rejected pre-registration even when it claims the
+commitment's own `signature.keyid`, so it never merges into that commitment, and one that
+claims another key's `signature.keyid` does not make that key a signer.
 
-A postreg that names a prereg (condition 1) but counts toward no commitment with that `ref`
-is **rejected**. It is left out of fulfillment and of `chain`, and is listed under each
-commitment with that `ref` with the reason it fails there: `invalid signature` (condition 2)
-or `signed by a different key than the pre-registration` (condition 3). A postreg that
-counts toward one commitment of a `ref` is not rejected under the others. If one prereg body
-is signed by keys A and B, a postreg signed by A counts toward A's commitment and is not
-listed under B's.
+A postreg that names a provided prereg (condition 1) but counts toward no commitment with
+that `ref` is **rejected**. It is left out of fulfillment and of `chain`, and is listed with
+the reason it fails there:
+- under each commitment with that `ref`: `invalid signature` (condition 2) or `signed by a
+  different key than the pre-registration` (condition 3);
+- under each rejected pre-registration with that `ref`: `the pre-registration's signature is
+  invalid` (condition 4), whatever the postreg's own signature. Its keyid is compared with
+  nothing there, so this rejection never fails `keyconsist`.
+
+A postreg that counts toward one commitment of a `ref` is not rejected under the others, nor
+under the rejected pre-registrations of that `ref`. If one prereg body is signed by keys A
+and B, a postreg signed by A counts toward A's commitment and is not listed under B's. If
+the same body also comes as a copy whose signature is broken, the postreg is not listed
+under the copy either.
 
 A postreg that fails condition 1 for every provided prereg names none of them. It is
 **notarization-only**: there is no commitment to list it under, so it has no
 [state](#commitment-states) and is listed in its own block, whether or not its signature is
-valid.
+valid. A postreg that names only rejected pre-registrations does name a provided prereg, so
+it is not notarization-only: it is rejected under each of them.
 
-**In summary**, by kind of file:
+**In summary**, by kind of postreg:
 
 | Postreg situation | `format` | `selfsig` | Outcome | In the report |
 |---|---|---|---|---|
 | Malformed, or of an unknown format (see [Run rules](#conventions)) | `FAIL` | not examined | none: not treated as a postreg | not listed under any commitment |
-| Passes `format`, fails a `selfsig` condition, `fulfills` a provided prereg | `PASS` | `FAIL` | not counted: `invalid signature` | **rejected** |
-| Valid signature by a key that signed no provided prereg with that `ref`, `fulfills` a provided prereg | `PASS` | `PASS` | not counted: `signed by a different key than the pre-registration` | **rejected**; also fails `keyconsist` |
-| Valid signature by the key of a provided prereg with that `ref` | `PASS` | `PASS` | **counted** toward that prereg's commitment | listed as a counted postreg of that commitment only |
+| Passes `format`, fails a `selfsig` condition, `fulfills` a commitment's `ref` | `PASS` | `FAIL` | not counted: `invalid signature` | **rejected** |
+| Valid signature by a key that signed no commitment with that `ref`, `fulfills` a commitment's `ref` | `PASS` | `PASS` | not counted: `signed by a different key than the pre-registration` | **rejected**; also fails `keyconsist` |
+| Valid signature by the key of a commitment with that `ref` | `PASS` | `PASS` | **counted** toward that commitment | listed as a counted postreg of that commitment only |
+| Passes `format`, counts toward no commitment, `fulfills` the `ref` of a rejected pre-registration | `PASS` | `PASS` if the signature is valid, else `FAIL` | not counted: `the pre-registration's signature is invalid` | **rejected** under each rejected pre-registration of that `ref` (and under each commitment of it, as in the rows above) |
 | Passes `format`, `fulfills` matches no provided prereg | `PASS` | `PASS` if the signature is valid, else `FAIL` | not counted: names no provided prereg | **notarization-only** |
 
 **What affects a verdict.** Only the tests produce `PASS` or `FAIL`. *Counted* matters
 because `chain` examines counted postregs only. `keyconsist` fails a commitment only for a
 postreg rejected under it as `signed by a different key than the pre-registration`; a
-counted postreg, one rejected for `invalid signature` and a notarization-only postreg never
-fail it, and a commitment whose postregs all have invalid signatures is not examined.
-*Rejected* and *notarization-only* are only groupings in the report and add no failure of
-their own. The failures in the table come from `format` (the first row), `selfsig` (the
-second row, and the last row when the signature is invalid) and `keyconsist` (the third
-row).
+counted postreg, one rejected for `invalid signature`, one rejected under a rejected
+pre-registration and a notarization-only postreg never fail it, and a commitment whose
+postregs all have invalid signatures is not examined. *Rejected*, *rejected
+pre-registration* and *notarization-only* are only groupings in the report and add no
+failure of their own. The failures in the postreg table come from `format` (the first row),
+`selfsig` (the second row, and the last two rows when the signature is invalid) and
+`keyconsist` (the third row). A rejected pre-registration fails `selfsig`.
 
 A manifest is identified by its `ref`. Copies of a postreg, with the same `ref` and
 `signature.keyid`, are listed once per outcome, however many are provided. Copies usually
 share an outcome, so they are counted, rejected or notarization-only once. A copy whose
 signature does not verify is judged on its own: it fails `selfsig` and, if it names a
-provided prereg, is listed as rejected for `invalid signature` beside the valid copy's
-outcome (so a broken copy of a counted postreg shows the same `ref` as counted and as
-rejected). Copies of a prereg, with the same `ref` and `signature.keyid`, are one
-commitment.
+commitment, is listed as rejected for `invalid signature` beside the valid copy's outcome
+(so a broken copy of a counted postreg shows the same `ref` as counted and as rejected).
+Copies of a prereg, with the same `ref` and `signature.keyid`, are one commitment if they
+meet the `selfsig` conditions. A copy that does not is judged on its own, as a rejected
+pre-registration beside the commitment. Copies of a rejected pre-registration, with the
+same `ref` and `signature.keyid`, are listed once, however each is broken.
+
+**Example** (a rejected pre-registration). `prereg-badsig.json` is `prereg.json` from the
+[`chain` example](#chain) with one byte of `signature.sig` changed, checked with the two
+postregs that name it:
+
+```console
+$ asexec verify prereg-badsig.json postreg-1.json postreg-2.json --tests format,selfsig,chain,keyconsist
+```
+
+Output (from `=== commitments ===` on), exit status `2`:
+
+```
+=== commitments ===
+  (no commitments: no pre-registration provided is validly signed)
+
+=== rejected pre-registrations ===
+  ✗ prereg sha-256:b17107d0… is NOT a commitment: invalid signature
+    keyid        : sha-256:7bc19c1d…
+    ✗ postreg sha-256:da0adf83… does NOT count toward fulfillment: the pre-registration's signature is invalid
+    ✗ postreg sha-256:ae569ef2… does NOT count toward fulfillment: the pre-registration's signature is invalid
+
+=== tests ===
+  ✗ chain=FAIL  (requested but no commitment has counted postregs to chain-check)
+  ✓ format=PASS  (3/3 manifest(s) ok)
+  ✗ keyconsist=FAIL  (requested but no validly signed postreg names a commitment)
+  ✗ selfsig=FAIL  (1/3 manifest(s) failed)
+
+asexec-verify/1 chain=FAIL format=PASS keyconsist=FAIL selfsig=FAIL
+Checked at 2026-12-31T23:59:59Z
+```
 
 ## Commitment states
 
@@ -749,7 +820,9 @@ One per commitment, shown in the `=== commitments ===` block of the report (see
 | `invalid-due` | no counted postreg, and `payload.due` is present but not a parseable ISO-8601 string |
 
 A [notarization-only](#matching-postregs-to-commitments) postreg belongs to no commitment,
-so it has no state.
+so it has no state, and a
+[rejected pre-registration](#matching-postregs-to-commitments) is no commitment, so it has
+none either.
 
 A `payload.due` without a UTC offset or `Z` is read as UTC, never in the verifier's local
 timezone, and is flagged in the report. Timeliness (a postreg created before `due`) is not

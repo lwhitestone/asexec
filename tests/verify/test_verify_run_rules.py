@@ -288,3 +288,26 @@ def test_never_raises__junk_ceiling_member(scenario, junk):
     scenario.with_ceiling("prereg")
     scenario.ceilings["prereg"] = lambda nonce_hex: junk
     assert scenario.code("ceiling") == "asexec-verify/1 ceiling=FAIL format=PASS selfsig=PASS"
+
+
+@pytest.mark.parametrize(
+    "keyid", [{"a": 1}, ["a"], 5], ids=["keyid-object", "keyid-list", "keyid-number"]
+)
+@pytest.mark.parametrize("name", ["prereg", "postreg0"])
+def test_never_raises__keyid_not_a_string(scenario, name, keyid):
+    """A signature.keyid that is not a string passes format and fails selfsig (#2), as a
+    prereg or a postreg; it never raises. Such a prereg is no commitment, and such a
+    postreg is rejected for invalid signature."""
+    scenario.set(name, "signature.keyid", keyid)
+    report = scenario.verify("chain", "keyconsist")
+    assert {"format=PASS", "selfsig=FAIL"} <= set(report["code"].split()[1:])
+    if name == "prereg":
+        assert report["commitments"] == []
+        (rejected,) = report["rejected_preregs"]
+        assert rejected["keyid"] == keyid
+        assert rejected["reason"] == "invalid signature"
+    else:
+        (commitment,) = report["commitments"]
+        (rejected,) = commitment["rejected_postregs"]
+        assert rejected["keyid"] == keyid
+        assert rejected["reason"] == "invalid signature"

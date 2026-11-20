@@ -43,10 +43,10 @@ Tests (the catalog - only verifiable claims, no self-declarations)
                      sig are hex, and its payloadType names a format this release
                      reads (a ``FORMATS`` key). Applies to every manifest file.
                      **Required in every run.**
-  - ``keyconsist`` : each validly signed postreg that names a pre-registration's
-                     ref has the key of a provided pre-registration with that
-                     ref. Applies to commitments with a counted postreg or one
-                     rejected as signed by a different key.
+  - ``keyconsist`` : each validly signed postreg that names a commitment's ref
+                     has the key of a commitment with that ref. Applies to
+                     commitments with a counted postreg or one rejected as
+                     signed by a different key.
   - ``selfsig``    : the file is unchanged since its own key signed it: the
                      signature over the PAE input verifies by pubkey, and keyid
                      derives from pubkey. Applies to every manifest that passes
@@ -59,8 +59,13 @@ A requested test is ``PASS`` iff it holds everywhere it applies AND it applies
 somewhere; a requested test that applies **nowhere** is ``FAIL``
 (requested-but-absent), never a silent omission or a pass with nothing examined.
 
-States (per commitment = a prereg + the postregs that fulfil it)
-----------------------------------------------------------------
+States (per commitment = a validly signed prereg + the postregs that fulfil it)
+------------------------------------------------------------------------------
+A commitment is a prereg that passes ``format`` and meets the ``selfsig`` conditions. One
+that passes ``format`` but fails them is a rejected pre-registration: no commitment, no
+state, and its keyid (which nothing authenticated) is matched against no postreg. A postreg
+naming it is rejected under it.
+
 Rendered in the human report above the code; the verifier RENDERS these, it
 never adjudicates intent or whether a commitment was "good enough":
   - fulfilled          : >=1 postreg references this prereg AND is validly
@@ -394,8 +399,11 @@ def verify_paths(
 
     # (ref, keyid) -> record. A commitment is a prereg's ref and its signer: the body holds
     # no key, so the same body signed by two keys is two commitments, never one whose key
-    # depends on which file was read last.
-    preregs: dict[tuple[str, Any], Any] = {}
+    # depends on which file was read last. Only a prereg that meets the selfsig conditions is
+    # one, so every keyid here is authenticated (and a string). One that passes format but
+    # fails them is a rejected pre-registration: listed, with no state, never matched by key.
+    preregs: dict[tuple[str, str], Any] = {}
+    rejected_preregs: list[dict[str, Any]] = []
     postregs = []
     manifests_report = []
     ceiling_trust = []
@@ -443,7 +451,7 @@ def verify_paths(
         if not clean:
             continue  # fails format: no other test examines it, so it joins no commitment
         links = LinkInput.model_validate({k: body[k] for k in LinkInput.model_fields if k in body})
-        if links.phase == "prereg":
+        if links.phase == "prereg" and _selfsig_ok(rec):
             preregs[(rec["ref"], rec["keyid"])] = {
                 "ref": rec["ref"],
                 "keyid": rec["keyid"],
@@ -451,17 +459,30 @@ def verify_paths(
                 "counted_postregs": [],
                 "rejected_postregs": [],
             }
+        elif links.phase == "prereg":  # copies (same ref and keyid) are listed once
+            _add_once(
+                rejected_preregs,
+                {
+                    "ref": rec["ref"],
+                    "keyid": rec["keyid"],
+                    "reason": REASON_INVALID_SIGNATURE,
+                    "rejected_postregs": [],
+                },
+            )
         elif links.phase == "postreg":
             postregs.append((links, rec))
 
     # A manifest is identified by its ref, so a copy (same ref and keyid) of one already
     # listed adds nothing: the same ref is the same body, links and all. A postreg counts
     # toward the commitment of its ref whose signer it shares; one that counts toward none
-    # is rejected under every commitment of that ref.
+    # is rejected under every commitment and every rejected pre-registration of that ref.
+    # Under a rejected pre-registration the reason is always its own invalid signature: its
+    # keyid is compared with nothing.
     notarization_only: list[dict[str, Any]] = []
     for links, rec in postregs:
         candidates = [pr for (ref, _keyid), pr in preregs.items() if ref == links.fulfills]
-        if candidates:
+        rejected_named = [rp for rp in rejected_preregs if rp["ref"] == links.fulfills]
+        if candidates or rejected_named:
             entry = {"ref": rec["ref"], "prev_hash": links.prev_hash, "keyid": rec["keyid"]}
             reasons = [_get_postreg_rejection_reason(rec, pr) for pr in candidates]
             if None in reasons:
@@ -469,6 +490,11 @@ def verify_paths(
             else:
                 for pr, reason in zip(candidates, reasons, strict=True):
                     _add_once(pr["rejected_postregs"], {**entry, "reason": reason})
+                for rp in rejected_named:
+                    _add_once(
+                        rp["rejected_postregs"],
+                        {**entry, "reason": REASON_PREREG_INVALID_SIGNATURE},
+                    )
         else:
             _add_once(
                 notarization_only,
@@ -501,6 +527,7 @@ def verify_paths(
         "tests": tests,
         "manifests": manifests_report,
         "commitments": commitments,
+        "rejected_preregs": rejected_preregs,
         "notarization_only": notarization_only,
         "results": results,
         "code": code,
@@ -594,7 +621,7 @@ def _evaluate(tests, manifests, commitments, artifacts_dir) -> dict[str, dict[st
         units = [c["key_consistent"] for c in key_checked]
         res["keyconsist"] = _tally(
             units,
-            "requested but no validly signed postreg names a provided prereg",
+            "requested but no validly signed postreg names a commitment",
             "commitment(s)",
         )
 
@@ -606,11 +633,13 @@ def _build_code(tests: list[str], results: dict[str, dict[str, Any]]) -> str:
     return VERIFY_CODE_VERSION + " " + " ".join(tokens)
 
 
-# Why a postreg that names a prereg does not count toward its commitment, as the report
-# shows it (docs/VERIFICATION.md). keyconsist compares against these constants, never
-# against the wording, so rewording one cannot change a verdict.
+# Why a postreg that names a prereg does not count toward its commitment, and why a prereg
+# is a rejected pre-registration (REASON_INVALID_SIGNATURE), as the report shows it
+# (docs/VERIFICATION.md). keyconsist compares against these constants, never against the
+# wording, so rewording one cannot change a verdict.
 REASON_INVALID_SIGNATURE = "invalid signature"
 REASON_DIFFERENT_KEY = "signed by a different key than the pre-registration"
+REASON_PREREG_INVALID_SIGNATURE = "the pre-registration's signature is invalid"
 
 
 def _get_postreg_rejection_reason(rec: dict[str, Any], prereg: dict[str, Any]) -> str | None:
