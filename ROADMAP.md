@@ -226,7 +226,9 @@ adds sits outside it, in the wrapper:
 - New commitment state `no-due`, separate from `open`. This changes what `open` means, but
   the code grammar stays `asexec-verify/1`, because the bump rule starts at `0.4.0`. (Done
   ahead of 0.4.0.)
-- `complete` and `order` (see *New properties*). (`complete` done ahead of 0.4.0.)
+- `complete` and `order` (see *New properties*). (Both done ahead of 0.4.0. `order`'s times
+  are the prereg ceiling's `MIDP + RADI` and the floor round's time on the pinned chain,
+  compared in microseconds, "precedes" is strict, and a missing or failing anchor fails.)
 - Malformed means only what stops `verify` reading a manifest: not valid JSON, nested too
   deep, a duplicate key, or a missing frame (`dsse` with `payloadType`, a `payload` that
   decodes to a JSON object, and a `signatures` list). Everything else is judged by tests.
@@ -292,7 +294,9 @@ not here. Where it hooks in waits on the study's choice of runner.
 
 Each run fetches a drand round when it starts and uses it (for example as its seed), and
 its postreg carries that round as its floor. Today `--floor` fetches the latest round at
-signing, so signing needs a way to pass in a round fetched earlier. `order` bounds a run
+signing, so signing needs a way to pass in a round fetched earlier (done ahead of 0.4.0:
+`--floor-round` / `--floor-round-file` take the round as drand's HTTP API returns it, and
+verify it at signing). `order` bounds a run
 only as tightly as the run's use of that round: a round the run merely records proves
 nothing about when the run started. Using it as a seed lets a re-execution check it.
 
@@ -314,7 +318,7 @@ What a 0.4.x release may carry:
 - New test names, including tests that move a *TrustedDeclared* property to
   *TrustedTested*.
 - CLI options and output text, `--json` (outside the promise until 0.5.0), the Python
-  API, and docs. For example, passing in a drand round fetched earlier.
+  API, and docs.
 - Pinned trust roots: added, or withdrawn with a release note.
 - Dependencies and supported Python versions.
 

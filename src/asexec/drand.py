@@ -105,6 +105,33 @@ def floor_record(round_data: dict) -> dict:
     ).model_dump(mode="json", exclude_none=True)
 
 
+def verified_floor(round_data: dict, chain_hash: str = DEFAULT_CHAIN) -> dict:
+    """An ``anchor.floor`` record for a round fetched earlier, verified offline at signing.
+
+    ``round_data`` is a round as drand's HTTP API returns it (``round``, ``randomness``,
+    ``signature``) for ``chain_hash`` (default: the chain ``--floor`` fetches from). The
+    record must meet every floor condition, as verify judges it (``verify_floor``): a pinned
+    chain, an integer round, lowercase hex, ``randomness == sha256(signature)``, and a BLS
+    signature for the round under the pinned key. Raises ``ValueError`` otherwise (a
+    pydantic ``ValidationError`` is one), so an unverifiable round is never signed."""
+    from .models import Floor, FloorInput  # lazy: models imports this module
+
+    floor = Floor(  # strict: a round of "1000" or true is not an integer, here as in verify
+        floor_type="drand",
+        chain_hash=chain_hash,
+        round=round_data["round"],
+        signature=round_data["signature"],
+        randomness=round_data["randomness"],
+    ).model_dump(mode="json", exclude_none=True)
+    if verify_floor(FloorInput.model_validate(floor))["status"] != "verified":
+        beacon = CHAINS[chain_hash]["beacon_id"]
+        raise ValueError(
+            f"round {floor['round']} does not verify against the pinned {beacon} chain "
+            "(its BLS signature for that round, or randomness = sha256(signature))"
+        )
+    return floor
+
+
 def fetch_floor(chain_hash: str = DEFAULT_CHAIN) -> dict:
     """Fetch the latest round and return it as an ``anchor.floor`` record. SIGN-TIME ONLY."""
     return floor_record(fetch_round(chain_hash=chain_hash))

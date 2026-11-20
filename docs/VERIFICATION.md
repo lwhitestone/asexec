@@ -123,7 +123,7 @@ report's wording may change, except for the reasons this document lists.
 | `=== manifests ===` | always | One line per file: `✓` if it passes `format` and meets `selfsig`'s conditions (else `✗`), the path, `body.phase` and `dsse.signatures[0].keyid` (`None` for a file that fails `format`, whose body is not read). Indented beneath: why a file fails `format` (`format: malformed: …`, or the [reason](#format) for an unknown format), and one line each for a floor, a ceiling and content hashes when the manifest has them. |
 | `=== untrusted … ===` | if any | For each file that passes `format`: its [`untrusted`](#untrusted) section, and each key outside the body that this format does not define, each as its path and its value in JSON. The heading says nothing in it was checked. |
 | `=== unknown fields … ===` | if any | For each file that passes `format`: each body field this format does not define, as its path (`body.…`) and its value in JSON (see [Untrusted](#untrusted)). The heading says nothing in it was checked. |
-| `=== commitments ===` | always | One entry per [commitment](#matching-postregs-to-commitments) (a validly signed prereg's `ref` and signer): its [state](#commitment-states), `ref`, signer keyid, `due` (and a line if it is not parseable), the number of counted postregs, a chain problem if any, with [`timely`](#timely) requested each counted postreg not shown on time and why, if its prereg lists items each item with its status or why [`complete`](#complete) does not count it as accounted for (and each counted postreg whose `item_id` names no listed item), and each rejected postreg with its reason. |
+| `=== commitments ===` | always | One entry per [commitment](#matching-postregs-to-commitments) (a validly signed prereg's `ref` and signer): its [state](#commitment-states), `ref`, signer keyid, `due` (and a line if it is not parseable), the number of counted postregs, a chain problem if any, with [`timely`](#timely) requested each counted postreg not shown on time and why, with [`order`](#order) requested a prereg whose ceiling gives no time and each counted postreg not shown after the prereg and why, if its prereg lists items each item with its status or why [`complete`](#complete) does not count it as accounted for (and each counted postreg whose `item_id` names no listed item), and each rejected postreg with its reason. |
 | `=== rejected pre-registrations ===` | if any | Each [rejected pre-registration](#matching-postregs-to-commitments) (a prereg that passes `format` but fails a `selfsig` condition, so is no commitment): its `ref` and its reason, `invalid signature`; the `dsse.signatures[0].keyid` it claims, which nothing authenticated; and each postreg rejected under it, with the reason `the pre-registration's signature is invalid`. It has no state. |
 | `=== notarization-only … ===` | if any | Each [notarization-only](#matching-postregs-to-commitments) postreg: one whose `body.fulfills` matches no provided prereg. |
 | `=== tests ===` | always | One line per requested test: its result and a short reason. |
@@ -180,6 +180,7 @@ Checked at 2026-12-31T23:59:59Z
 | [`floor`](#floor) | • `body.anchor.floor.floor_type`<br>• `body.anchor.floor.chain_hash`<br>• `body.anchor.floor.round`<br>• `body.anchor.floor.signature`<br>• `body.anchor.floor.randomness` | 1. `floor_type` is `drand`<br>2. `chain_hash` is pinned<br>3. `round` is an integer and `signature` is hex<br>4. `randomness`, if present, equals `sha256(signature)`<br>5. `signature` BLS-verifies for `round` under the pinned key |
 | [`format`](#format) | • the file<br>• `dsse`<br>• `dsse.payloadType`<br>• `dsse.signatures`<br>• `dsse.payload` | 1. file is a well-formed JSON object with the `dsse` frame<br>2. `dsse.payload` is strict base64 of a well-formed JSON object<br>3. `dsse.payloadType` names a format this release reads |
 | [`keyconsist`](#keyconsist) | • `body.phase`<br>• `body.fulfills`<br>• `pubkey`<br>• `dsse.signatures`<br>• `dsse.signatures[0].sig`<br>• `dsse.signatures[0].keyid` | 1. every validly signed postreg naming the commitment's `ref` has the `dsse.signatures[0].keyid` of a commitment with that `ref` |
+| [`order`](#order) | • `ceiling` and its fields, of the prereg<br>• which postregs are counted (as for `chain`)<br>• `body.anchor.floor` and its fields, of each counted postreg | (for each commitment with a counted postreg)<br>1. the prereg has a `ceiling`<br>2. that ceiling meets the `ceiling` conditions<br>3. each counted postreg has a `body.anchor.floor`<br>4. that floor meets the `floor` conditions<br>5. the ceiling's time, `MIDP + RADI`, is strictly before the floor's round time |
 | [`selfsig`](#selfsig) | • `dsse.payloadType`<br>• `dsse.payload`<br>• `dsse.signatures`<br>• `dsse.signatures[0].sig`<br>• `dsse.signatures[0].keyid`<br>• `pubkey` | 1. `dsse.signatures` has exactly one entry, an object<br>2. `pubkey` is hex, and `dsse.signatures[0].sig` is strict base64 of 64 bytes<br>3. `dsse.signatures[0].sig` verifies over the PAE of the body bytes by `pubkey`<br>4. `dsse.signatures[0].keyid` derives from `pubkey` |
 | [`timely`](#timely) | • `body.due` (of the prereg)<br>• which postregs are counted (as for `chain`)<br>• `ceiling` and its fields, of each counted postreg | (for each commitment with a `body.due` and a counted postreg)<br>1. `body.due` is a parseable ISO-8601 string<br>2. each counted postreg has a `ceiling`<br>3. that ceiling meets the `ceiling` conditions<br>4. its time, `MIDP + RADI`, is at or before `due` |
 
@@ -558,7 +559,8 @@ anchor.floor`.
 **Not examined:** a manifest that fails `format`.
 
 **Does not establish:** that the pre-registration preceded the run. A floor bounds
-freshness (anti-precomputation), not backdating.
+freshness (anti-precomputation), not backdating. [`order`](#order) compares a postreg's floor
+with its prereg's ceiling.
 
 **Example** (all requirements pass)
 
@@ -805,6 +807,122 @@ Output (from `=== tests ===` on), exit status `0`:
 
 asexec-verify/1 format=PASS keyconsist=PASS selfsig=PASS
 Checked at 2026-12-31T23:59:59Z
+```
+
+### `order`
+
+Whether each postreg that counts toward a commitment is shown to have been made after its
+prereg existed: the prereg's ceiling precedes the floor of each counted postreg.
+
+A postreg is **counted** for a prereg if it meets the
+[conditions for counting](#matching-postregs-to-commitments). The prereg's **ceiling time**
+Tc is the later end of the interval its Roughtime witness signed, `SREP.MIDP + SREP.RADI` of
+the verified `ceiling.response`, as for [`timely`](#timely): the prereg existed no later than
+Tc. A postreg's **floor time** Tf is the time of its drand round on the pinned chain, the
+chain's genesis plus `round - 1` periods (quicknet: genesis `1692803367`, a period of 3
+seconds): the round's signature was not known before Tf, so the postreg was made no earlier
+than Tf. Neither is ever taken from what the file states about time (`ceiling.midpoint` and
+`ceiling.radius` are not signed, and a floor holds no time). If Tc is before Tf, the prereg
+existed before the postreg was made.
+
+**Examines (\*)**
+- `ceiling.ceiling_type`, `ceiling.nonce`, `ceiling.witness_id`, `ceiling.pubkey`,
+  `ceiling.response` and `dsse.payload` (the [`ceiling`](#ceiling) conditions), of the prereg
+- `body.phase`, `body.fulfills`, `pubkey`, `dsse.signatures`, `dsse.signatures[0].sig`,
+  `dsse.signatures[0].keyid` (which postregs are counted)
+- `body.anchor.floor.floor_type`, `body.anchor.floor.chain_hash`, `body.anchor.floor.round`,
+  `body.anchor.floor.signature` and `body.anchor.floor.randomness` (the [`floor`](#floor)
+  conditions), of each counted postreg
+
+**Passes when all** (for each commitment that has at least one counted postreg)
+1. The prereg has a `ceiling`.
+2. That ceiling meets the [`ceiling`](#ceiling) conditions (#1 to #5). A ceiling that fails
+   one is no time at all, since anyone can write one, so the commitment fails as if it had
+   none.
+3. Each counted postreg has a `body.anchor.floor`.
+4. That floor meets the [`floor`](#floor) conditions (#1 to #5): a pinned chain, an integer
+   round, `randomness` equal to `sha256(signature)`, and a BLS signature for that round under
+   the pinned key. A floor that fails one is no time at all: a postreg claiming a later round
+   than the one its signature is for fails here.
+5. Tc is strictly before Tf, for each counted postreg. Both are compared exactly, in whole
+   microseconds since the epoch (`MIDP` and `RADI` are signed integers in microseconds, and Tf
+   is whole seconds), so a ceiling time equal to the floor's does not precede it.
+
+The prereg is identified by its `ref` and signer: if several copies of a commitment's prereg
+are given, its time is the earliest Tc among the copies whose ceiling meets #2, and a copy
+with no ceiling, or a later one, does not undo it. A counted postreg's floor is in its body,
+so every copy of it carries the same floor.
+
+A postreg that is not shown after its prereg still counts: its commitment stays `fulfilled`
+(see [Commitment states](#commitment-states)), and `order=FAIL` carries the verdict.
+
+**When empty:** if no commitment has a counted postreg, the test has nothing to examine and
+is `FAIL`, with the reason `requested but no commitment has a counted postreg`. A commitment
+with no counted postreg is not examined (its state says it was not reported). A
+[rejected pre-registration](#matching-postregs-to-commitments) is no commitment, so neither
+its ceiling nor the floors of the postregs naming it are read.
+
+**Failure reasons:** a commitment fails with `the pre-registration has no ceiling` (#1), `the
+pre-registration's ceiling does not verify` (#2) or `a counted postreg is not shown after the
+pre-registration` (#3 to #5). With `order` requested, the report marks under the commitment
+a prereg whose ceiling gives no time, `the pre-registration is not shown before its postregs:
+it has no ceiling` (#1) or `… its ceiling does not verify` (#2), and each counted postreg not
+shown after it: `is not shown after the pre-registration: it has no floor` (#3), `… its floor
+does not verify` (#4), or `… its floor (no earlier than <Tf>) is not after the
+pre-registration's ceiling (no later than <Tc>)` (#5; Tf rounded down and Tc rounded up to the
+second).
+
+**Does not establish:** when the run happened. It shows that the prereg existed before each
+postreg was made, no more. A postreg signed with `--floor` carries the round current when it
+was signed, which orders the postreg, not the run, after the prereg. A run that fetches a
+round when it starts, and is signed with it (`asexec postreg --floor-round`), is bounded by
+it only as tightly as the run's use of that round: a round the run merely records proves
+nothing about when the run started, while one it uses (as its seed, say) lets a re-execution
+check it. Nor does it establish when the prereg was made, only that it existed by Tc. Passing
+trusts the Roughtime witness about Tc (see `ceiling`'s trust class) and drand about Tf.
+
+**Example** (all requirements pass). `prereg.json` is signed with `--target "model m via
+provider p" --ceiling`, its witness signing a time just before quicknet round 1000. The run
+saved round 1000 as drand's HTTP API returned it, to `round.json`, and `postreg.json` is
+signed with `--fulfills prereg.json --floor-round-file round.json`:
+
+```console
+$ asexec verify prereg.json postreg.json --tests format,selfsig,order
+```
+
+Output (from `=== tests ===` on), exit status `0`:
+
+```
+=== tests ===
+  ✓ format=PASS  (2/2 manifest(s) ok)
+  ✓ order=PASS  (1/1 commitment(s) ok)
+  ✓ selfsig=PASS  (2/2 manifest(s) ok)
+
+=== ceiling trust (what you are accepting) ===
+  - prereg.json: ceiling witnessed by … at … (±…s), so no later than 2023-08-23T15:59:01Z - you are trusting …
+
+asexec-verify/1 format=PASS order=PASS selfsig=PASS
+Checked at 2026-12-31T23:59:59Z
+```
+
+With a prereg whose ceiling was fetched later (here, three months after the round), the
+run's floor precedes the prereg's ceiling. The postreg still counts, so the commitment is
+`fulfilled`, and the report marks it. Exit status `2`:
+
+```
+=== commitments ===
+  [FULFILLED] prereg sha-256:b74ae2db…
+    signer       : sha-256:bc562700…
+    due          : 2099-01-01T00:00:00Z
+    postregs     : 1
+    ✗ postreg sha-256:cf9877b8… is not shown after the pre-registration: its floor (no earlier than 2023-08-23T15:59:24Z) is not after the pre-registration's ceiling (no later than 2023-11-14T22:13:21Z)
+
+=== tests ===
+  ✓ format=PASS  (2/2 manifest(s) ok)
+  ✗ order=FAIL  (1/1 commitment(s) failed)
+  ✓ selfsig=PASS  (2/2 manifest(s) ok)
+…
+asexec-verify/1 format=PASS order=FAIL selfsig=PASS
 ```
 
 ---
@@ -1155,8 +1273,9 @@ chained postregs as in the [`chain` example](#chain):
 Each entry is the state in capitals and the prereg's `ref`, then its signer's keyid, `due`
 (or `(none declared)`) and the number of counted postregs. Problems follow as `✗` lines: a
 `due` without a timezone, an unparseable `due` (in any state), a chain problem (on the
-`postregs` line), with `timely` requested each counted postreg not shown on time, or a
-rejected postreg and why it does not count. If the prereg lists items, an `items` line
+`postregs` line), with `timely` requested each counted postreg not shown on time, with
+`order` requested a prereg whose ceiling gives no time and each counted postreg not shown
+after it, or a rejected postreg and why it does not count. If the prereg lists items, an `items` line
 follows, with one line per item: `✓` and its status, or `✗` and why
 [`complete`](#complete) does not count it as accounted for.
 [`notarization-only`](#matching-postregs-to-commitments) postregs are listed in their own
@@ -1260,7 +1379,7 @@ asexec-verify/1 format=PASS selfsig=PASS
 
 ## Not in this version
 
-`signer` and `order` are planned for 0.4.0, and `continuity` is
+`signer` is planned for 0.4.0, and `continuity` is
 deferred to 0.7.0 or later (see [`ROADMAP.md`](../ROADMAP.md)). Adding a test name never
 changes the meaning of an existing code. From 0.4.0, changing the documented meaning of an
 existing name bumps the code grammar (`asexec-verify/N`); 0.4.0 itself keeps `/1`.

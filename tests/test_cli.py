@@ -465,8 +465,8 @@ def test_verify_help_names_both_required_tests(capsys):
     text = " ".join(capsys.readouterr().out.split())  # argparse wraps the help
     assert "MUST include 'format' and 'selfsig'" in text
     assert (
-        "available: ceiling, chain, complete, content, floor, format, keyconsist, selfsig, timely"
-        in text
+        "available: ceiling, chain, complete, content, floor, format, keyconsist, order, "
+        "selfsig, timely" in text
     )
 
 
@@ -1277,3 +1277,188 @@ def test_verify_prints_no_untrusted_or_unknown_block_when_none(tmp_path, key, pr
     assert run("verify", prereg, "--tests", "format,selfsig") == 0
     out = capsys.readouterr().out
     assert "=== untrusted" not in out and "=== unknown fields" not in out
+
+
+# --- signing with a drand round fetched earlier, and order (#38) ------------- #
+# Round 1000 as drand's HTTP API returns it (GET /<chain hash>/public/1000).
+SAVED_ROUND = {"round": 1000, "randomness": FLOOR["randomness"], "signature": FLOOR["signature"]}
+
+
+def _round_text(**over):
+    return json.dumps({**SAVED_ROUND, **over})
+
+
+@pytest.mark.parametrize("cmd", ["prereg", "postreg"])
+@pytest.mark.parametrize("how", ["inline", "file"])
+def test_floor_round_signs_with_a_round_fetched_earlier(
+    tmp_path, key, prereg, monkeypatch, capsys, cmd, how
+):
+    """--floor-round (inline JSON) or --floor-round-file: a round as drand's HTTP API returns
+    it, verified at signing and signed as the floor, with nothing fetched."""
+    monkeypatch.setattr(drand, "fetch_floor", _boom)
+    monkeypatch.setattr(drand, "fetch_round", _boom)
+    if how == "inline":
+        given = ["--floor-round", json.dumps(SAVED_ROUND)]
+    else:
+        (tmp_path / "round.json").write_text(json.dumps(SAVED_ROUND))
+        given = ["--floor-round-file", tmp_path / "round.json"]
+    link = ["--target", "t"] if cmd == "prereg" else ["--fulfills", prereg]
+    out = tmp_path / "out.json"
+    assert run(cmd, "--key", key, *link, *given, "--out", out) == 0
+    assert _body(out)["anchor"] == {"floor": FLOOR}
+    if (cmd, how) == ("postreg", "file"):  # the floor written is the one verify reads (BLS: ~1 s)
+        capsys.readouterr()
+        assert run("verify", out, "--tests", "format,selfsig,floor") == 0
+        assert "floor=PASS format=PASS selfsig=PASS" in capsys.readouterr().out
+
+
+# A --floor-round value that is wrong on its own: the arguments themselves are wrong, exit 64.
+FLOOR_ROUND_USAGE_ERRORS = [
+    pytest.param("{nope", "not valid JSON", id="not-json"),
+    pytest.param('{"round": 1000, "round": 1000}', "duplicate JSON key 'round'",
+                 id="duplicate-key"),
+    pytest.param("[]", "--floor-round must be a JSON object", id="a-list"),
+    pytest.param(json.dumps({"round": 1000, "signature": FLOOR["signature"]}),
+                 "missing 'randomness'", id="no-randomness"),
+    pytest.param(_round_text(previous_signature="00"), "'previous_signature'",
+                 id="unknown-field"),
+    pytest.param(_round_text(chain_hash=drand.QUICKNET_HASH), "'chain_hash'",
+                 id="chain-hash-given"),
+    pytest.param(_round_text(round="1000"), "'round' must be an integer", id="round-a-string"),
+    pytest.param(_round_text(round=1000.0), "'round' must be an integer", id="round-a-float"),
+    pytest.param(_round_text(round=True), "'round' must be an integer", id="round-a-bool"),
+    pytest.param(_round_text(signature=FLOOR["signature"].upper()),
+                 "'signature' must be lowercase hex", id="signature-uppercase"),
+    pytest.param(_round_text(randomness=5), "'randomness' must be lowercase hex",
+                 id="randomness-a-number"),
+    pytest.param(_round_text(round=1001), "does not verify", id="another-rounds-signature"),
+    pytest.param(_round_text(randomness="00" * 32), "does not verify", id="randomness-wrong"),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize("value,message", FLOOR_ROUND_USAGE_ERRORS)
+def test_floor_round_argument_errors_are_usage_errors(tmp_path, key, value, message, capsys):
+    """An inline --floor-round that is not a round of the pinned chain that verifies, whatever
+    the files hold: exit 64, the reason on stderr, nothing written. --best-effort does not
+    sign without it: there is no fetch to fail."""
+    out = tmp_path / "out.json"
+    with pytest.raises(SystemExit) as e:
+        run("prereg", "--key", key, "--target", "t", "--floor-round", value, "--best-effort",
+            "--out", out)  # fmt: skip
+    assert e.value.code == cli.EXIT_USAGE
+    err = capsys.readouterr().err
+    assert "error: argument --floor-round: " in err and message in err
+    assert not out.exists()
+
+
+@pytest.mark.parametrize(
+    "value,message",
+    [p for p in FLOOR_ROUND_USAGE_ERRORS if p.id != "not-json"]
+    + [pytest.param("{nope", "must contain valid JSON", id="not-json")],
+)
+def test_floor_round_file_content_errors_exit_EXIT_ERROR(tmp_path, key, value, message, capsys):
+    """The same values from --floor-round-file are the file's content: exit 1, one line,
+    nothing written."""
+    (tmp_path / "round.json").write_text(value)
+    out = tmp_path / "out.json"
+    code = run("prereg", "--key", key, "--target", "t", "--floor-round-file",
+               tmp_path / "round.json", "--out", out)  # fmt: skip
+    assert code == cli.EXIT_ERROR
+    err = capsys.readouterr().err
+    assert err.startswith("error: ") and "Traceback" not in err and message in err
+    assert not out.exists()
+
+
+def test_floor_round_file_not_found_exits_EXIT_ERROR(tmp_path, key, capsys):
+    with pytest.raises(SystemExit) as e:
+        run("prereg", "--key", key, "--target", "t", "--floor-round-file", tmp_path / "none",
+            "--out", tmp_path / "out.json")  # fmt: skip
+    assert "--floor-round-file not found" in str(e.value)
+
+
+@pytest.mark.parametrize(
+    "given",
+    [
+        ("--floor", "--floor-round", json.dumps(SAVED_ROUND)),
+        ("--floor", "--floor-round-file", "round.json"),
+        ("--floor-round", json.dumps(SAVED_ROUND), "--floor-round-file", "round.json"),
+    ],
+    ids=["floor-and-floor-round", "floor-and-file", "floor-round-and-file"],
+)
+def test_floor_round_excludes_floor(tmp_path, key, given, capsys):
+    """--floor fetches the latest round, and --floor-round gives one: at most one of them."""
+    with pytest.raises(SystemExit) as e:
+        run("prereg", "--key", key, "--target", "t", *given, "--out", tmp_path / "out.json")
+    assert e.value.code == cli.EXIT_USAGE
+    assert "not allowed with argument" in capsys.readouterr().err
+
+
+@pytest.fixture
+def witness_at(monkeypatch, make_server, ceiling_for):
+    """``witness_at(midpoint_us)(path)``: attach a ceiling from a pinned synthetic witness that
+    signs ``midpoint_us`` (RADI 1 s) to the manifest file at ``path``."""
+
+    def at(midpoint_us):
+        lt_pub, sign_response = make_server(midpoint_us=midpoint_us)
+        monkeypatch.setitem(roughtime.SERVERS, "synthetic", {"pubkey": lt_pub})
+
+        def attach(path):
+            mani = manifest.load(str(path))
+            nonce_hex = _ref(path).split(":", 1)[-1]
+            record = ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response)
+            manifest.attach_ceiling(mani, record)
+            manifest.save(mani, str(path))
+
+        return attach
+
+    return at
+
+
+_ROUND_1000_US = 1_692_806_364_000_000  # 2023-08-23T15:59:24Z
+_NOT_AFTER = "is not shown after the pre-registration"
+
+
+@pytest.mark.parametrize(
+    "midpoint_us,prereg_ceiling,floor,code,line",
+    [
+        (_ROUND_1000_US - 10_000_000, True, True, 0, None),
+        (
+            1_700_000_000_000_000,
+            True,
+            True,
+            2,
+            f"{_NOT_AFTER}: its floor (no earlier than 2023-08-23T15:59:24Z) is not after "
+            "the pre-registration's ceiling (no later than 2023-11-14T22:13:21Z)",
+        ),
+        (_ROUND_1000_US - 10_000_000, False, True, 2, None),
+        (_ROUND_1000_US - 10_000_000, True, False, 2, f"{_NOT_AFTER}: it has no floor"),
+    ],
+    ids=["ordered", "floor-before-the-prereg-ceiling", "no-prereg-ceiling", "no-floor"],
+)
+def test_verify_marks_each_counted_postreg_not_shown_after_its_prereg(
+    tmp_path, key, capsys, witness_at, midpoint_us, prereg_ceiling, floor, code, line
+):
+    """With order requested, the commitments block marks each counted postreg not shown after
+    its prereg and why, and a prereg whose ceiling gives no time; without it, no mark."""
+    pre, post = tmp_path / "pre.json", tmp_path / "post.json"
+    assert run("prereg", "--key", key, "--target", "t", "--out", pre) == 0
+    given = ["--floor-round", json.dumps(SAVED_ROUND)] if floor else []
+    assert run("postreg", "--key", key, "--fulfills", pre, *given, "--out", post) == 0
+    if prereg_ceiling:
+        witness_at(midpoint_us)(pre)
+    capsys.readouterr()
+    assert run("verify", pre, post, "--tests", "format,selfsig,order") == code
+    out = capsys.readouterr().out
+    commitments = out.split("=== commitments ===\n")[1].split("\n\n")[0].splitlines()
+    marks = [m for m in commitments if m.startswith(f"    {cli.NO}")]
+    if not prereg_ceiling:
+        assert marks == [
+            f"    {cli.NO} the pre-registration is not shown before its postregs: it has no ceiling"
+        ]
+    else:
+        assert marks == ([f"    {cli.NO} postreg {_ref(post)} {line}"] if line else [])
+    assert f"order={'PASS' if code == 0 else 'FAIL'}" in out
+    if line and floor:  # without order requested, no mark (BLS: ~1 s a run)
+        capsys.readouterr()
+        run("verify", pre, post, "--tests", "format,selfsig")
+        assert "not shown" not in capsys.readouterr().out

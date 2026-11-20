@@ -11,6 +11,7 @@ One file per catalog test, plus one per cross-cutting section of the doc::
     test_verify_floor.py             ## floor
     test_verify_format.py            ## format
     test_verify_keyconsist.py        ## keyconsist
+    test_verify_order.py             ## order
     test_verify_selfsig.py           ## selfsig
     test_verify_timely.py            ## timely
     test_verify_matching.py          ## Matching postregs to commitments

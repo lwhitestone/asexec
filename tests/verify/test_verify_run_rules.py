@@ -335,7 +335,7 @@ def test_never_raises__validly_signed_junk_in_a_body_field(scenario, field, valu
     scenario.set("postreg1", f"body.{field}", value)
     if field not in ("fulfills", "prev_hash"):
         scenario.set("prereg", f"body.{field}", value)
-    tests = ("ceiling", "chain", "complete", "content", "floor", "keyconsist", "timely")
+    tests = ("ceiling", "chain", "complete", "content", "floor", "keyconsist", "order", "timely")
     report = scenario.verify(*tests)
     assert {"format=PASS", "selfsig=PASS"} <= set(report["code"].split()[1:])
 
@@ -365,11 +365,11 @@ def test_never_raises__witness_time_past_year_9999(scenario, make_server):
     pub, sign = make_server(midpoint_us=2**62, maxt=2**63)
     scenario.server_pub, scenario.sign_response = pub, sign
     scenario.pin_server(pub)
-    for name in ("postreg0", "postreg1", "postreg2"):
+    for name in ("prereg", "postreg0", "postreg1", "postreg2"):
         scenario.with_ceiling(name)
-    report = scenario.verify("ceiling", "complete", "timely")
+    report = scenario.verify("ceiling", "complete", "order", "timely")
     assert report["code"] == (
-        "asexec-verify/1 ceiling=PASS complete=FAIL format=PASS selfsig=PASS timely=FAIL"
+        "asexec-verify/1 ceiling=PASS complete=FAIL format=PASS order=FAIL selfsig=PASS timely=FAIL"
     )
     assert all("epoch seconds" in line for line in report["ceiling_trust"])
 
@@ -408,6 +408,46 @@ def test_never_raises__junk_ceiling_member(scenario, junk):
     scenario.with_ceiling("prereg")
     scenario.ceilings["prereg"] = lambda nonce_hex: junk
     assert scenario.code("ceiling") == "asexec-verify/1 ceiling=FAIL format=PASS selfsig=PASS"
+
+
+@pytest.mark.parametrize(
+    "path,value",
+    [
+        pytest.param("round", 2**70, id="round-overflows-8-bytes"),
+        pytest.param("round", -1, id="round-negative"),
+        pytest.param("round", 0, id="round-zero"),
+        pytest.param("round", True, id="round-bool"),
+        pytest.param("signature", 5, id="signature-not-string"),
+        pytest.param("randomness", [], id="randomness-a-list"),
+        pytest.param("chain_hash", [], id="chain_hash-not-string"),
+        pytest.param("floor_type", {}, id="floor_type-not-string"),
+    ],
+)
+def test_never_raises__junk_floor_on_a_counted_postreg(scenario, path, value):
+    """order reads the floor of each counted postreg: a validly signed but malformed one is
+    no time (order #4), and never raises."""
+    scenario.with_ceiling("prereg")
+    scenario.set("postreg0", "body.anchor.floor", {**d.FLOOR, path: value})
+    report = scenario.verify("floor", "order")
+    assert report["code"] == "asexec-verify/1 floor=FAIL format=PASS order=FAIL selfsig=PASS"
+
+
+@pytest.mark.parametrize(
+    "junk",
+    [
+        pytest.param("x", id="not-object"),
+        pytest.param([1], id="list"),
+        pytest.param({"ceiling_type": "roughtime", "witness_id": [], "nonce": 5}, id="fields"),
+        pytest.param({"ceiling_type": "roughtime", "response": "zz"}, id="response-not-hex"),
+        pytest.param({"midpoint": "soon", "radius": [1]}, id="unsigned-time-junk"),
+    ],
+)
+def test_never_raises__junk_ceiling_on_a_prereg(scenario, junk):
+    """order reads the prereg's ceiling: a junk one is no time (order #2), and never raises."""
+    scenario.with_ceiling("prereg")
+    scenario.ceilings["prereg"] = lambda nonce_hex: junk
+    report = scenario.verify("ceiling", "order")
+    assert report["code"] == "asexec-verify/1 ceiling=FAIL format=PASS order=FAIL selfsig=PASS"
 
 
 @pytest.mark.parametrize(
