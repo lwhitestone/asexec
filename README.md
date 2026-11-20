@@ -170,8 +170,8 @@ specified in the [verification catalog](./docs/VERIFICATION.md).
 
 `verify` runs the tests you name and prints a report for people to read (each manifest,
 each commitment with its state, any rejected pre-registrations, any notarization-only
-post-registrations, and each test's result with a short reason), then one canonical code, then `Checked at <time>` (UTC, the
-moment commitment states were judged against), e.g.:
+post-registrations, and each test's result with a short reason), then one canonical code,
+then `Checked at <time>` (UTC, the moment commitment states were judged against), e.g.:
 
 ```
 asexec-verify/1 chain=PASS content=PASS format=PASS keyconsist=PASS selfsig=PASS

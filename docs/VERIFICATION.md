@@ -701,7 +701,9 @@ Three terms, each narrower than the one before:
   has no [state](#commitment-states), no postreg counts toward it, and `chain` and
   `keyconsist` never examine it, so no state and no `chain` or `keyconsist` result rests on
   its keyid. It is listed under its own heading, *rejected pre-registrations*, with the
-  reason `invalid signature`. It fails `selfsig`, which is its only failure.
+  reason `invalid signature`. Of the tests, it fails only `selfsig`. With no commitment,
+  `chain` and `keyconsist` may then have nothing to examine, and so be empty and `FAIL`, as
+  in the example below.
 
 | Prereg situation | `format` | `selfsig` | Outcome | In the report |
 |---|---|---|---|---|
@@ -764,7 +766,8 @@ postregs all have invalid signatures is not examined. *Rejected*, *rejected
 pre-registration* and *notarization-only* are only groupings in the report and add no
 failure of their own. The failures in the postreg table come from `format` (the first row),
 `selfsig` (the second row, and the last two rows when the signature is invalid) and
-`keyconsist` (the third row). A rejected pre-registration fails `selfsig`.
+`keyconsist` (the third row). A rejected pre-registration fails `selfsig`; it may also leave
+`chain` and `keyconsist` empty, since it is no commitment.
 
 A manifest is identified by its `ref`. Copies of a postreg, with the same `ref` and
 `signature.keyid`, are listed once per outcome, however many are provided. Copies usually
