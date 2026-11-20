@@ -2123,3 +2123,163 @@ the last PR push (`aad9918`, run 44773957313): lint, build, test on 3.12, 3.13 a
 **Open for the human gate:** the orchestrator's choice of a base64 `sig`, to keep ROADMAP's
 standard-envelope promise; the four documented ways asexec is stricter than DSSE; and the
 verify result that depends on `PYTHONINTMAXSTRDIGITS` (see the observations above).
+
+### Checkpoint 7: #33, #36, #46, #37
+
+Written issue by issue as each landed (the brief asks for a log that is complete even if
+the work is interrupted). Baseline: `feature/0321-checkpoint7` at `18c0955`, `scripts/check.sh`
+clean, **640 passed**.
+
+#### #33: subjects as explicit file lists
+
+**Landed:** `18e63bf`. A subject entry is `{name, hash_alg, digest}`: `name` is the file's
+normalized relative path, `hash_alg` is the entry's own. `hashing.build_subject` (with the new
+`entry_name`, `build_entry`, `build_entries`, which #36 reuses) refuses a directory, anything
+else that is not a regular file, an absolute path, a `..` component, a backslash and two paths
+with one name (`ManifestError`, so the CLI exits 1 with `error: …`). `hash_dir`,
+`_iter_files` and `digest_path` are removed. `models.SubjectEntryInput` now has `hash_alg:
+str` (the `context={"hash_alg": …}` mechanism is gone), the writer's `SubjectItem.name` is
+`fields.NormalName`, `ManifestBody` has no body-level `hash_alg` and refuses repeated names,
+and `manifest.sign`'s dict gate refuses an entry without `hash_alg` or a repeated name.
+`build_prereg`/`build_postreg` take no `hash_alg`. `FORMATS[...]["subject_default_hash_alg"]`
+is removed. `content` has nine items. Docs: `docs/VERIFICATION.md` (*Formats*, the summary
+row, the `content` section and example, the *Hex* convention's item number), `README.md`
+(usage, both body examples, the *Known issues* section removed), `ROADMAP.md` (done-ahead
+marks), `docs/MULTIVERSION.md` (the entry, the known-format bullet, the per-identifier row),
+`docs/DEVELOPMENT.md` (the roundtrip). `examples/adequacy-test/run.py` signs in its artifacts
+directory with relative names.
+
+**What was settled (judgement calls):**
+- **Relative to what:** the directory signing runs in; the name is the path as given, so
+  verify's `--artifacts` must stand for that directory. Normalization is lexical: `.`
+  components, repeated and trailing separators are dropped (`./b//run.py` → `b/run.py`), and
+  on Windows `\` becomes `/`.
+- **Refused at signing:** an absolute path (also a Windows drive path), rather than made
+  relative to the current directory: there is no "relative path as given", and resolving it
+  against a possibly symlinked current directory could silently pick another name. Any `..`
+  component, even one that normalizes away (`d/../c.txt`): lexical collapse can name another
+  file than the OS does when `d` is a symlink. A backslash where it is not a separator: it is a
+  separator on Windows, so the same name would be two files. Two paths that normalize to one
+  name (`c.txt` and `./c.txt`, or the same path twice).
+- **`hash_alg` is required per entry, and has no default.** ROADMAP says "No property has a
+  default", gives `subject[].hash_alg` the default "none", and *Dependencies sit with what
+  they qualify* says each digest carries its own `hash_alg`. So the FORMATS field kept for the
+  fallback (checkpoint 3) is removed, consistently: from `constants.py`, the pinned literal
+  (`test_formats_has_one_entry_keyed_by_manifest_payload_type`), the selector test's second
+  format, `docs/MULTIVERSION.md` and `docs/VERIFICATION.md`. `SUBJECT_DEFAULT_HASH_ALG` stays
+  as the signing default (NEW_OUTPUT). An entry without its own `hash_alg` fails content #1
+  (`malformed subject entry`), and so does a non-string one (it was #2 before).
+- **content's items** (renumbered, since the section is rewritten; reasons in brackets):
+  1. a non-empty array of objects with a string `name`, a string `hash_alg` and a hex
+     `digest[hash_alg]` (`malformed subject entry`);
+  2. `hash_alg` available (`algorithm unavailable: <alg>`);
+  3. `name` in normal form: `/`-separated segments, none empty, `.` or `..`, no backslash
+     (`name is not a normalized relative path`), so `./a`, `a//b`, `a/`, `a/../b`, `/a`,
+     `a\b` fail, even when they would resolve to the right file;
+  4. no other entry of the same list has the same `name` (`duplicate name`, on each of them);
+  5. resolves inside `--artifacts` (symlinks followed);
+  6. exists;
+  7. **a regular file** (`artifact is not a file`): a directory, a symlink to one, a FIFO, a
+     socket or a device fails and is never opened. Before, verify opened a FIFO and blocked
+     forever (the red run below had to deselect that case);
+  8. readable;
+  9. digest equals.
+- **Duplicates are per list:** the same name in two manifests, or (from #36) in `subject` and
+  `evidence`, is not a duplicate.
+- **postreg no longer inherits the prereg's `hash_alg`:** there is no body-level one to
+  inherit. `postreg --hash-alg` now defaults to `sha-256`, like `prereg --hash-alg`.
+- **Frozen vectors (D6):** `FROZEN_NO_HASH_ALG_MANIFEST` is replaced by
+  `FROZEN_SUBJECT_MANIFEST` (an entry with its own `hash_alg`; sig `s/vhj6pty0QZTW…3ki7BQ==`),
+  regenerated by `manifest.sign` with only its bedrock gate stubbed (script in the session
+  scratchpad, `cp7/regen_vectors.py`). The same script printed `FROZEN_MANIFEST` and the old
+  no-`hash_alg` vector byte for byte as they were in the file, so it is the method that made
+  them. The old vector is kept as `NO_HASH_ALG_MANIFEST`, and
+  `test_subject_entry_hash_alg_has_no_fallback` pins that it now fails content #1 (as
+  `PRE_V1_MANIFEST` pins the payloadType change).
+
+**Evidence:**
+- Red first: with only the tests changed, the full suite hung on
+  `test_content__fail__7_artifact_is_a_file[fifo]` (the old `digest_path` opened the FIFO and
+  blocked). With the two FIFO tests deselected: **59 failed, 634 passed**. The failures were
+  the new refusals (`build_subject` accepting a directory, an absolute path, `..`, a backslash,
+  duplicates; the CLI exiting 0 for them), `pydantic ValidationError` from `ManifestBody`
+  (entries now carry `hash_alg`, which the old writer forbade), content still reading the
+  body-level `hash_alg`, content passing non-normal names, duplicates and directories, the
+  FORMATS literal, and the doc-coverage test (`content` #7-#9 had no doc item).
+- `scripts/check.sh` after: clean, **695 passed** (640 before).
+- Tests that pin each requirement:
+  - content: `test_content__pass__all`; `__fail__1_entry_is_well_formed` (11 cases, among
+    them `hash_alg-missing`, `hash_alg-null`, `hash_alg-number`, `hash_alg-list`,
+    `digest-not-object`); `__fail__1_subject_is_a_non_empty_array`;
+    `__pass__1_body_level_hash_alg_is_not_read` (`blake9`, a number, `null`);
+    `__fail__2_hash_alg_is_available`; `__fail__3_name_is_a_normalized_relative_path` (10:
+    absolute, `./`, `/./`, `//`, trailing `/`, `..` inside and first, backslash, empty, `.`);
+    `__fail__4_names_are_unique` (same and different digests: both entries fail);
+    `__pass__4_the_same_name_in_two_manifests_is_not_a_duplicate`;
+    `__fail__5_name_resolves_inside_artifacts` (an escaping symlink);
+    `__pass__5_symlink_inside_is_hashed_through_to_its_target`;
+    `__fail__6_artifact_exists` (deleted, dangling symlink); `__fail__7_artifact_is_a_file`
+    (a directory given its old v1 hash, a symlink to a directory, a FIFO);
+    `__fail__8_artifact_is_readable`; `__fail__9_digest_equals_recomputed`;
+    `__pass__9_digest_hex_accepts_either_case_and_whitespace`; the four empty cases.
+  - Planted: `test_fault__hash_alg_only_at_the_body_level` (0.3.x's layout fails content).
+  - Never raises: `SIGNED_JUNK` gains `entry-hash_alg`, `entry-hash_alg-obj`,
+    `entry-name-list`; the lone-surrogate case moves to `body.subject.0.hash_alg`;
+    `test_never_raises__subject_named_as_no_path_can_be` uses `harness\x00.py` (content #6).
+  - Writer: `tests/test_primitives.py::test_directory_hashing_is_gone`,
+    `test_build_subject_names_each_file_by_its_normalized_relative_path`,
+    `test_build_subject_hashes_a_symlink_through_to_its_target`,
+    `test_build_subject_refuses_what_content_would_fail` (8),
+    `test_build_subject_refuses_a_backslash_in_a_name`,
+    `test_build_subject_refuses_what_is_not_a_regular_file` (FIFO),
+    `test_build_subject_of_a_missing_file_raises_os_error`; `tests/test_manifest.py::
+    test_subject_entry_requires_its_own_hash_alg`, `test_builders_take_no_body_level_hash_alg`,
+    `test_writer_subject_entry_requires_hash_alg`, `test_writer_refuses_duplicate_subject_names`,
+    `test_sign_refuses_a_hand_built_body_with_duplicate_subject_names`,
+    `test_writer_refuses_a_name_that_is_not_a_normalized_relative_path` (8).
+  - CLI: `test_errors_exit_EXIT_ERROR_with_a_message_not_a_traceback` gains
+    `subject-directory`, `subject-absolute`, `subject-dotdot`, `subject-twice`,
+    `postreg-subject-directory`; `test_subjects_are_files_named_by_their_relative_paths`.
+  - Constants: the FORMATS literal (three fields), `test_frozen_manifests_still_verify`
+    (`FROZEN_SUBJECT_MANIFEST` decodes to `FROZEN_SUBJECT_BODY`, `content=PASS`),
+    `test_subject_entry_hash_alg_has_no_fallback`, the roundtrip (a writer file and a hand-signed
+    file, each entry under its own `hash_alg`).
+- CLI demonstrations (scratch dir `art/` with `a/run.py`, `b/run.py`, `harness/eval.py`; run
+  inside `art/`):
+  - `prereg --subject harness` → `error: 'harness' is a directory; list its files, or pack it
+    (a tar, say) and list that`, exit 1. An absolute path → `error: '…/art/a/run.py' is an
+    absolute path; name a file by its path relative to the current directory (verify looks it
+    up under --artifacts)`, exit 1. `../art/a/run.py` → `… has a '..' component; name the
+    file without it`, exit 1. `a/run.py ./a//run.py` → `'a/run.py' and './a//run.py' both
+    name 'a/run.py': a file is listed twice`, exit 1. Nothing written in each case.
+  - `prereg --subject a/run.py b/run.py harness/eval.py`: the body holds
+    `"subject":[{"digest":{"sha-256":"2c8b08da…"},"hash_alg":"sha-256","name":"a/run.py"},
+    {…"name":"b/run.py"},{…"name":"harness/eval.py"}]` and no body-level `hash_alg`; `verify
+    pre.json --tests format,selfsig,content --artifacts art` → `✓ content hashes ok`,
+    `content=PASS format=PASS selfsig=PASS`, exit 0.
+  - A hand-signed body (`cp7/handsign.py`, which signs any body as anyone with a key could)
+    naming `harness`, `a/run.py` twice, `harness/../a/run.py`, `a\\run.py`, and `b/run.py`
+    without `hash_alg`, beside a body-level `hash_alg`: `✗ harness: artifact is not a file`,
+    `✗ a/run.py: duplicate name` (twice), `✗ harness/../a/run.py: name is not a normalized
+    relative path`, `✗ a\\run.py: name is not a normalized relative path`, `✗ b/run.py:
+    malformed subject entry`, `content=FAIL format=PASS selfsig=PASS`.
+- `uv run python examples/adequacy-test/run.py`: exit 0, the same codes, states and
+  caught/missed results as before (`run.py` now runs signing with `cwd=<artifacts>` and
+  relative names, since an absolute `--subject` is refused).
+- Nothing left behind: `git grep -n -e hash_dir -e digest_path -e subject_default_hash_alg
+  -e 'body\.hash_alg' -e '"harness/"'` outside this file finds only `ROADMAP.md:167` (the
+  bullet saying to remove `hash_dir`), `docs/MULTIVERSION.md:105` and
+  `docs/VERIFICATION.md:329` (saying the field and the body-level `hash_alg` are gone),
+  `tests/test_constants.py` (`test_subject_default_hash_alg`, the constant that stays, and the
+  no-fallback test's comment) and `tests/test_primitives.py` (the assertions that both
+  functions are gone).
+
+**Observations (out of scope):**
+- On a case-insensitive filesystem, `A.txt` and `a.txt` are two names for one file: content #4
+  compares names exactly, so it does not see them as duplicates (each still hashes the one
+  file). A name holding `:` (`C:x`) is relative on POSIX but drive-relative on Windows, where
+  content #5 then fails it, so the verdict on such a name can differ between systems.
+- `prd.md:48` still describes the harness hash as "directory tree hash, e.g., a Merkle tree
+  over files". `prd.md` is the original brief and no issue covers it.
+- `ROADMAP.md` says a body-level `hash_alg` is "shown as unknown and unchecked"; showing
+  unknown fields is #34's (checkpoint 8). It is read by nothing now.
