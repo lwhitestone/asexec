@@ -81,6 +81,6 @@ SignatureBase64 = Annotated[str, AfterValidator(_signature_ok)]
 # A drand chain hash the verifier pins (floor #2). ``drand.CHAINS`` is fixed at import.
 PinnedChain = Annotated[str, AfterValidator(_pinned_chain)]
 
-# ``payload.phase`` / ``fulfills`` / ``prev_hash``: compared by string equality, never
+# ``body.phase`` / ``fulfills`` / ``prev_hash``: compared by string equality, never
 # parsed (chain #2). ``None`` when absent; any other non-string value is ``DANGLING``.
 Link = Annotated[str | None, PlainValidator(_link)]

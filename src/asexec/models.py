@@ -109,7 +109,7 @@ class KeyInput(InputModel):
 
 
 class FloorInput(InputModel):
-    """``payload.anchor.floor`` (VERIFICATION.md ### floor)."""
+    """``body.anchor.floor`` (VERIFICATION.md ### floor)."""
 
     floor_type: Literal["drand"]  # floor #1
     chain_hash: PinnedChain = drand.DEFAULT_CHAIN  # floor #2
@@ -122,14 +122,14 @@ class CeilingInput(InputModel):
     """``ceiling`` (VERIFICATION.md ### ceiling)."""
 
     ceiling_type: Literal["roughtime"]  # ceiling #1
-    nonce: str  # ceiling #2 (shape; the binding to ref(payload) is code)
+    nonce: str  # ceiling #2 (shape; the binding to ref is code)
     witness_id: str  # ceiling #3 (shape; the pin lookup is code)
     pubkey: Hex | None = None  # ceiling #4 (shape; the equality is code)
     response: Hex  # ceiling #5 (shape; the response check is code)
 
 
 class SubjectEntryInput(InputModel):
-    """One ``payload.subject[]`` entry (content #1). Must be validated with
+    """One ``body.subject[]`` entry (content #1). Must be validated with
     ``context={"hash_alg": ...}``: ``digest[hash_alg]`` must be hex."""
 
     name: str  # content #1
@@ -154,12 +154,12 @@ class SubjectEntryInput(InputModel):
         return self
 
 
-# ``payload.subject`` (content #1): a non-empty array; each entry is a ``SubjectEntryInput``.
+# ``body.subject`` (content #1): a non-empty array; each entry is a ``SubjectEntryInput``.
 SubjectInput = TypeAdapter(Annotated[list[Any], Strict(), Field(min_length=1)])
 
 
 class LinkInput(InputModel):
-    """``payload.phase`` / ``fulfills`` / ``prev_hash``: a link is a string or absent
+    """``body.phase`` / ``fulfills`` / ``prev_hash``: a link is a string or absent
     (chain #2). Never fails: a non-string link is ``fields.DANGLING``."""
 
     phase: Link = None
@@ -168,7 +168,7 @@ class LinkInput(InputModel):
 
 
 class DueInput(InputModel):
-    """``payload.due``: a string or absent (Commitment states, ``invalid-due``). The
+    """``body.due``: a string or absent (Commitment states, ``invalid-due``). The
     ISO-8601 parse stays in the verifier."""
 
     due: str | None = None
