@@ -31,6 +31,7 @@ optional (a commitment with no deadline can never elapse: its state is ``no-due`
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import (
@@ -291,7 +292,7 @@ class ManifestBody(BaseModel):
     declaration: Freeform | None = None
 
     # optional content claim: files, each with its own algorithm
-    subject: list[SubjectItem] | None = None
+    subject: Annotated[list[SubjectItem], Field(min_length=1)] | None = None
 
     # postreg linkage
     fulfills: str | None = None
@@ -325,13 +326,13 @@ class ManifestBody(BaseModel):
             raise ValueError("manifest body missing mandatory 'target'")
         # content #4: one file, one entry, in each list.
         for field, entries in (("subject", self.subject), ("evidence", self.evidence)):
-            names = [entry.name for entry in entries or []]
-            repeated = sorted({name for name in names if names.count(name) > 1})
+            counts = Counter(entry.name for entry in entries or [])
+            repeated = sorted(name for name, n in counts.items() if n > 1)
             if repeated:
                 raise ValueError(f"{field} lists {', '.join(map(repr, repeated))} twice")
         # one id, one item: a prereg whose item ids repeat fails complete.
-        ids = [item.id for item in self.items or []]
-        repeated = sorted({i for i in ids if ids.count(i) > 1})
+        counts = Counter(item.id for item in self.items or [])
+        repeated = sorted(i for i, n in counts.items() if n > 1)
         if repeated:
             raise ValueError(f"items list the id {', '.join(map(repr, repeated))} twice")
         # a postreg without a link cannot be checked against any commitment.

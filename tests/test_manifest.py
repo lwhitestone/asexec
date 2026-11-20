@@ -326,3 +326,10 @@ def test_writer_refuses_a_claim_record_content_or_complete_would_fail(fields):
     unique), and holds plan and evidence entries to the subject entry's rules."""
     with pytest.raises(ValidationError):
         manifest.build_postreg(_target(), fulfills="sha-256:00", **fields)
+
+
+@pytest.mark.parametrize("field", ["subject", "evidence"])
+def test_writer_refuses_an_empty_entry_list(field):
+    """content #1 fails an empty subject or evidence list, so the writer never writes one."""
+    with pytest.raises(ValidationError):
+        manifest.build_postreg(_target(), fulfills="sha-256:00", **{field: []})

@@ -26,6 +26,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections import Counter
 from typing import Any
 
 from . import keys
@@ -186,7 +187,8 @@ def _check_entries(entries: Any, field: str) -> None:
         if isinstance(entry, dict) and not entry.get("hash_alg"):
             raise ManifestError(f"a {field} entry has no 'hash_alg'")
         names.append(entry.get("name") if isinstance(entry, dict) else None)
-    repeated = sorted({n for n in names if isinstance(n, str) and names.count(n) > 1})
+    counts = Counter(n for n in names if isinstance(n, str))
+    repeated = sorted(n for n, k in counts.items() if k > 1)
     if repeated:
         raise ManifestError(f"{field} lists {', '.join(map(repr, repeated))} twice")
 

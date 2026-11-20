@@ -108,6 +108,7 @@ import json
 import os
 import re
 import time
+from collections import Counter
 from typing import Any
 
 from pydantic import ValidationError
@@ -435,8 +436,8 @@ def _check_entry(item: Any, artifacts_dir: str, repeated: set[str], field: str) 
 
 def _repeated_names(entries: list[Any]) -> set[str]:
     """The names more than one entry of one list has (content #4)."""
-    names = [e.get("name") for e in entries if isinstance(e, dict)]
-    return {n for n in names if isinstance(n, str) and names.count(n) > 1}
+    counts = Counter(e.get("name") for e in entries if isinstance(e, dict))
+    return {n for n, k in counts.items() if isinstance(n, str) and k > 1}
 
 
 def verify_content(body: dict[str, Any], artifacts_dir: str | None) -> dict[str, Any]:
@@ -748,9 +749,14 @@ def _complete(
     ids = [item.id for item in parsed]
     on_time = {t["ref"]: t for t in timeliness}
     order = [c["ref"] for c in pr["counted_postregs"]]
+    by_item: dict[str, list[str]] = {}  # item_id -> its counted postregs, in order
+    for r in order:
+        if isinstance(claims[r]["item_id"], str):
+            by_item.setdefault(claims[r]["item_id"], []).append(r)
+    listed = set(ids)
     results = []
     for item_id in ids:
-        named = [r for r in order if claims[r]["item_id"] == item_id]
+        named = by_item.get(item_id, [])
         qualifying = [r for r in named if _known_status(claims[r]["status"])]
         result: dict[str, Any] = {"id": item_id, "ok": False, "statuses": []}
         if not named:
@@ -773,9 +779,10 @@ def _complete(
     unlisted = [
         {"ref": r, "item_id": claims[r]["item_id"]}
         for r in order
-        if claims[r]["item_id"] is not None and claims[r]["item_id"] not in ids
+        if claims[r]["item_id"] is not None
+        and not (isinstance(claims[r]["item_id"], str) and claims[r]["item_id"] in listed)
     ]
-    repeated = sorted({i for i in ids if ids.count(i) > 1})
+    repeated = sorted(i for i, n in Counter(ids).items() if n > 1)
     if repeated:  # complete #2
         reason = f"item ids repeat: {', '.join(map(repr, repeated))}"
     elif due_present and due_ts is None:  # complete #4

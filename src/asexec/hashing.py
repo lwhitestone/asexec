@@ -8,9 +8,11 @@ A subject is an explicit list of files, each hashed exactly as listed. There is 
 hash: to commit to a tree, list its files, or pack it (a tar, for example) and list the
 archive. An entry's ``name`` is the file's path as given, relative to the current directory,
 normalized and ``/``-separated (``./a//b.txt`` is ``a/b.txt``), so two files with the same
-basename stay distinct. Signing refuses what ``content`` would fail: a directory or anything
-else that is not a regular file, an absolute path, a ``..`` component, a backslash, and two
-paths with the same name. A symlink is hashed through to its target, under its own name.
+basename stay distinct. Signing refuses what ``content`` fails in any manifest: a directory or
+anything else that is not a regular file, an absolute path, a ``..`` component, a backslash,
+and two paths with the same name. A symlink is hashed through to its target, under its own
+name. Signing does not check where a symlink points, so one that resolves outside the
+directory verify is given as ``--artifacts`` is signed, and fails ``content`` (#5) there.
 """
 
 from __future__ import annotations
