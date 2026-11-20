@@ -1396,8 +1396,10 @@ above). Neither blocks b1.
 - Red first (#44, the `tests/verify` tests only, against `e60cd1c`'s verifier): 20 failed,
   260 passed. The failures were `TypeError: unhashable type: 'dict'` and `'list'` (the keyid
   inputs as a prereg), `KeyError: 'rejected_preregs'` (6), codes with `chain=PASS` or
-  `keyconsist=PASS` where `FAIL` was expected (3), a commitment or rejected postregs where
-  none were expected (5, the number keyid among them), the old keyconsist empty reason (2),
+  `keyconsist=PASS` where `FAIL` was expected (3), 6 where the broken prereg was still a
+  commitment (a commitment or postregs under it where none were expected, the number keyid
+  among them; `applicable` 1 for 0; two commitments for one), the old keyconsist empty
+  reason (2),
   and the doc-coverage test (`('matching', 4)` has no doc item). With `verifier.py` changed,
   only the doc-coverage test and one case with a bug of its own failed (the
   `keyid-does-not-derive` case generated a new keyid on every write; the test now uses one
@@ -1499,7 +1501,8 @@ above). Neither blocks b1.
   other_key -e "names a provided prereg" -e "a provided pre-registration with that"` outside
   this file finds only `other_keyid` test variables and the new matching sentence ("A postreg
   that names a provided prereg (condition 1) …"), which is meant.
-- CI: see below.
+- CI on PR #54 at `a3c58bb` (run 44732983336): lint, python-matrix, test (3.12, 3.13, 3.14)
+  and build pass.
 
 **Observations (out of scope):**
 - For #46 and #37 (checkpoint 7): `timely` and `complete` should read commitments only, so
