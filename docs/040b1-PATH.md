@@ -1618,3 +1618,15 @@ above). Neither blocks b1.
   from `requested but no validly signed postreg names a provided prereg` to `requested but
   no validly signed postreg names a commitment`. It is a reason the doc lists, so scripts
   that matched the old text would need the new one.
+
+**Merged** (orchestrator): PR #54 merged into `feature/0321` as `310fa16`, a merge commit,
+with no review findings left open. The changes: #44 is `60c5ffa`, with the review fixes
+`390a5b3` and `6a6e947`; #42 is `9dafde1`; #43 is `b4bfad1`, with the review fix
+`f81ce35`. The review agent checked the verifier against its own oracle for D2's commitment
+set and keyconsist scope: it matched in 4,110 runs, while the base verifier disagreed in 86.
+It then compared #44, #42 and #43 pairwise on 9,192 runs in both file orders and found no
+difference. Post-merge on `feature/0321` at `310fa16`: `scripts/check.sh` clean, 478 passed;
+`examples/adequacy-test/run.py` exit 0. CI on the last PR push (`fa25c7d`, run 44735932121):
+lint, build, test on 3.12, 3.13 and 3.14 pass. **Open for the human gate:** judgement call
+(a), which narrows D2's literal text, and the forgeable report lines from an
+unauthenticated keyid (see the observations above).
