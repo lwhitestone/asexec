@@ -197,3 +197,31 @@ breaks any vector that hardcodes it. The options:
 - [ ] 8. #34 and #38
 - [ ] 9. #45 (after #38)
 - [ ] 10. #39 → #40
+
+## Execution brief
+
+Given on 2026-11-19 for checklist items 1 to 9, saved verbatim:
+
+> This is a large and quality-critical task; execution strategy and deliverables are tightly scoped. You will drive autonomously through the checklist (items 1 through 9) in docs/040b1-PATH.md according to the decisions and issues in that document. Perform your development branches feature/0321-checkpointN off feature branch feature/0321, which itself is branched off current main, and **do not merge to main at any point**. Instead, each number in the checklist will be merged from your dev branch feature/0321-checkpointN to the feature branch feature/0321. One dev-subagent -> PR per number in the that list, so for example `7.  #33 → #36 → #46 → #37` implies `7a. branching off feature/0321 to create feature/checkpoint7, spawn subagent that will perform the subsequent implementation steps 7b. Implement #33. 7c. Implement #36. 7d. Implement #46. 7e. Implement #37. 7f. Subagent sends PR and you spawn a new code-review-subagent. 7g. Make fixes. 7h. Loop steps f ang g as needed to deliver intended result and quality but **do not expand scope, instead note down any observations in a running notes section in docs/040b1-PATH.md, organized by checkpoint number.** 7i. Merge to feature branch.`. **GENERAL STRATEGY**: GS1. Correctness is much more important than implementation speed, hence the sequential strategy. Additionally, a TDD approach is recommended to all dev-subagent implementation tasks, given that the tasks are well-scoped and their destinations known in advance. GS2. Use VERIFICATION.md, 040b1-PATH.md, and generally README.md as your decision, verification/deliverable, and ethos guides respectively. GS3. Adhere to existing code conventions, and do not invent new systems/paradigms/dependencies unless absolutely necessary (and if you do, this belongs in the checkpoint notes). This includes but is not limited to: pinning of critical constants, pydantic usage, extremely regimented test and CI structure which validates invariants and input/output contracts over internal logic, preferring fat-structs over OOP classes, to name a few. GS4. Note the commit SHA and branch in the issue once you merge it's implementation onto the feature branch but do not close the issue, which is gated on the implementation landing on main (which is outside your scope). GS5. At each checkpoint, recorded in the -PATH document, keep track of the concrete objective evidence that the implemention is working and that nothing has regressed. Do not overwrite previous checkpoint notes and evidence, this is meant to be a running log. **FINAL DELIVERABLE**: A feature branch feature/0321 that contains all 1-9 checkpoints in the 040b1-PATH.md doc, validated and tested, evidence recorded and ready for Human-In-The-Loop testing as the final gate before we eventually batch the beta release. Save this prompt in 040b1-PATH.md and begin execution.
+
+How it is run:
+- Each checkpoint N is developed on `feature/0321-checkpointN`, branched from `feature/0321`,
+  and lands there through a PR with base `feature/0321`, merged with a merge commit so each
+  issue's own commit keeps its SHA. Nothing is merged to `main`.
+- Each PR is reviewed by a separate review agent, and the review-and-fix loop repeats
+  until no in-scope finding is left. Anything outside the issue's scope goes in that
+  checkpoint's notes below, not in the code.
+- Commits and PRs say `Refs #N`, never a closing keyword, so no issue closes before its
+  change reaches `main`. After each merge, each issue gets a comment naming the branch and
+  the commit.
+- Checklist boxes are ticked when the item lands on `feature/0321`, not on `main`.
+
+## Checkpoint notes
+
+A running log, one section per checkpoint, never rewritten. Each section records what
+landed, the evidence that it works and that nothing regressed, and observations left out of
+scope.
+
+### Baseline (`main` at fd5b038)
+
+- `scripts/check.sh`: ruff check and ruff format check clean; `pytest`: 401 passed.
