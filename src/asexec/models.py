@@ -159,10 +159,14 @@ SubjectInput = TypeAdapter(Annotated[list[Any], Strict(), Field(min_length=1)])
 
 
 class ItemInput(InputModel):
-    """One ``body.items[]`` entry of a prereg: a string ``id``. Its ``kind`` is declared and
-    never tested, so it is not a field."""
+    """One ``body.items[]`` entry of a prereg: a string ``id`` (complete #1). Its ``kind`` is
+    declared and never tested, so it is not a field."""
 
     id: str
+
+
+# ``body.items`` (complete #1): an array; each entry is an ``ItemInput``.
+ItemsInput = TypeAdapter(Annotated[list[Any], Strict()])
 
 
 class LinkInput(InputModel):

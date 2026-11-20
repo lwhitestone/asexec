@@ -462,7 +462,10 @@ def test_verify_help_names_both_required_tests(capsys):
     assert e.value.code == 0
     text = " ".join(capsys.readouterr().out.split())  # argparse wraps the help
     assert "MUST include 'format' and 'selfsig'" in text
-    assert "available: ceiling, chain, content, floor, format, keyconsist, selfsig" in text
+    assert (
+        "available: ceiling, chain, complete, content, floor, format, keyconsist, selfsig, timely"
+        in text
+    )
 
 
 @pytest.mark.parametrize(
@@ -1037,3 +1040,60 @@ def test_verify_flags_an_unparseable_due_on_a_fulfilled_commitment(tmp_path, key
     out = capsys.readouterr().out
     assert "[FULFILLED]" in out
     assert f"    {cli.NO} due is not a parseable ISO-8601 timestamp\n" in out
+
+
+# --- complete ---------------------------------------------------------------------- #
+def _claim(tmp_path, key, due, witness, *, items=("R1", "R2"), posts=("R1", "R2")):
+    """A prereg listing ``items``, and one chained, witnessed postreg per id in ``posts``."""
+    pre = tmp_path / "pre.json"
+    listed = json.dumps([{"id": i, "kind": "run"} for i in items])
+    assert run("prereg", "--key", key, "--target", "t", "--due", due, "--items", listed,
+               "--out", pre) == 0  # fmt: skip
+    prev, out = None, []
+    for i in posts:
+        post = tmp_path / f"post-{i}.json"
+        args = ["--prev", prev] if prev else []
+        assert run("postreg", "--key", key, "--fulfills", pre, "--item-id", i, "--status",
+                   "reported", *args, "--out", post) == 0  # fmt: skip
+        witness(post)
+        prev = post
+        out.append(post)
+    return pre, out
+
+
+_LATE = "reported, but not shown on time: its postreg is late"
+
+
+@pytest.mark.parametrize(
+    "due,posts,code,lines",
+    [
+        ("2099-01-01T00:00:00Z", ("R1", "R2"), 0, [f"{cli.OK} R1: reported",
+                                               f"{cli.OK} R2: reported"]),
+        ("2099-01-01T00:00:00Z", ("R1",), 2, [f"{cli.OK} R1: reported",
+                                          f"{cli.NO} R2: no counted postreg names it"]),
+        ("2023-11-14T22:13:20Z", ("R1", "R2"), 2, [f"{cli.NO} R1: {_LATE}",
+                                               f"{cli.NO} R2: {_LATE}"]),
+    ],
+    ids=["complete", "dropped-item", "late-items"],
+)  # fmt: skip
+def test_verify_shows_each_items_status(tmp_path, key, capsys, witness, due, posts, code, lines):
+    """The commitments block lists each item with its status, or why it is not accounted
+    for; complete passes only when every item is."""
+    pre, out = _claim(tmp_path, key, due, witness, posts=posts)
+    capsys.readouterr()
+    assert run("verify", pre, *out, "--tests", "format,selfsig,complete") == code
+    text = capsys.readouterr().out
+    assert "    items        : 2\n" in text
+    assert [ln.strip() for ln in text.splitlines() if ln.startswith("      ")] == lines
+    assert ("complete=PASS" if code == 0 else "complete=FAIL") in text
+
+
+def test_verify_shows_a_postreg_for_an_unlisted_item(tmp_path, key, capsys, witness):
+    pre, out = _claim(
+        tmp_path, key, "2099-01-01T00:00:00Z", witness, items=("R1",), posts=("R1", "Z9")
+    )
+    capsys.readouterr()
+    assert run("verify", pre, *out, "--tests", "format,selfsig,complete") == 0
+    text = capsys.readouterr().out
+    line = f"    {cli.NO} postreg {_ref(out[1])} names item 'Z9', which the prereg does not list\n"
+    assert line in text

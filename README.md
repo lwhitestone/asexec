@@ -76,8 +76,14 @@ test:
   artifacts the verifier holds match the digests a manifest records.
 - **Chain** (`prev_hash`; [`chain`](./docs/VERIFICATION.md#chain)). The counted
   post-registrations of a commitment form a single linear chain: one root, no gaps, no
-  forks. *Dropping the last post-registration(s) of a chain is **not** detectable yet;
-  close-out manifests (`final`) are deferred to 0.7.0 or later.*
+  forks. *Dropping the last post-registration(s) of a chain is **not** detectable by
+  `chain`; close-out manifests (`final`) are deferred to 0.7.0 or later. A claim that lists
+  its items can use `complete` (below).*
+- **Every item accounted for** (`items` in the pre-registration, `item_id` and `status` in
+  each post-registration; [`complete`](./docs/VERIFICATION.md#complete)). Each item the
+  pre-registration lists has a counted post-registration with its `item_id` and a status of
+  `reported`, `excluded` or `blocked`, and, if the pre-registration has a `due`, one that is
+  on time as `timely` judges it. A dropped item fails it.
 - **Key consistency** ([`keyconsist`](./docs/VERIFICATION.md#keyconsist)). Every validly
   signed post-registration that names a commitment was signed with the key of a validly
   signed pre-registration with that body.

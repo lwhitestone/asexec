@@ -321,6 +321,8 @@ SIGNED_JUNK = [
     pytest.param("item_id", ["S1"], id="item_id-list"),
     pytest.param("status", 5, id="status-number"),
     pytest.param("status", ["reported"], id="status-list"),
+    pytest.param("items", [{"id": "S1"}, {"id": "S1"}, {"id": []}], id="items-repeat-and-junk"),
+    pytest.param("items", [{"id": "\x00"}], id="items-nul-id"),
     pytest.param("evidence", "x", id="evidence-not-list"),
     pytest.param("evidence", [{"name": None, "digest": 5}], id="evidence-entry-fields"),
     pytest.param("evidence", {}, id="evidence-object"),
@@ -333,7 +335,8 @@ def test_never_raises__validly_signed_junk_in_a_body_field(scenario, field, valu
     scenario.set("postreg1", f"body.{field}", value)
     if field not in ("fulfills", "prev_hash"):
         scenario.set("prereg", f"body.{field}", value)
-    report = scenario.verify("ceiling", "chain", "content", "floor", "keyconsist", "timely")
+    tests = ("ceiling", "chain", "complete", "content", "floor", "keyconsist", "timely")
+    report = scenario.verify(*tests)
     assert {"format=PASS", "selfsig=PASS"} <= set(report["code"].split()[1:])
 
 

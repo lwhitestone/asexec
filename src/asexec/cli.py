@@ -427,6 +427,7 @@ def cmd_verify(args) -> int:
             for t in c["timeliness"]:
                 if t["status"] != "on-time":
                     _show(f"    {NO} postreg {t['ref']} {_NOT_ON_TIME[t['status']](t)}")
+        _show_items(c["complete"])
         for r in c["rejected_postregs"]:
             _show(f"    {NO} postreg {r['ref']} does NOT count toward fulfillment: {r['reason']}")
     if report["rejected_preregs"]:  # pass format, fail selfsig: no commitment, no state
@@ -457,6 +458,30 @@ def cmd_verify(args) -> int:
     _show(f"\n{report['code']}")
     _show(f"Checked at {report['checked_at']}")
     return EXIT_OK if report["ok"] else EXIT_FAIL
+
+
+def _show_items(cp: dict) -> None:
+    """A commitment's items (``complete``'s view, shown whenever its prereg lists items):
+    each item's status, or why it is not accounted for; then any problem with the list, and
+    each counted postreg whose item_id names no listed item."""
+    if not cp["examined"]:
+        return
+    if cp["reason"] == verifier.REASON_ITEMS_MALFORMED:
+        _show(f"    {NO} {cp['reason']}")
+        return
+    _show(f"    items        : {len(cp['items'])}")
+    for item in cp["items"]:
+        text = ", ".join(item["statuses"])
+        if not item["ok"]:
+            text = f"{text}, but {item['reason']}" if text else item["reason"]
+        _show(f"      {OK if item['ok'] else NO} {item['id']}: {text}")
+    if cp["reason"] and cp["reason"].startswith("item ids repeat"):
+        _show(f"    {NO} {cp['reason']}")
+    for u in cp["unlisted"]:
+        _show(
+            f"    {NO} postreg {u['ref']} names item {u['item_id']!r}, which the prereg does "
+            "not list"
+        )
 
 
 # Why a counted postreg is not shown on time (verifier._on_time), as the report says it.

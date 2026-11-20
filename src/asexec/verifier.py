@@ -31,6 +31,11 @@ Tests (the catalog - only verifiable claims, no self-declarations)
   - ``chain``      : prev_hash chain integrity (one root, no gaps, no forks: a
                      single linear chain). Applies to
                      commitments that have counted postregs.
+  - ``complete``   : each item a commitment's prereg lists (unique string ids)
+                     has a counted postreg with its item_id and a status of
+                     reported, excluded or blocked, and, if the prereg has a due,
+                     one on time (``_on_time``, as for timely). Applies to
+                     commitments whose prereg lists items.
   - ``content``    : subject digests recomputed from --artifacts match. Each
                      entry names one regular file by a normalized relative
                      path, unique in its list, that resolves inside --artifacts,
@@ -114,10 +119,13 @@ from .constants import FORMATS, VERIFY_CODE_VERSION
 from .errors import ManifestError, VerificationError
 from .fields import is_normal_name
 from .models import (
+    STATUSES,
     CeilingInput,
     DueInput,
     EnvelopeInput,
     FloorInput,
+    ItemInput,
+    ItemsInput,
     KeyInput,
     LinkInput,
     SignatureInput,
@@ -129,6 +137,7 @@ from .models import (
 TEST_CATALOG: tuple[str, ...] = (
     "ceiling",
     "chain",
+    "complete",
     "content",
     "floor",
     "format",
@@ -537,6 +546,8 @@ def verify_paths(
                 "rejected_postregs": [],
                 "different_key": False,  # set by the matching loop; see key_checked below
                 "_ceilings": {},  # counted postreg ref -> the ceiling of each counted copy
+                "_claims": {},  # counted postreg ref -> its body's item_id and status
+                "_items": _lookup(body, "items"),  # (present, value): what complete reads
             }
         elif links.phase == "prereg":  # copies (same ref, and keyid as JSON) are listed once
             rejected_preregs.setdefault(
@@ -549,7 +560,8 @@ def verify_paths(
                 },
             )
         elif links.phase == "postreg":
-            postregs.append((links, rec))
+            claim = {"item_id": body.get("item_id"), "status": body.get("status")}
+            postregs.append((links, rec, claim))
 
     # The provided preregs by ref: the commitments (``preregs`` is them by (ref, keyid)), and
     # the rejected pre-registrations, which are never looked up by their unauthenticated keyid.
@@ -568,7 +580,7 @@ def verify_paths(
     # and every rejected pre-registration of that ref. Under a rejected pre-registration the
     # reason is always the prereg's invalid signature: its keyid is compared with nothing.
     notarization_only: list[dict[str, Any]] = []
-    for links, rec in postregs:
+    for links, rec, claim in postregs:
         candidates = commitments_by_ref.get(links.fulfills, [])
         rejected_named = rejected_by_ref.get(links.fulfills, [])
         if candidates or rejected_named:
@@ -580,6 +592,7 @@ def verify_paths(
                 pr = preregs[(links.fulfills, rec["keyid"])]
                 _add_once(pr["counted_postregs"], entry)
                 pr["_ceilings"].setdefault(rec["ref"], []).append(rec["ceiling"])
+                pr["_claims"][rec["ref"]] = claim  # one ref, one body: copies agree
                 continue
             else:
                 reason, different_key = REASON_DIFFERENT_KEY, True
@@ -598,7 +611,7 @@ def verify_paths(
 
     commitments = []
     for pr in preregs.values():
-        ceilings = pr.pop("_ceilings")
+        ceilings, claims, items = pr.pop("_ceilings"), pr.pop("_claims"), pr.pop("_items")
         due_present, due_ts, due_naive = _parse_due(pr.get("due"))
         state = _commitment_state(pr, now, due_present, due_ts)
         chain_ok, chain_note = _check_chain(pr["counted_postregs"])
@@ -620,6 +633,7 @@ def verify_paths(
                 "due_naive": due_naive,
                 "timeliness": timeliness,
                 "timely": _timely(pr, due_present, due_ts, timeliness),
+                "complete": _complete(pr, items, claims, due_present, due_ts, timeliness),
                 "chain_ok": chain_ok,
                 "chain_note": chain_note,
                 # keyconsist's scope, defined here only: a commitment is key-checked iff it
@@ -690,6 +704,91 @@ def _timely(
     if any(t["status"] != "on-time" for t in timeliness):
         return {"examined": True, "ok": False, "reason": REASON_NOT_ON_TIME}
     return {"examined": True, "ok": True, "reason": None}
+
+
+# Why a commitment or an item fails complete, as the report shows it (docs/VERIFICATION.md).
+REASON_ITEMS_MALFORMED = "items is not an array of objects with a string id"
+REASON_ITEM_NOT_NAMED = "no counted postreg names it"
+REASON_ITEM_NO_STATUS = "no counted postreg for it has a status of reported, excluded or blocked"
+REASON_ITEM_NOT_ON_TIME = {
+    "late": "not shown on time: its postreg is late",
+    "invalid-ceiling": "not shown on time: its postreg's ceiling does not verify",
+    "no-ceiling": "not shown on time: its postreg has no ceiling",
+}
+
+
+def _complete(
+    pr: dict[str, Any],
+    items: tuple[bool, Any],
+    claims: dict[str, dict[str, Any]],
+    due_present: bool,
+    due_ts: float | None,
+    timeliness: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """complete for one commitment: examined iff its prereg has ``body.items`` present and
+    not ``[]``. Passes iff the items are objects with string ids (#1), unique (#2), each has a
+    counted postreg with its item_id and a known status (#3), and, if the prereg has a due,
+    the due parses (#4) and one such postreg is on time (#5, ``_on_time`` as for timely).
+    Any qualifying postreg accounts for an item; one whose item_id names no item is listed
+    as ``unlisted`` and fails nothing."""
+    present, value = items
+    if not present or value == []:
+        return {"examined": False, "ok": False, "reason": None, "items": [], "unlisted": []}
+    try:
+        parsed = [ItemInput.model_validate(i) for i in ItemsInput.validate_python(value)]  # #1
+    except ValidationError:
+        return {"examined": True, "ok": False, "reason": REASON_ITEMS_MALFORMED, "items": [],
+                "unlisted": []}  # fmt: skip
+    ids = [item.id for item in parsed]
+    on_time = {t["ref"]: t for t in timeliness}
+    order = [c["ref"] for c in pr["counted_postregs"]]
+    results = []
+    for item_id in ids:
+        named = [r for r in order if claims[r]["item_id"] == item_id]
+        qualifying = [r for r in named if _known_status(claims[r]["status"])]
+        result: dict[str, Any] = {"id": item_id, "ok": False, "statuses": []}
+        if not named:
+            result["reason"] = REASON_ITEM_NOT_NAMED
+        elif not qualifying:
+            result["reason"] = REASON_ITEM_NO_STATUS
+        elif due_present and due_ts is not None:  # #5: the timely comparison, per item
+            shown = [r for r in qualifying if on_time[r]["status"] == "on-time"]
+            if shown:
+                result.update(ok=True, statuses=_statuses(claims, shown))
+            else:
+                worst = [on_time[r]["status"] for r in qualifying]
+                kind = next(k for k in ("late", "invalid-ceiling", "no-ceiling") if k in worst)
+                result.update(
+                    statuses=_statuses(claims, qualifying), reason=REASON_ITEM_NOT_ON_TIME[kind]
+                )
+        else:  # no due: a postreg and a status only (D5a); an unparseable due fails #4 below
+            result.update(ok=True, statuses=_statuses(claims, qualifying))
+        results.append(result)
+    unlisted = [
+        {"ref": r, "item_id": claims[r]["item_id"]}
+        for r in order
+        if claims[r]["item_id"] is not None and claims[r]["item_id"] not in ids
+    ]
+    repeated = sorted({i for i in ids if ids.count(i) > 1})
+    if repeated:  # complete #2
+        reason = f"item ids repeat: {', '.join(map(repr, repeated))}"
+    elif due_present and due_ts is None:  # complete #4
+        reason = REASON_DUE_INVALID
+    elif not all(r["ok"] for r in results):  # complete #3, #5
+        reason = "an item is not accounted for"
+    else:
+        reason = None
+    return {"examined": True, "ok": reason is None, "reason": reason, "items": results,
+            "unlisted": unlisted}  # fmt: skip
+
+
+def _known_status(status: Any) -> bool:
+    return isinstance(status, str) and status in STATUSES
+
+
+def _statuses(claims: dict[str, dict[str, Any]], refs: list[str]) -> list[str]:
+    """The distinct statuses of ``refs``' postregs, in the order the postregs come."""
+    return list(dict.fromkeys(claims[r]["status"] for r in refs))
 
 
 def _utc_ceil(epoch: float) -> str:
@@ -780,6 +879,10 @@ def _evaluate(tests, manifests, commitments, artifacts_dir) -> dict[str, dict[st
         res["chain"] = _tally(
             units, "requested but no commitment has counted postregs to chain-check", "chain(s)"
         )
+
+    if "complete" in tests:
+        units = [c["complete"]["ok"] for c in commitments if c["complete"]["examined"]]
+        res["complete"] = _tally(units, "requested but no commitment lists items", "commitment(s)")
 
     if "timely" in tests:
         units = [c["timely"]["ok"] for c in commitments if c["timely"]["examined"]]
