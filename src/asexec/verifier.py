@@ -44,9 +44,8 @@ Tests (the catalog - only verifiable claims, no self-declarations)
                      reads (a ``FORMATS`` key). Applies to every manifest file.
                      **Required in every run.**
   - ``keyconsist`` : each validly signed postreg that names a commitment's ref
-                     has the key of a commitment with that ref. Applies to
-                     commitments with a counted postreg or one rejected as
-                     signed by a different key.
+                     has the key of a commitment with that ref. Applies to the
+                     commitments ``verify_paths`` marks ``key_checked``.
   - ``selfsig``    : the file is unchanged since its own key signed it: the
                      signature over the PAE input verifies by pubkey, and keyid
                      derives from pubkey. Applies to every manifest that passes
@@ -458,6 +457,7 @@ def verify_paths(
                 "due": body.get("due"),
                 "counted_postregs": [],
                 "rejected_postregs": [],
+                "different_key": False,  # set by the matching loop; see key_checked below
             }
         elif links.phase == "prereg":  # copies (same ref and keyid) are listed once
             _add_once(
@@ -494,15 +494,17 @@ def verify_paths(
         rejected_named = rejected_by_ref.get(links.fulfills, [])
         if candidates or rejected_named:
             entry = {"ref": rec["ref"], "prev_hash": links.prev_hash, "keyid": rec["keyid"]}
+            different_key = False
             if not _selfsig_ok(rec):
                 reason = REASON_INVALID_SIGNATURE
             elif (links.fulfills, rec["keyid"]) in preregs:  # a keyid that passed selfsig: a str
                 _add_once(preregs[(links.fulfills, rec["keyid"])]["counted_postregs"], entry)
                 continue
             else:
-                reason = REASON_DIFFERENT_KEY
+                reason, different_key = REASON_DIFFERENT_KEY, True
             for pr in candidates:
                 _add_once(pr["rejected_postregs"], {**entry, "reason": reason})
+                pr["different_key"] = pr["different_key"] or different_key
             for rp in rejected_named:
                 _add_once(
                     rp["rejected_postregs"], {**entry, "reason": REASON_PREREG_INVALID_SIGNATURE}
@@ -518,7 +520,6 @@ def verify_paths(
         due_present, due_ts, due_naive = _parse_due(pr.get("due"))
         state = _commitment_state(pr, now, due_present, due_ts)
         chain_ok, chain_note = _check_chain(pr["counted_postregs"])
-        other_key = any(r["reason"] == REASON_DIFFERENT_KEY for r in pr["rejected_postregs"])
         commitments.append(
             {
                 **pr,
@@ -526,8 +527,12 @@ def verify_paths(
                 "due_naive": due_naive,
                 "chain_ok": chain_ok,
                 "chain_note": chain_note,
-                "key_checked": bool(pr["counted_postregs"]) or other_key,
-                "key_consistent": not other_key,
+                # keyconsist's scope and verdict, defined here only. A commitment is
+                # key-checked iff it has a counted postreg or a postreg rejected under it as
+                # signed by a different key (different_key), and it passes iff it has no such
+                # rejection. One whose postregs all have invalid signatures has no key to
+                # check: selfsig judges them.
+                "key_checked": bool(pr["counted_postregs"]) or pr["different_key"],
             }
         )
 
@@ -578,9 +583,6 @@ def _tally(units: list[bool], nowhere_reason: str, fail_noun: str) -> dict[str, 
 def _evaluate(tests, manifests, commitments, artifacts_dir) -> dict[str, dict[str, Any]]:
     res: dict[str, dict[str, Any]] = {}
     with_counted = [c for c in commitments if c["counted_postregs"]]
-    # A commitment is key-checked only if it has a counted postreg or one rejected as signed
-    # by a different key: one whose postregs were all rejected for an invalid signature has
-    # no key to check (selfsig judges them).
     key_checked = [c for c in commitments if c["key_checked"]]
 
     if "format" in tests:
@@ -630,7 +632,7 @@ def _evaluate(tests, manifests, commitments, artifacts_dir) -> dict[str, dict[st
         )
 
     if "keyconsist" in tests:
-        units = [c["key_consistent"] for c in key_checked]
+        units = [not c["different_key"] for c in key_checked]
         res["keyconsist"] = _tally(
             units,
             "requested but no validly signed postreg names a commitment",
@@ -647,8 +649,8 @@ def _build_code(tests: list[str], results: dict[str, dict[str, Any]]) -> str:
 
 # Why a postreg that names a prereg does not count toward its commitment, and why a prereg
 # is a rejected pre-registration (REASON_INVALID_SIGNATURE), as the report shows it
-# (docs/VERIFICATION.md). keyconsist compares against these constants, never against the
-# wording, so rewording one cannot change a verdict.
+# (docs/VERIFICATION.md). No verdict reads them: keyconsist reads the commitment's
+# different_key flag, so rewording one cannot change a verdict.
 REASON_INVALID_SIGNATURE = "invalid signature"
 REASON_DIFFERENT_KEY = "signed by a different key than the pre-registration"
 REASON_PREREG_INVALID_SIGNATURE = "the pre-registration's signature is invalid"

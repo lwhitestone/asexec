@@ -14,7 +14,8 @@ def test_keyconsist__pass__all(scenario):
     """keyconsist #1: every valid postreg referencing the prereg has the prereg's keyid."""
     report = scenario.verify("keyconsist")
     assert report["code"] == PASS
-    assert report["commitments"][0]["key_consistent"] is True
+    assert report["results"]["keyconsist"]["reason"] == "1/1 commitment(s) ok"
+    assert report["commitments"][0]["rejected_postregs"] == []
 
 
 def test_keyconsist__pass__1_invalid_signature_is_not_judged_here(scenario):
@@ -42,7 +43,9 @@ def test_keyconsist__fail__1_valid_postreg_has_prereg_keyid(scenario):
     scenario.sign_with("postreg1", keys.generate())
     report = scenario.verify("keyconsist")
     assert report["code"] == FAIL
-    assert report["commitments"][0]["key_consistent"] is False
+    assert report["results"]["keyconsist"]["reason"] == "1/1 commitment(s) failed"
+    (rejected,) = report["commitments"][0]["rejected_postregs"]
+    assert rejected["reason"] == "signed by a different key than the pre-registration"
 
 
 def test_keyconsist__fail__1_valid_postreg_has_prereg_keyid__all_rejected(scenario):
