@@ -10,6 +10,7 @@ format but fails selfsig is a *rejected pre-registration*. Observed through the 
 ``rejected_preregs[]`` and ``notarization_only``.
 """
 
+import base64
 import json
 
 import manifest_data as d
@@ -20,8 +21,8 @@ from asexec.verifier import verify_paths
 
 
 def _break_sig(envelope):
-    entry = envelope["dsse"]["signatures"][0]
-    entry["sig"] = ("00" if entry["sig"][:2] != "00" else "11") + entry["sig"][2:]
+    entry = envelope["dsse"]["signatures"][0]  # its first byte changed: still 64 bytes
+    entry["sig"] = ("A" if entry["sig"][0] != "A" else "B") + entry["sig"][1:]
 
 
 def _keyid(envelope):
@@ -249,17 +250,23 @@ def _broken_copy(scenario, name="prereg", keyid=None):
         pytest.param(lambda env: env.pop("pubkey"), id="pubkey-missing"),
         pytest.param(lambda env: env.update(pubkey="zz"), id="pubkey-not-hex"),
         pytest.param(lambda env: env["dsse"]["signatures"][0].pop("sig"), id="sig-missing"),
+        pytest.param(
+            lambda env: env["dsse"]["signatures"][0].update(
+                sig=base64.b64decode(env["dsse"]["signatures"][0]["sig"]).hex()
+            ),
+            id="sig-as-hex",
+        ),
     ],
 )
 def test_matching__fail__4_prereg_meets_selfsig_conditions(scenario, break_prereg):
     """Matching #4: a prereg that passes format but fails selfsig is no commitment: its
     signature does not verify, its keyid does not derive, it has two signatures (even two
-    copies of its one valid signature), or its pubkey or sig is missing or not hex. It is
-    listed as a rejected pre-registration, with its reason and dsse.signatures[0].keyid as
-    the keyid it claims, and each valid postreg by the same key that names it is rejected
-    under it, with the reason that the prereg's signature is invalid: none is counted, none
-    is notarization-only, and chain and keyconsist, which examine commitments only, have
-    nothing to examine."""
+    copies of its one valid signature), or its pubkey (hex) or sig (base64) is missing or
+    malformed. It is listed as a rejected pre-registration, with its reason and
+    dsse.signatures[0].keyid as the keyid it claims, and each valid postreg by the same key
+    that names it is rejected under it, with the reason that the prereg's signature is
+    invalid: none is counted, none is notarization-only, and chain and keyconsist, which
+    examine commitments only, have nothing to examine."""
     scenario.tamper("prereg", break_prereg)
     report = scenario.verify(*TESTS_LINKED)
     assert report["code"] == "asexec-verify/1 chain=FAIL format=PASS keyconsist=FAIL selfsig=FAIL"
@@ -384,7 +391,7 @@ def test_matching__copies_of_a_rejected_prereg_are_listed_once(scenario):
     scenario.tamper("prereg", _break_sig)
     scenario.add_raw("copy", scenario.read("prereg"))
     other_break = json.loads(scenario.read("prereg"))
-    other_break["dsse"]["signatures"][0]["sig"] = "22" * 64
+    other_break["dsse"]["signatures"][0]["sig"] = d.ZERO_SIG
     scenario.add_raw("copy2", json.dumps(other_break))
     (rejected,) = scenario.verify()["rejected_preregs"]
     assert len(rejected["rejected_postregs"]) == 3

@@ -235,7 +235,10 @@ def _sign_stored_bytes(path, key, raw):
             "payloadType": MANIFEST_PAYLOAD_TYPE,
             "payload": base64.b64encode(raw).decode(),
             "signatures": [
-                {"keyid": keys.keyid_for(pub), "sig": keys.sign(priv, signing_input(raw)).hex()}
+                {
+                    "keyid": keys.keyid_for(pub),
+                    "sig": base64.b64encode(keys.sign(priv, signing_input(raw))).decode(),
+                }
             ],
         },
         "pubkey": pub.hex(),
@@ -655,7 +658,7 @@ def test_verify_lists_rejected_preregistrations(tmp_path, key, prereg, capsys):
     post = tmp_path / "post.json"
     assert run("postreg", "--key", key, "--fulfills", prereg, "--out", post) == 0
     mani = json.loads(open(prereg).read())
-    mani["dsse"]["signatures"][0]["sig"] = "00" * 64
+    mani["dsse"]["signatures"][0]["sig"] = base64.b64encode(bytes(64)).decode()
     open(prereg, "w").write(json.dumps(mani))
     capsys.readouterr()
     assert run("verify", prereg, post, "--tests", "format,selfsig,chain,keyconsist") == 2

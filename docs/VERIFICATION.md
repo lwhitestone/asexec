@@ -15,7 +15,8 @@ asexec verify <manifest|dir>... --tests <name>[,<name>...] [--artifacts <dir>]
 [DSSE](https://github.com/secure-systems-lab/dsse) envelope. This format defines three
 top-level members: `dsse`, the envelope, which holds `dsse.payloadType` (the format),
 `dsse.payload` (the base64 of the signed body bytes) and `dsse.signatures` (a list of
-`{keyid, sig}`); `pubkey`, the signing key; and optionally `ceiling`. The **body bytes** are
+`{keyid, sig}`, `sig` the base64 of the signature, as DSSE has it); `pubkey`, the signing
+key, in hex; and optionally `ceiling`. The **body bytes** are
 what `dsse.payload` decodes to, and the **body** is the JSON object they hold: the signed
 claim. Properties are written as dotted paths of two kinds:
 - `body.<path>` is inside the body, the decoded `dsse.payload`: `body.phase`,
@@ -50,6 +51,10 @@ Ceiling #2 and floor #4 compare exactly against the lowercase hex of the digest.
 (`A`-`Z`, `a`-`z`, `0`-`9`, `+`, `/`), padded with `=` to a multiple of 4 characters, with no
 whitespace or other character, and in the one spelling that base64 encoding gives its bytes:
 no unused bit of the last character is set. So each byte string has exactly one spelling.
+`dsse.payload` and `dsse.signatures[].sig` are strict base64. This is stricter than DSSE,
+whose verifiers also accept the URL-safe alphabet: every `dsse` asexec writes is a standard
+DSSE envelope that DSSE tooling can verify as it is, but an envelope another tool wrote in
+URL-safe base64 is malformed here (its `payload`) or fails `selfsig` (its `sig`).
 
 **JSON.** Valid JSON is what Python's `json.load` accepts (so `NaN` and `Infinity` are
 allowed), nested at most 64 deep: each array or object adds a level, and the outermost
@@ -92,8 +97,8 @@ in the README's [Exit status](../README.md#exit-status).
   array `dsse.signatures`, and a `dsse.payload` that is strict base64 of body bytes that
   are the UTF-8 JSON text of an object, nested at most 64 deep, with no duplicate key
   ([`format`](#format) #1 and #2). Nothing else makes a file malformed. A missing or
-  non-hex `pubkey` or `sig`, a missing `keyid`, and other than exactly one signature are
-  judged by [`selfsig`](#selfsig). A file is of an **unknown format** if its
+  non-hex `pubkey`, a missing or non-base64 `sig`, a missing `keyid`, and other than
+  exactly one signature are judged by [`selfsig`](#selfsig). A file is of an **unknown format** if its
   `dsse.payloadType` is a string that names no format this release reads
   ([`format`](#format) #3). A readable JSON object with such a `dsse.payloadType` is judged
   by #3 instead of the rest of #1 and #2, so it is of an unknown format and never
@@ -160,7 +165,7 @@ Checked at 2026-12-31T23:59:59Z
 | [`floor`](#floor) | • `body.anchor.floor.floor_type`<br>• `body.anchor.floor.chain_hash`<br>• `body.anchor.floor.round`<br>• `body.anchor.floor.signature`<br>• `body.anchor.floor.randomness` | 1. `floor_type` is `drand`<br>2. `chain_hash` is pinned<br>3. `round` is an integer and `signature` is hex<br>4. `randomness`, if present, equals `sha256(signature)`<br>5. `signature` BLS-verifies for `round` under the pinned key |
 | [`format`](#format) | • the file<br>• `dsse`<br>• `dsse.payloadType`<br>• `dsse.signatures`<br>• `dsse.payload` | 1. file is a well-formed JSON object with the `dsse` frame<br>2. `dsse.payload` is strict base64 of a well-formed JSON object<br>3. `dsse.payloadType` names a format this release reads |
 | [`keyconsist`](#keyconsist) | • `body.phase`<br>• `body.fulfills`<br>• `pubkey`<br>• `dsse.signatures`<br>• `dsse.signatures[0].sig`<br>• `dsse.signatures[0].keyid` | 1. every validly signed postreg naming the commitment's `ref` has the `dsse.signatures[0].keyid` of a commitment with that `ref` |
-| [`selfsig`](#selfsig) | • `dsse.payloadType`<br>• `dsse.payload`<br>• `dsse.signatures`<br>• `dsse.signatures[0].sig`<br>• `dsse.signatures[0].keyid`<br>• `pubkey` | 1. `dsse.signatures` has exactly one entry, an object<br>2. `pubkey` and `dsse.signatures[0].sig` are hex<br>3. `dsse.signatures[0].sig` verifies over the PAE of the body bytes by `pubkey`<br>4. `dsse.signatures[0].keyid` derives from `pubkey` |
+| [`selfsig`](#selfsig) | • `dsse.payloadType`<br>• `dsse.payload`<br>• `dsse.signatures`<br>• `dsse.signatures[0].sig`<br>• `dsse.signatures[0].keyid`<br>• `pubkey` | 1. `dsse.signatures` has exactly one entry, an object<br>2. `pubkey` is hex, and `dsse.signatures[0].sig` is strict base64 of 64 bytes<br>3. `dsse.signatures[0].sig` verifies over the PAE of the body bytes by `pubkey`<br>4. `dsse.signatures[0].keyid` derives from `pubkey` |
 
 Condition numbers match each test's *Passes when all* list below; the table shortens them.
 `format` and `selfsig` are required in every run. `selfsig` examines only files that pass
@@ -528,7 +533,7 @@ $ asexec verify prereg.json --tests format,selfsig
     "payloadType": "application/vnd.asexec.v1+json",
     "payload": "eyJwaGFzZSI6InByZXJlZyIsInByZWRpY2F0ZVR5cGUiOiJodHRwczovL2FzZXhlYy5vcmcvbWFu…",
     "signatures": [
-      { "keyid": "sha-256:bc562700…", "sig": "7a816afd…" }
+      { "keyid": "sha-256:bc562700…", "sig": "eoFq/aI9/hpjhouo…" }
     ]
   },
   "pubkey": "91230c4e…"
@@ -681,7 +686,10 @@ pinned, and verify keeps no state between runs. Trust comes from the other layer
 its format)
 1. `dsse.signatures` holds exactly one entry, and it is an object. None, two (even two
    copies of one valid signature) and an entry that is not an object fail.
-2. `pubkey` and `dsse.signatures[0].sig` are present and hex (see [Hex](#conventions)).
+2. `pubkey` is present and hex (see [Hex](#conventions)), and `dsse.signatures[0].sig` is
+   present and strict base64 (see [Base64](#conventions)) of 64 bytes, an ed25519
+   signature's length. A hex `sig`, a `sig` in URL-safe base64 or with whitespace, and one
+   of another length fail.
 3. `dsse.signatures[0].sig` is a valid ed25519 signature by `pubkey` over the PAE signing
    input of the file's `dsse.payloadType` and its body bytes, exactly as stored:
    `DSSEv1 SP len(type) SP type SP len(body) SP body`.
@@ -736,7 +744,8 @@ Three terms, each narrower than the one before:
   holds no key, so the same body signed by two keys has one `ref` but is two commitments,
   each judged on its own.
 - A **rejected pre-registration** is a provided prereg that fails a `selfsig` condition: it
-  has other than exactly one signature, its `pubkey` or `sig` is missing or not hex, its
+  has other than exactly one signature, its `pubkey` is missing or not hex, its `sig` is
+  missing or not strict base64 of 64 bytes, its
   signature does not verify, or its `dsse.signatures[0].keyid` does not derive from its
   `pubkey`. So nothing authenticated the keyid it claims, its `dsse.signatures[0].keyid`
   (absent if it has no signature entry). It is no commitment: it

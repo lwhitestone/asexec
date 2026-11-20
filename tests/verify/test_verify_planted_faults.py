@@ -157,15 +157,26 @@ SIG = SIGNED["dsse"]["signatures"][0]
     "changes",
     [
         {"keyid": None},
-        {"sig": SIG["sig"][:-2]},
+        {"sig": d.b64(d.decoded({"dsse": {"payload": SIG["sig"]}})[:63])},
+        {"sig": d.b64(d.decoded({"dsse": {"payload": SIG["sig"]}}) + b"\0")},
         {"sig": ""},
+        {"sig": d.decoded({"dsse": {"payload": SIG["sig"]}}).hex()},
         {"pubkey": "00" * 31, "keyid": keys.keyid_for(bytes(31))},
         {"pubkey": "00" * 33},
     ],
-    ids=["keyid-missing", "sig-63-bytes", "sig-empty", "pubkey-31-bytes", "pubkey-33-bytes"],
+    ids=[
+        "keyid-missing",
+        "sig-63-bytes",
+        "sig-65-bytes",
+        "sig-empty",
+        "sig-as-hex",
+        "pubkey-31-bytes",
+        "pubkey-33-bytes",
+    ],
 )
 def test_fault__signature_fields_of_the_wrong_shape(tmp_path, changes):
-    """Hex of the wrong length, or a missing keyid, passes format and fails selfsig without
+    """A key or signature of the wrong length (a hex sig, as earlier versions wrote, is
+    base64 of 96 bytes), or a missing keyid, passes format and fails selfsig without
     raising."""
     env = d.sign(d.PREREG)
     for key, value in changes.items():

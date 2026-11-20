@@ -46,7 +46,7 @@ from pydantic import (
 
 from . import drand
 from .constants import MANIFEST_PAYLOAD_TYPE, MANIFEST_PREDICATE_TYPE
-from .fields import Base64, Hex, Link, LowerHex, PinnedChain, StrictInt
+from .fields import Base64, Hex, Link, LowerHex, PinnedChain, SignatureBase64, StrictInt
 
 # A field the caller may express either as a plain string or as structured JSON.
 # "take what is provided and compile it" - more disclosure buys more trust, but
@@ -98,11 +98,12 @@ class SignatureInput(InputModel):
     when ``dsse.signatures`` holds exactly one entry, an object (selfsig #1)."""
 
     keyid: Any = None  # selfsig #4 compares it to the derived keyid; any other value fails there
-    sig: Hex  # selfsig #2
+    sig: SignatureBase64  # selfsig #2 (strict base64 of 64 bytes, as DSSE has it)
 
 
 class KeyInput(InputModel):
-    """The file's ``pubkey`` (VERIFICATION.md ### selfsig)."""
+    """The file's ``pubkey``, in the wrapper outside ``dsse``, as hex (VERIFICATION.md
+    ### selfsig)."""
 
     pubkey: Hex  # selfsig #2
 
@@ -277,14 +278,13 @@ class ManifestBody(BaseModel):
 
 
 class Signature(SignatureInput):
-    """One ``dsse.signatures[]`` entry, as DSSE has it: a ``keyid`` and a ``sig``. It names
-    no algorithm: that is the format's (``signing_key_alg``)."""
+    """One ``dsse.signatures[]`` entry, as DSSE has it: a ``keyid`` and a ``sig`` (the
+    signature's base64). It names no algorithm: that is the format's (``signing_key_alg``)."""
 
     model_config = ConfigDict(extra="forbid")
     null_is_absent = False
 
     keyid: str
-    sig: LowerHex
 
 
 class Dsse(DsseInput):

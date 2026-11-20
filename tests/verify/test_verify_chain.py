@@ -3,6 +3,7 @@
 The scenario's chain is postreg0 <- postreg1 <- postreg2.
 """
 
+import manifest_data as d
 import pytest
 
 from asexec import keys
@@ -115,7 +116,7 @@ def test_chain__fail__empty_prereg_fails_selfsig(scenario):
     """chain (*): a prereg that fails selfsig is no commitment, so its chain of validly
     signed postregs, which is linear, has nothing to be counted toward and is not
     examined."""
-    scenario.set("prereg", "dsse.signatures[0].sig", "00" * 64)
+    scenario.set("prereg", "dsse.signatures[0].sig", d.ZERO_SIG)
     report = scenario.verify("chain")
     assert report["commitments"] == []
     assert report["code"] == "asexec-verify/1 chain=FAIL format=PASS selfsig=FAIL"

@@ -3,6 +3,8 @@
 Naming: see conftest.py.
 """
 
+import manifest_data as d
+
 from asexec import keys
 
 PASS = "asexec-verify/1 format=PASS keyconsist=PASS selfsig=PASS"
@@ -82,7 +84,7 @@ def test_keyconsist__fail__empty_no_postreg_references_a_prereg(scenario):
 def test_keyconsist__fail__empty_prereg_fails_selfsig(scenario):
     """keyconsist (*): a prereg that fails selfsig is no commitment, so the validly signed
     postregs naming it, by its own key, name no commitment and nothing is key-checked."""
-    scenario.set("prereg", "dsse.signatures[0].sig", "00" * 64)
+    scenario.set("prereg", "dsse.signatures[0].sig", d.ZERO_SIG)
     report = scenario.verify("keyconsist")
     assert report["commitments"] == []
     assert report["code"] == "asexec-verify/1 format=PASS keyconsist=FAIL selfsig=FAIL"
@@ -94,7 +96,7 @@ def test_keyconsist__fail__empty_postreg_by_another_key_naming_a_rejected_prereg
     """keyconsist (*): a postreg by another key naming a prereg that fails selfsig is not
     compared with that prereg's keyid, which nothing authenticated: it is no failure here,
     and nothing is key-checked."""
-    scenario.set("prereg", "dsse.signatures[0].sig", "00" * 64)
+    scenario.set("prereg", "dsse.signatures[0].sig", d.ZERO_SIG)
     scenario.sign_with("postreg2", keys.generate())
     report = scenario.verify("keyconsist")
     assert report["results"]["keyconsist"]["applicable"] == 0

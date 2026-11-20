@@ -6,7 +6,7 @@ A manifest file is an asexec wrapper around a standard DSSE envelope::
       "dsse": {
         "payloadType": "application/vnd.asexec.v1+json",
         "payload": "<base64 of the body bytes>",
-        "signatures": [{"keyid": "sha-256:...", "sig": "<hex>"}]
+        "signatures": [{"keyid": "sha-256:...", "sig": "<base64 of the signature>"}]
       },
       "pubkey": "<hex>",
       "ceiling": { ... }                       (optional, unsigned)
@@ -150,7 +150,7 @@ def sign(body: dict[str, Any], private_key: bytes, public_key: bytes) -> dict[st
     sig = keys.sign(private_key, signing_input(body_bytes))
     dsse = Dsse(
         payload=b64encode(body_bytes),
-        signatures=[Signature(keyid=keys.keyid_for(public_key), sig=sig.hex())],
+        signatures=[Signature(keyid=keys.keyid_for(public_key), sig=b64encode(sig))],
     )
     return Manifest(dsse=dsse, pubkey=public_key.hex()).model_dump(mode="json")
 

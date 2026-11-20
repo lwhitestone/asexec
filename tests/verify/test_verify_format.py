@@ -4,8 +4,8 @@
 format this release does not read, among valid ones reads ``format=FAIL selfsig=PASS``: the
 code tells "unreadable" and "upgrade" apart from "changed since it was signed"
 (``test_verify_selfsig.py``). Malformed means only what stops verify reading a manifest: a
-missing or non-hex ``pubkey`` or ``sig``, or the wrong number of signatures, is judged by
-``selfsig``.
+missing or non-hex ``pubkey``, a missing or non-base64 ``sig``, or the wrong number of
+signatures, is judged by ``selfsig``.
 """
 
 import base64

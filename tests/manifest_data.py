@@ -1,16 +1,17 @@
 """Raw manifest data for the verify tests, independent of the production builder.
 
-``verify`` judges files it did not write, so its tests start from plain dicts rather
-than ``manifest.build_*``. A schema change edits the bodies here and the builder's own
-tests; ``tests/verify/test_verify_builder_guard.py`` fails until the builder agrees.
+``verify`` judges files it did not write, so its tests start from plain dicts rather than
+``manifest.build_*``. A schema change edits the bodies here and the builder's own tests;
+``tests/verify/test_verify_builder_guard.py`` fails until the builder agrees.
 
-A file is a wrapper around a DSSE envelope: ``{"dsse": {"payloadType", "payload",
-"signatures": [{"keyid", "sig"}]}, "pubkey"}``, where ``dsse.payload`` is the base64 of the
-body bytes. Signing serializes a body as the writer does (``canonical_bytes``) and reuses the
-library's ``signing_input``, so the signed bytes are the real ones, and writes the
-``payloadType`` signing writes (pinned in ``tests/test_constants.py``), so a release commit
-that changes it changes these files with it. Any bytes can be signed (``sign_bytes``), and
-nothing else of the writer is used, so nothing gates what can be signed.
+A file is a wrapper around a DSSE envelope: ``{"dsse": {"payloadType", "payload", "signatures":
+[{"keyid", "sig"}]}, "pubkey"}``, where ``dsse.payload`` is the base64 of the body bytes and
+``sig`` the base64 of the signature, as DSSE has them, and ``pubkey`` is hex. Signing
+serializes a body as the writer does (``canonical_bytes``) and reuses the library's
+``signing_input``, so the signed bytes are the real ones, and writes the ``payloadType``
+signing writes (pinned in ``tests/test_constants.py``), so a release commit that changes it
+changes these files with it. Any bytes can be signed (``sign_bytes``), and nothing else of the
+writer is used, so nothing gates what can be signed.
 """
 
 from __future__ import annotations
@@ -95,6 +96,14 @@ POSTREG = {
 }
 
 
+def b64(data: bytes) -> str:
+    return base64.b64encode(data).decode("ascii")
+
+
+# A well-formed signature (strict base64 of 64 bytes) that verifies under no key.
+ZERO_SIG = b64(bytes(64))
+
+
 def sign_bytes(raw: bytes, key: tuple[bytes, bytes] = TEST_KEY) -> dict[str, Any]:
     """A file around the body bytes ``raw``, signed by ``key`` whatever they hold."""
     priv, pub = key
@@ -103,7 +112,7 @@ def sign_bytes(raw: bytes, key: tuple[bytes, bytes] = TEST_KEY) -> dict[str, Any
             "payloadType": MANIFEST_PAYLOAD_TYPE,
             "payload": base64.b64encode(raw).decode("ascii"),
             "signatures": [
-                {"keyid": keys.keyid_for(pub), "sig": keys.sign(priv, signing_input(raw)).hex()}
+                {"keyid": keys.keyid_for(pub), "sig": b64(keys.sign(priv, signing_input(raw)))}
             ],
         },
         "pubkey": pub.hex(),
@@ -126,7 +135,7 @@ def sign_labelled(
     version = FORMATS[MANIFEST_PAYLOAD_TYPE]["signing_pae_version"]
     signed = pae(version, payload_type.encode(), body_bytes(body))
     envelope["dsse"]["payloadType"] = payload_type
-    envelope["dsse"]["signatures"][0]["sig"] = keys.sign(priv, signed).hex()
+    envelope["dsse"]["signatures"][0]["sig"] = b64(keys.sign(priv, signed))
     return envelope
 
 

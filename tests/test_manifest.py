@@ -70,7 +70,7 @@ def test_sign_then_verify_matches():
     body = manifest.build_prereg(_target(), due=DUE, subject=_subj())
     signed = manifest.sign(body, priv, pub)
     raw, _body = manifest.read_body(signed)
-    sig = bytes.fromhex(signed["dsse"]["signatures"][0]["sig"])
+    sig = base64.b64decode(signed["dsse"]["signatures"][0]["sig"], validate=True)
     assert keys.verify(bytes.fromhex(signed["pubkey"]), signing_input(raw), sig)
 
 
@@ -182,14 +182,29 @@ def test_writer_ceiling_rejects_non_lowercase_hex(field, value):
         Ceiling(**ceiling)
 
 
-def test_writer_signature_rejects_non_lowercase_hex():
-    Signature(keyid="k", sig="ab")
+SIG = base64.b64encode(bytes(64)).decode()  # well-formed, as DSSE has it: base64 of 64 bytes
+
+
+@pytest.mark.parametrize(
+    "sig",
+    [
+        bytes(64).hex(),  # hex, as asexec wrote before
+        base64.b64encode(bytes(63)).decode(),
+        base64.b64encode(bytes(65)).decode(),
+        SIG.rstrip("="),
+        SIG[:-3] + "B==",  # an unused bit set
+        SIG + "\n",
+    ],
+    ids=["hex", "63-bytes", "65-bytes", "unpadded", "non-canonical", "newline"],
+)
+def test_writer_signature_is_strict_base64_of_64_bytes(sig):
+    Signature(keyid="k", sig=SIG)
     with pytest.raises(ValidationError):
-        Signature(keyid="k", sig="AB")
+        Signature(keyid="k", sig=sig)
 
 
 def test_writer_pubkey_rejects_non_lowercase_hex():
-    dsse = Dsse(payload="e30=", signatures=[Signature(keyid="k", sig="ab")])
+    dsse = Dsse(payload="e30=", signatures=[Signature(keyid="k", sig=SIG)])
     Manifest(dsse=dsse, pubkey="ab")
     with pytest.raises(ValidationError):
         Manifest(dsse=dsse, pubkey="AB")
@@ -198,13 +213,13 @@ def test_writer_pubkey_rejects_non_lowercase_hex():
 @pytest.mark.parametrize("count", [0, 2])
 def test_writer_writes_exactly_one_signature(count):
     with pytest.raises(ValidationError):
-        Dsse(payload="e30=", signatures=[Signature(keyid="k", sig="ab")] * count)
+        Dsse(payload="e30=", signatures=[Signature(keyid="k", sig=SIG)] * count)
 
 
 @pytest.mark.parametrize("payload", ["e30", "e31=", "e3 0=", "-_8="])
 def test_writer_payload_is_strict_base64(payload):
     with pytest.raises(ValidationError):
-        Dsse(payload=payload, signatures=[Signature(keyid="k", sig="ab")])
+        Dsse(payload=payload, signatures=[Signature(keyid="k", sig=SIG)])
 
 
 def test_floor_lands_in_anchor_and_ref_stable_across_ceiling():

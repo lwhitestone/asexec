@@ -222,7 +222,7 @@ def test_run__malformed_postreg_joins_no_commitment(scenario, path, value):
     ],
 )
 def test_run__postreg_failing_only_selfsig_is_rejected_under_its_commitment(scenario, path, value):
-    """A postreg that passes format but fails selfsig (a missing or non-hex pubkey or sig, a
+    """A postreg that passes format but fails selfsig (a missing or non-hex pubkey, a missing sig, a
     missing keyid, zero or two signatures) is read: it names the commitment, so it is
     listed under it as rejected for invalid signature, with dsse.signatures[0].keyid (if
     any) as its keyid, and is not counted."""

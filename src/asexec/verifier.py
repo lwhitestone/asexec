@@ -48,7 +48,8 @@ Tests (the catalog - only verifiable claims, no self-declarations)
                      has the key of a commitment with that ref. Applies to the
                      commitments ``verify_paths`` marks ``key_checked``.
   - ``selfsig``    : the file is unchanged since its own key signed it: exactly
-                     one signature, its sig and the file's pubkey are hex, the
+                     one signature, its sig base64 of 64 bytes and the file's
+                     pubkey hex, the
                      signature over the PAE of the body bytes verifies by pubkey,
                      and its keyid derives from pubkey. Applies to every manifest
                      that passes ``format``. **Required in every run.**
@@ -271,10 +272,10 @@ def verify_format(mani: dict[str, Any]) -> dict[str, Any]:
 
 def verify_selfsig(mani: dict[str, Any], body_bytes: bytes, payload_type: str) -> dict[str, Any]:
     """``selfsig`` for a file that passed ``format``, with the ``body_bytes`` it stores: one
-    signature (#1), a hex ``pubkey`` and ``sig`` (#2), a signature over the PAE of the body
-    bytes by ``pubkey`` (#3), and a ``keyid`` that derives from ``pubkey`` (#4), under the
-    rules of the file's own format. ``signature_ok`` is #1-#3 and ``keyid_ok`` #4. Never
-    raises."""
+    signature (#1), a hex ``pubkey`` and a ``sig`` of strict base64 of 64 bytes (#2), a
+    signature over the PAE of the body bytes by ``pubkey`` (#3), and a ``keyid`` that
+    derives from ``pubkey`` (#4), under the rules of the file's own format. ``signature_ok``
+    is #1-#3 and ``keyid_ok`` #4. Never raises."""
     signatures = mani["dsse"]["signatures"]
     if len(signatures) != 1 or not isinstance(signatures[0], dict):  # selfsig #1
         return {**_SELFSIG_FAILED}
@@ -284,7 +285,7 @@ def verify_selfsig(mani: dict[str, Any], body_bytes: bytes, payload_type: str) -
     except ValidationError:
         return {**_SELFSIG_FAILED}
     pub = bytes.fromhex(key.pubkey)
-    sig = bytes.fromhex(entry.sig)
+    sig = b64decode(entry.sig)
     return {
         "examined": True,
         "signature_ok": keys.verify(pub, signing_input(body_bytes, payload_type), sig),  # #3

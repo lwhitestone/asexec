@@ -90,8 +90,8 @@ FROZEN_MANIFEST = {
         "signatures": [
             {
                 "keyid": FROZEN_KEY["keyid"],
-                "sig": "39bf368a518c122bca5cf898fd2efa6a04e326b3f9bcd8b402886dc850780ce1"
-                "2c23afe9db8d0f9999c2b4dfe0d0fe5b8c9af02c221c9fa0bb7b83232f08a60f",
+                "sig": "Ob82ilGMEivKXPiY/S76agTjJrP5vNi0AohtyFB4DOEsI6/p240P"
+                "mZnCtN/g0P5bjJrwLCIcn6C7e4MjLwimDw==",
             }
         ],
     },
@@ -109,8 +109,8 @@ FROZEN_NO_HASH_ALG_MANIFEST = {
         "signatures": [
             {
                 "keyid": FROZEN_KEY["keyid"],
-                "sig": "32b453cc2999a5a7a788d4a5f3b56a34114cee6e2b1df5d5ddbcda0500d765d7"
-                "ecbf5afd52c7b2fba148298036e1b1e730026392ea45fbe925e039b30acf120b",
+                "sig": "MrRTzCmZpaeniNSl87VqNBFM7m4rHfXV3bzaBQDXZdfsv1r9Usey"
+                "+6FIKYA24bHnMAJjkupF++kl4DmzCs8SCw==",
             }
         ],
     },
@@ -375,7 +375,9 @@ def _signed_under(payload_type, body):
             "signatures": [
                 {
                     "keyid": keys.keyid_for(pub, payload_type),
-                    "sig": keys.sign(priv, signing_input(raw, payload_type)).hex(),
+                    "sig": base64.b64encode(
+                        keys.sign(priv, signing_input(raw, payload_type))
+                    ).decode(),
                 }
             ],
         },
@@ -480,7 +482,9 @@ def test_signing_key_alg(tmp_path):
     assert identity.build_wellknown([{"keyid": "k", "pubkey": "p"}])["keys"][0]["alg"] == (
         "ed25519"
     )
-    assert set(_signed_prereg()["dsse"]["signatures"][0]) == {"keyid", "sig"}
+    (entry,) = _signed_prereg()["dsse"]["signatures"]
+    assert set(entry) == {"keyid", "sig"}
+    assert len(base64.b64decode(entry["sig"], validate=True)) == 64  # base64, as DSSE has it
 
 
 def test_verify_code_version():

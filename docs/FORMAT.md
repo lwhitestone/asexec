@@ -26,7 +26,9 @@ to sign and verify a signature. `ref` hashes the body bytes without it, and the 
 does not contain it: `selfsig` checks the signature, and the code reports only that result.
 
 DSSE is the envelope built around PAE: `payloadType`, `payload` as base64 of the exact
-signed bytes, and a `signatures` list.
+signed bytes, and a `signatures` list whose `sig` is base64 too. asexec reads both in strict
+standard base64 only, not DSSE's URL-safe alternative, so DSSE tools can read asexec's
+envelopes, but not every DSSE envelope is an asexec one.
 
 - **0.3.x:** asexec uses PAE with its own prefix, `asexec-PAE/v1`, but not the DSSE
   envelope. Canonicalization is a separate step before PAE: `payload` is stored as a JSON

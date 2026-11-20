@@ -223,7 +223,7 @@ and `sig`). Fields marked `always` are always written by `asexec prereg` or
     "signatures": [                                     // required: always exactly one
       {
         "keyid": "sha-256:8f3e0a91…",                   // always: sha-256 of pubkey
-        "sig": "3a91c0de…"                              // always: hex, over DSSE's PAE of the body bytes
+        "sig": "OpHA3nT0…"                              // always: base64, over DSSE's PAE of the body bytes
       }
     ]
   },
@@ -274,7 +274,7 @@ The body (`dsse.payload` decoded):
   "dsse": {                                             // required, as in the prereg
     "payloadType": "application/vnd.asexec.v1+json",
     "payload": "eyJhbmNob3IiOnsiZmxvb3IiOnsiY2hh…",     // base64 of the body bytes, below
-    "signatures": [ { "keyid": "sha-256:8f3e0a91…", "sig": "5c0f7e21…" } ]
+    "signatures": [ { "keyid": "sha-256:8f3e0a91…", "sig": "XA9+IVq1…" } ]
   },
   "pubkey": "d75a9801…"
   // "ceiling": same shape as in the prereg
@@ -316,7 +316,9 @@ The body (`dsse.payload` decoded):
 `sig` signs the [DSSE](https://github.com/secure-systems-lab/dsse)
 [PAE](https://github.com/secure-systems-lab/dsse/blob/master/protocol.md#signature-definition)
 (pre-authentication encoding) of `payloadType` and the body bytes, `DSSEv1 <len> <type>
-<len> <body>`. Verify checks the bytes the file stores, exactly as stored, and never
+<len> <body>`, and `dsse` is a standard DSSE envelope that DSSE tooling can verify as it is
+(asexec reads `payload` and `sig` in standard base64 only, not the URL-safe alphabet DSSE
+also allows). Verify checks the bytes the file stores, exactly as stored, and never
 re-serializes them, so a body written by another tool, spaced or ordered differently,
 verifies the same way. The body borrows [in-toto](https://in-toto.io/) field names. A
 postreg carries its prereg's `target`, `due` and `declaration`, links back with `fulfills`
