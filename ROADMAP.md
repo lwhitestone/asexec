@@ -227,9 +227,7 @@ adds sits outside it, in the wrapper:
 - New commitment state `no-due`, separate from `open`. This changes what `open` means, but
   the code grammar stays `asexec-verify/1`, because the bump rule starts at `0.4.0`. (Done
   ahead of 0.4.0.)
-- `complete` and `order` (see *New properties*). (`complete` done ahead of 0.4.0: any counted
-  postreg that qualifies accounts for its item, and one naming an unlisted item is shown,
-  not failed.)
+- `complete` and `order` (see *New properties*). (`complete` done ahead of 0.4.0.)
 - Malformed means only what stops `verify` reading a manifest: not valid JSON, nested too
   deep, a duplicate key, or a missing frame (`dsse` with `payloadType`, a `payload` that
   decodes to a JSON object, and a `signatures` list). Everything else is judged by tests.
