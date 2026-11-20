@@ -46,7 +46,6 @@ from types import SimpleNamespace
 
 from asexec import (
     MANIFEST_PREDICATE_TYPE,
-    MANIFEST_SCHEMA_ID,
     constants,
     hashing,
     identity,
@@ -70,7 +69,6 @@ IMPACT = {
     "VERIFY_CODE_VERSION": BREAKS_USERS,
     "IDENTITY_DOCUMENT_VERSION": NEW_OUTPUT,
     "MANIFEST_PREDICATE_TYPE": NEW_OUTPUT,
-    "MANIFEST_SCHEMA_ID": NEW_OUTPUT,
 }
 
 # Signed once with the all-zero seed and then frozen, standing in for published manifests.
@@ -81,17 +79,17 @@ FROZEN_KEY = {
 }
 FROZEN_BODY = {"phase": "prereg", "target": "m"}
 FROZEN_MANIFEST = {
-    "payloadType": "application/vnd.asexec+json",
+    "payloadType": "application/vnd.asexec.v1+json",
     "payload": FROZEN_BODY,
     "signature": {
         **FROZEN_KEY,
-        "sig": "2e993406b7492218b6a366a83fa99ecd53c9385bfb53c0bb00b5981ea83b8098"
-        "008837c636d7467eae6d33afb377f62c2a42b4aba74d4e71014b5bf4670e5c05",
+        "sig": "afd85bcbaba92826ababc6860c09bd704fb18fe986470efddd6e601a1d6b3d1e"
+        "857c315a4458043a7c8f096d694cb5eb78c21eebb43deea8901bb96948847e06",
     },
 }
 # A subject with no hash_alg, which relies on the verifier's fallback. The digest is of b"x".
 FROZEN_NO_HASH_ALG_MANIFEST = {
-    "payloadType": "application/vnd.asexec+json",
+    "payloadType": "application/vnd.asexec.v1+json",
     "payload": {
         **FROZEN_BODY,
         "subject": [
@@ -105,8 +103,19 @@ FROZEN_NO_HASH_ALG_MANIFEST = {
     },
     "signature": {
         **FROZEN_KEY,
-        "sig": "e222249eb2257f71248098758c4ce5fa0de8685b9e5304ca8941b107503d65e4"
-        "675eebe8121959eb90d4ba95d85698d18fbd2b5cbb56b7b2a860438fe460ab08",
+        "sig": "13dccac3cdaa9d4d094d01a35a9643aa4a0fd62d67e27c4e511b71c712e63893"
+        "b5b5f4f01e05a73630b6fc59c77e968395a239474c27b452a9280f2dfd3e3d0b",
+    },
+}
+
+# FROZEN_MANIFEST as 0.3.x signed it, under the payloadType "application/vnd.asexec+json".
+PRE_V1_MANIFEST = {
+    "payloadType": "application/vnd.asexec+json",
+    "payload": FROZEN_BODY,
+    "signature": {
+        **FROZEN_KEY,
+        "sig": "2e993406b7492218b6a366a83fa99ecd53c9385bfb53c0bb00b5981ea83b8098"
+        "008837c636d7467eae6d33afb377f62c2a42b4aba74d4e71014b5bf4670e5c05",
     },
 }
 
@@ -148,12 +157,20 @@ def test_signing_pae_version_and_manifest_payload_type():
     # every published signature. Refs don't change, because they hash the body without PAE.
     # Fallback: a new format entry, selected by payloadType. From 0.4.0 the PAE value is the
     # fixed DSSEv1, so payloadType is what carries the format version.
+    # The 0.4.0 format is v1, and a later format N is vN, matching MANIFEST_PREDICATE_TYPE.
     assert constants.SIGNING_PAE_VERSION == b"asexec-PAE/v1"
-    assert constants.MANIFEST_PAYLOAD_TYPE == "application/vnd.asexec+json"
+    assert constants.MANIFEST_PAYLOAD_TYPE == "application/vnd.asexec.v1+json"
     assert signing_input(FROZEN_BODY) == (
-        b'asexec-PAE/v1 27 application/vnd.asexec+json 31 {"phase":"prereg","target":"m"}'
+        b'asexec-PAE/v1 30 application/vnd.asexec.v1+json 31 {"phase":"prereg","target":"m"}'
     )
-    assert _signed_prereg()["payloadType"] == "application/vnd.asexec+json"
+    assert _signed_prereg()["payloadType"] == "application/vnd.asexec.v1+json"
+
+
+def test_manifest_payload_type_change_fails_what_was_signed_before_it(tmp_path):
+    # What BREAKS_USERS means for MANIFEST_PAYLOAD_TYPE: the same body and key, signed under
+    # the type 0.3.x used, no longer passes, because the type is in the signed bytes.
+    assert PRE_V1_MANIFEST["payload"] == FROZEN_MANIFEST["payload"]
+    assert not _bdr_passes(tmp_path, PRE_V1_MANIFEST)
 
 
 def test_digest_ref_prefix():
@@ -202,19 +219,19 @@ def test_identity_well_known_path():
     assert constants.IDENTITY_WELL_KNOWN_PATH == ".well-known/asexec.json"
 
 
-def test_manifest_schema_id_and_predicate_type():
-    # NEW_OUTPUT: written into new signed bodies only, and verify doesn't compare them (see
-    # below). A future test of these fields would move them to BREAKS_USERS.
-    # MANIFEST_SCHEMA_ID is deliberately unversioned, with no parallel v1/v2 numbering.
-    assert constants.MANIFEST_SCHEMA_ID == MANIFEST_SCHEMA_ID == "asexec"
+def test_manifest_predicate_type():
+    # NEW_OUTPUT: written into new signed bodies only, and verify doesn't compare it (see
+    # below). A future test of this field would move it to BREAKS_USERS.
+    # Versioned like MANIFEST_PAYLOAD_TYPE: vN goes with payloadType vN. The body has no
+    # other format identifier: schema_id was removed, as a third one that could disagree.
     assert (
         constants.MANIFEST_PREDICATE_TYPE
         == MANIFEST_PREDICATE_TYPE
-        == "https://asexec.dev/manifest"
+        == "https://asexec.org/manifest/v1"
     )
     body = manifest.build_prereg("m")
-    assert body["schema_id"] == "asexec"
-    assert body["predicateType"] == "https://asexec.dev/manifest"
+    assert body["predicateType"] == "https://asexec.org/manifest/v1"
+    assert "schema_id" not in body
 
 
 def test_identity_document_version():
@@ -223,30 +240,9 @@ def test_identity_document_version():
     assert identity.build_wellknown([])["asexec_identity_version"] == 1
 
 
-def test_not_enforced_yet__schema_id_and_predicate_type(tmp_path):
-    assert "schema_id" not in FROZEN_MANIFEST["payload"]
+def test_not_enforced_yet__predicate_type(tmp_path):
     assert "predicateType" not in FROZEN_MANIFEST["payload"]
     assert _bdr_passes(tmp_path, FROZEN_MANIFEST)
-
-
-def test_not_enforced_yet__pre_rename_schema_version(tmp_path):
-    # Signed by v0.3.19, before schema_version was renamed to schema_id. It still passes only
-    # because verify doesn't compare the field; 0.3.x manifests are outside the 0.4.0 promise.
-    mani = {
-        "payloadType": "application/vnd.asexec+json",
-        "payload": {
-            "phase": "prereg",
-            "predicateType": "https://asexec.dev/manifest",
-            "schema_version": "asexec",
-            "target": "m",
-        },
-        "signature": {
-            **FROZEN_KEY,
-            "sig": "211dd45eb0d0f91d90457d5c9b59c96b52bdaaa7fe7cbba55283a47abd81eaf5"
-            "0314098c20f821cedc782f7f73d7717be33de6f81b1da48e4116efe46d52ae09",
-        },
-    }
-    assert _bdr_passes(tmp_path, mani)
 
 
 def test_not_enforced_yet__envelope_payload_type(tmp_path):

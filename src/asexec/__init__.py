@@ -14,6 +14,6 @@ See the module docstrings and the README for what this does!
 
 __version__ = "0.3.20"
 
-from .constants import MANIFEST_PREDICATE_TYPE, MANIFEST_SCHEMA_ID
+from .constants import MANIFEST_PREDICATE_TYPE
 
-__all__ = ["__version__", "MANIFEST_PREDICATE_TYPE", "MANIFEST_SCHEMA_ID"]
+__all__ = ["__version__", "MANIFEST_PREDICATE_TYPE"]

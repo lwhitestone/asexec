@@ -9,7 +9,7 @@
 - **M1:** the claim record on the 0.4.0 core format: a P3 claim with a `plan` and an item
   list, one postreg per item, and the `complete` and `order` tests. A run-level study
   test-drives it end to end, recorded as a claim whose items are its runs and ablations.
-  The test drive runs on 0.4.0 betas. The 0.4.0 format (`application/vnd.asexec+json`) is
+  The test drive runs on 0.4.0 betas. The 0.4.0 format (`application/vnd.asexec.v1+json`) is
   fixed when 0.4.0 is released, after the release gate; later formats are added beside it,
   never in its place → asexec 0.4.0.
 - **M2:** a second claim on the same record, the adequacy test (if assessors
@@ -52,9 +52,9 @@ format people adopt is the format we can stand behind.
   - **Until `0.4.0`:** a `MINOR` change may ship as a `0.3.x` `PATCH` instead, with the break
     called out in the release notes. From `0.4.0`, it needs a `MINOR`.
 - **Identifiers baked into signed bytes.** `SIGNING_PAE_VERSION` (`asexec-PAE/v1`) and
-  `MANIFEST_PAYLOAD_TYPE` are in the signing input, and `MANIFEST_SCHEMA_ID` and
-  `MANIFEST_PREDICATE_TYPE` are written into the signed body. Changing any of them is a
-  deliberate format change, never incidental. In 0.4.0 the PAE prefix becomes `DSSEv1`.
+  `MANIFEST_PAYLOAD_TYPE` are in the signing input, and `MANIFEST_PREDICATE_TYPE` is
+  written into the signed body. Changing any of them is a deliberate format change, never
+  incidental. In 0.4.0 the PAE prefix becomes `DSSEv1`.
   The full list, and how each may change, is in
   [`tests/test_constants.py`](tests/test_constants.py).
 - **The verify-code grammar is versioned separately** (`asexec-verify/N`). The
@@ -115,7 +115,7 @@ manifest, even if that manifest happens to carry it; there, it stays an unknown 
 |---|---|---|
 | 0.3.x | shipped (current 0.3.19; see *History*) | — |
 | **0.4.0b*N*** | every core format change (below); the claim record; the run-level test drive | M1 |
-| **0.4.0** | the first supported format, `application/vnd.asexec+json`, fixed; the wire format and frozen manifests become normative | M1 |
+| **0.4.0** | the first supported format, `application/vnd.asexec.v1+json`, fixed; the wire format and frozen manifests become normative | M1 |
 | **0.4.x** | patches (see *0.4.x*); no format changes | — |
 | **0.5.0** | second claim (the adequacy test, if confirmed) as the second format version; `asexec export --in-toto`; display export | M2 |
 | **0.6.0** | two-sided pilot: lab run record; lab disclosure promises (`origin`: `self` \| `extracted`) | M3 |
@@ -142,9 +142,12 @@ manifest, even if that manifest happens to carry it; there, it stays an unknown 
 - The file is an asexec wrapper around that standard envelope: `dsse`, plus the unsigned
   `ceiling`, `pubkey` and `untrusted` (see *Wrapper* below).
 - `untrusted`: a section for metadata nothing checks, starting with `asexec_version`.
-- `MANIFEST_PREDICATE_TYPE` → a URL the project controls.
-- Body field `schema_version` is now `schema_id`, since its value has no version in it.
-  (Done ahead of 0.4.0.)
+- `payloadType` is `application/vnd.asexec.v1+json` (betas write their own; see
+  *Versioning*), and `predicateType` is `https://asexec.org/manifest/v1`, on a domain the
+  project controls. A later format N is `vN` in both. (Done ahead of 0.4.0.)
+- Body field `schema_id` (formerly `schema_version`) is removed: `predicateType` already
+  says the body is an asexec manifest, and a third format identifier that no test checks
+  could disagree with the other two. (Done ahead of 0.4.0.)
 - `dsse.payloadType` selects the format version, and unknown values fail `BDR`
   ([`docs/MULTIVERSION.md`](docs/MULTIVERSION.md)).
 - `hash_alg` moves into each subject entry. A body-level `hash_alg` is no longer read, and is
@@ -374,7 +377,8 @@ the tests that read it; *TrustedDeclared* (signed and shown, never tested); or *
 
 Changed in 0.4.0: `payloadType` and `payload` move into `dsse`; `signature` is replaced
 by `dsse.signatures[]` and `pubkey`; `ceiling` moves to the wrapper; body-level `hash_alg`
-is no longer read; `subject[].name` becomes a relative path to one file.
+is no longer read; `subject[].name` becomes a relative path to one file; `schema_id` is
+no longer written.
 
 **0.4.0: the claim record**
 
@@ -428,7 +432,7 @@ is a file beside the manifests.
 | `subject`, `subject[].name`, `subject[].digest` | TrustedTested: `content` |
 | `anchor`, `anchor.floor` and its fields | TrustedTested: `floor`, `order` |
 | `ceiling` and its fields (envelope) | TrustedTested: `ceiling`, `order`, `timely`, `complete` |
-| `schema_id`, `predicateType`, `target`, `declaration`, `identity`, `provenance`, `repro_recipe`, `notes` | TrustedDeclared |
+| `predicateType`, `target`, `declaration`, `identity`, `provenance`, `repro_recipe`, `notes` | TrustedDeclared |
 
 **Tests**
 

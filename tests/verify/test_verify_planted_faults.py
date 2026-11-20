@@ -70,11 +70,18 @@ def test_fault__subject_entry_without_a_digest(tmp_path):
     "path,value",
     [
         ("surprise", {"x": 1}),
+        ("schema_id", "asexec"),
         ("target", 5),
         ("declaration", ["a"]),
         ("notes", {"n": None}),
     ],
-    ids=["unknown-field", "target-int", "declaration-list", "notes-object"],
+    ids=[
+        "unknown-field",
+        "schema_id-no-longer-written",
+        "target-int",
+        "declaration-list",
+        "notes-object",
+    ],
 )
 def test_fault__signed_body_field_verify_does_not_examine(tmp_path, path, value):
     """Unknown fields and wrong types in fields no test examines change nothing."""

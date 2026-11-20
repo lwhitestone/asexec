@@ -16,7 +16,7 @@ PAE(type, body) = prefix SP len(type) SP type SP len(body) SP body
 prefix, a small body encodes as:
 
 ```
-asexec-PAE/v1 27 application/vnd.asexec+json 31 {"phase":"prereg","target":"m"}
+asexec-PAE/v1 30 application/vnd.asexec.v1+json 31 {"phase":"prereg","target":"m"}
 ```
 
 The signature therefore covers the payload's type as well as its body, and the length
@@ -46,7 +46,7 @@ verifier and never stored:
 ```
 body bytes = {"phase":"prereg","target":"model m via provider p",…}   ← the "exact stored bytes"
 payload    = base64(body bytes)                                       ← what the file holds
-PAE        = "DSSEv1 <len> application/vnd.asexec+json <len> " + body bytes
+PAE        = "DSSEv1 <len> application/vnd.asexec.v1+json <len> " + body bytes
 sig        = ed25519_sign(private key, PAE)
 ref        = sha-256(body bytes)
 ```
@@ -63,7 +63,7 @@ ref        = sha-256(body bytes)
 // 0.4.0 (asexec wrapper around a standard DSSE envelope)
 {
   "dsse": {
-    "payloadType": "application/vnd.asexec+json",
+    "payloadType": "application/vnd.asexec.v1+json",
     "payload": "eyJwaGFzZSI6InByZXJlZyIs…",      // base64 of the body bytes
     "signatures": [ { "keyid": "…", "sig": "…" } ]
   },
