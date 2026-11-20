@@ -206,10 +206,9 @@ the rest are the practitioner's call.
 
 ```jsonc
 {
-  "payloadType": "application/vnd.asexec+json",
+  "payloadType": "application/vnd.asexec.v1+json",
   "payload": {                                       // required: the signed body
-    "schema_id": "asexec",                           // always
-    "predicateType": "https://asexec.dev/manifest",  // always
+    "predicateType": "https://asexec.org/manifest/v1", // always
     "phase": "prereg",                               // always: prereg | postreg
     "target": "claude-opus-4-8 via the anthropic API", // always: text or JSON
     "due": "2099-01-01T00:00:00Z",                   // deadline; none = stays open
@@ -252,10 +251,9 @@ the rest are the practitioner's call.
 
 ```jsonc
 {
-  "payloadType": "application/vnd.asexec+json",
+  "payloadType": "application/vnd.asexec.v1+json",
   "payload": {                                       // required: the signed body
-    "schema_id": "asexec",                           // always
-    "predicateType": "https://asexec.dev/manifest",  // always
+    "predicateType": "https://asexec.org/manifest/v1", // always
     "phase": "postreg",                              // always: prereg | postreg
     "target": "claude-opus-4-8 via the anthropic API", // always: text or JSON
     "due": "2099-01-01T00:00:00Z",                   // deadline; none = stays open

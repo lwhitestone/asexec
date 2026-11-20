@@ -62,8 +62,7 @@ def ref(body: dict[str, Any]) -> str:
 
 # A valid prereg, and a valid postreg fulfilling it: a chain of one.
 PREREG = {
-    "schema_id": "asexec",
-    "predicateType": "https://asexec.dev/manifest",
+    "predicateType": "https://asexec.org/manifest/v1",
     "phase": "prereg",
     "target": TARGET,
     "due": DUE,
@@ -85,7 +84,7 @@ def sign(body: dict[str, Any], key: tuple[bytes, bytes] = TEST_KEY) -> dict[str,
     """An envelope around ``body``, signed by ``key`` whatever the body holds."""
     priv, pub = key
     return {
-        "payloadType": "application/vnd.asexec+json",
+        "payloadType": "application/vnd.asexec.v1+json",
         "payload": copy.deepcopy(body),
         "signature": {
             "alg": "ed25519",

@@ -20,14 +20,13 @@ IDENTITY_DOCUMENT_VERSION = 1
 # Where a domain publishes its identity document.
 IDENTITY_WELL_KNOWN_PATH = ".well-known/asexec.json"
 
-# Media type of the signed payload (an asexec manifest body).
-MANIFEST_PAYLOAD_TYPE = "application/vnd.asexec+json"
+# Media type of the signed payload (an asexec manifest body). Format N is ``vN``, and goes
+# with ``MANIFEST_PREDICATE_TYPE`` ``/vN``.
+MANIFEST_PAYLOAD_TYPE = "application/vnd.asexec.v1+json"
 
-# Written to the ``predicateType`` field of every manifest body.
-MANIFEST_PREDICATE_TYPE = "https://asexec.dev/manifest"
-
-# Written to the ``schema_id`` field of every manifest body.
-MANIFEST_SCHEMA_ID = "asexec"
+# Written to the ``predicateType`` field of every manifest body: the only format identifier
+# in the body.
+MANIFEST_PREDICATE_TYPE = "https://asexec.org/manifest/v1"
 
 # The signature algorithm named in key files, signature blocks and identity documents.
 SIGNING_KEY_ALG = "ed25519"

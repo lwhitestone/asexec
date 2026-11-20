@@ -30,11 +30,12 @@ selects on must be covered by the signature. Otherwise an attacker could edit it
 weaker rules.
 
 **Use `dsse.payloadType`.** From `0.4.0` it is part of the PAE input, so editing it makes the
-signature fail. For example:
+signature fail. Format N is spelled `vN`, and goes with the `predicateType`
+`https://asexec.org/manifest/vN` in the body. A beta is spelled by its version:
 
 ```
-application/vnd.asexec+json             the 0.4.0 format
-application/vnd.asexec.v2+json          a later format
+application/vnd.asexec.v1+json          the 0.4.0 format
+application/vnd.asexec.v2+json          the next format
 application/vnd.asexec.0.4.0b1+json     a beta: never accepted by a release
 ```
 
@@ -43,7 +44,7 @@ The other candidates don't work:
 | Field | Problem |
 |---|---|
 | PAE prefix | It becomes the fixed `DSSEv1`, which standard tooling requires. asexec can no longer version it, so a `/vN` bump stops being available at `0.4.0`. |
-| `schema_id` | It's inside the payload, so the verifier would have to decode the body before knowing how to read it. |
+| `predicateType` | It's inside the payload, so the verifier would have to decode the body before knowing how to read it. |
 | `signature.alg` | It's unsigned today, and the planned `0.4.0` `signatures` entries don't have it at all. |
 
 Each `payloadType` value then fixes all the format rules: PAE prefix, hash, signature
@@ -56,7 +57,7 @@ A table replaces the single constants the verifier uses today:
 
 ```python
 FORMATS = {
-    "application/vnd.asexec+json": Format(
+    "application/vnd.asexec.v1+json": Format(
         pae_version=b"DSSEv1",
         digest_ref_prefix="sha-256:",
         default_hash_alg="sha-256",
@@ -85,7 +86,7 @@ Names are from [`constants.py`](../src/asexec/constants.py).
 | `SIGNING_KEY_ALG` | A per-format entry, which avoids selecting an algorithm from an unsigned field. Existing key files keep working only if the format still uses their algorithm, so signing with a new algorithm needs a new key. |
 | `VERIFY_CODE_VERSION` | Independent of the manifest format. See below. |
 | `IDENTITY_WELL_KNOWN_PATH` | Not manifest format. Fetch the new path, then fall back to the old one. |
-| `MANIFEST_SCHEMA_ID`, `MANIFEST_PREDICATE_TYPE`, `IDENTITY_DOCUMENT_VERSION` | Written to new output only. A future test of these fields would check them per format. |
+| `MANIFEST_PREDICATE_TYPE`, `IDENTITY_DOCUMENT_VERSION` | Written to new output only. A future test of these fields would check them per format. |
 
 ## Verify codes
 
@@ -139,8 +140,6 @@ it needs a release note.
 
 ## Open questions
 
-- **Spelling of later `payloadType` values:** `vnd.asexec.v2+json` is an example, not a decision.
-  Whichever form is chosen, it should be settled before the first format version after `0.4.0`.
 - **Key files:** should a key file record which formats it can sign, or is `alg` enough?
 - **Mixed commitments:** a prereg and its postregs could use different formats after an
   upgrade. `chain` and `keyconsist` compare refs and keyids, so the rules for comparing them

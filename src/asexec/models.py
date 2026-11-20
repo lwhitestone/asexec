@@ -44,7 +44,6 @@ from . import drand
 from .constants import (
     MANIFEST_PAYLOAD_TYPE,
     MANIFEST_PREDICATE_TYPE,
-    MANIFEST_SCHEMA_ID,
     SIGNING_KEY_ALG,
 )
 from .fields import Hex, Link, LowerHex, PinnedChain, StrictInt
@@ -212,7 +211,6 @@ class ManifestBody(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
 
     # structural bedrock - the format frame
-    schema_id: str = MANIFEST_SCHEMA_ID
     predicateType: str = MANIFEST_PREDICATE_TYPE
     phase: str
 

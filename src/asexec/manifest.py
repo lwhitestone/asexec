@@ -3,7 +3,7 @@
 A manifest is a small envelope::
 
     {
-      "payloadType": "application/vnd.asexec+json",
+      "payloadType": "application/vnd.asexec.v1+json",
       "payload":  { ...the signed body... },
       "signature": {"alg":"ed25519","keyid":..., "pubkey":..., "sig":...}
     }
@@ -45,7 +45,7 @@ from .models import Anchor, Manifest, ManifestBody, Signature
 # declaration, free-text - is individually optional. `subject`/`hash_alg` are
 # *conditionally* required together: a content claim is meaningless without its
 # algorithm, so `hash_alg` is required iff `subject` is present.
-_BEDROCK_STRUCTURAL = ("schema_id", "predicateType", "phase")
+_BEDROCK_STRUCTURAL = ("predicateType", "phase")
 _BEDROCK_SEMANTIC = ("target",)
 
 

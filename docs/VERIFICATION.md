@@ -89,13 +89,13 @@ and still exit `0`.
 ```console
 $ asexec verify prereg.json postreg-1.json postreg-2.json --tests BDR,chain,keyconsist
 === manifests ===
-✓ prereg.json  [prereg]  keyid=sha-256:fbffcddd…
-✓ postreg-1.json  [postreg]  keyid=sha-256:fbffcddd…
-✓ postreg-2.json  [postreg]  keyid=sha-256:fbffcddd…
+✓ prereg.json  [prereg]  keyid=sha-256:7bc19c1d…
+✓ postreg-1.json  [postreg]  keyid=sha-256:7bc19c1d…
+✓ postreg-2.json  [postreg]  keyid=sha-256:7bc19c1d…
 
 === commitments ===
-  [FULFILLED] prereg sha-256:2f4f6ac7…
-    signer       : sha-256:fbffcddd…
+  [FULFILLED] prereg sha-256:b17107d0…
+    signer       : sha-256:7bc19c1d…
     due          : (none declared)
     postregs     : 2
 
@@ -166,15 +166,14 @@ $ asexec verify prereg.json --tests BDR
 ```jsonc
 {
   "payload": {
-    "schema_id": "asexec",
-    "predicateType": "https://asexec.dev/manifest",
+    "predicateType": "https://asexec.org/manifest/v1",
     "phase": "prereg",
     "target": "model m via provider p"
   },
   "signature": {
-    "pubkey": "4adcfe2a…",
-    "sig": "97950443…",
-    "keyid": "sha-256:fbffcddd…"
+    "pubkey": "0743f489…",
+    "sig": "89ccc62e…",
+    "keyid": "sha-256:7bc19c1d…"
   }
 }
 ```
@@ -234,11 +233,11 @@ $ asexec verify prereg.json --tests BDR,ceiling
 
 ```jsonc
 {
-  "payload": { … },                              // ref(payload) = sha-256:2f4f6ac7…
+  "payload": { … },                              // ref(payload) = sha-256:b17107d0…
   "signature": { … },
   "ceiling": {
     "ceiling_type": "roughtime",
-    "nonce": "2f4f6ac7…",                        // = ref(payload), without the prefix
+    "nonce": "b17107d0…",                        // = ref(payload), without the prefix
     "witness_id": "int08h-Roughtime",
     "pubkey": "016e6e02…",                       // the pinned int08h key
     "response": "06000000400000006000…"
@@ -301,17 +300,17 @@ $ asexec verify prereg.json postreg-1.json postreg-2.json --tests BDR,chain
 The three files (unexamined fields elided; all three are signed by the same key):
 
 ```jsonc
-// prereg.json: ref = sha-256:2f4f6ac7…
-{ "payload": { "phase": "prereg", … }, "signature": { "keyid": "sha-256:fbffcddd…", … } }
+// prereg.json: ref = sha-256:b17107d0…
+{ "payload": { "phase": "prereg", … }, "signature": { "keyid": "sha-256:7bc19c1d…", … } }
 
-// postreg-1.json: ref = sha-256:059020b4…, the root (no prev_hash)
-{ "payload": { "phase": "postreg", "fulfills": "sha-256:2f4f6ac7…", … },
-  "signature": { "keyid": "sha-256:fbffcddd…", … } }
+// postreg-1.json: ref = sha-256:da0adf83…, the root (no prev_hash)
+{ "payload": { "phase": "postreg", "fulfills": "sha-256:b17107d0…", … },
+  "signature": { "keyid": "sha-256:7bc19c1d…", … } }
 
 // postreg-2.json: links to postreg-1
-{ "payload": { "phase": "postreg", "fulfills": "sha-256:2f4f6ac7…",
-               "prev_hash": "sha-256:059020b4…", … },
-  "signature": { "keyid": "sha-256:fbffcddd…", … } }
+{ "payload": { "phase": "postreg", "fulfills": "sha-256:b17107d0…",
+               "prev_hash": "sha-256:da0adf83…", … },
+  "signature": { "keyid": "sha-256:7bc19c1d…", … } }
 ```
 
 Output (from `=== tests ===` on), exit status `0`:
@@ -503,12 +502,12 @@ $ asexec verify prereg.json postreg.json --tests BDR,keyconsist
 The two files (unexamined fields elided):
 
 ```jsonc
-// prereg.json: ref = sha-256:2f4f6ac7…
-{ "payload": { "phase": "prereg", … }, "signature": { "keyid": "sha-256:fbffcddd…", … } }
+// prereg.json: ref = sha-256:b17107d0…
+{ "payload": { "phase": "prereg", … }, "signature": { "keyid": "sha-256:7bc19c1d…", … } }
 
 // postreg.json: same keyid as the prereg
-{ "payload": { "phase": "postreg", "fulfills": "sha-256:2f4f6ac7…", … },
-  "signature": { "keyid": "sha-256:fbffcddd…", … } }
+{ "payload": { "phase": "postreg", "fulfills": "sha-256:b17107d0…", … },
+  "signature": { "keyid": "sha-256:7bc19c1d…", … } }
 ```
 
 Output (from `=== tests ===` on), exit status `0`:
@@ -602,8 +601,8 @@ chained postregs as in the [`chain` example](#chain):
 
 ```
 === commitments ===
-  [FULFILLED] prereg sha-256:86078561…
-    signer       : sha-256:fbffcddd…
+  [FULFILLED] prereg sha-256:b74ae2db…
+    signer       : sha-256:7bc19c1d…
     due          : 2099-01-01T00:00:00Z
     postregs     : 2
 ```
