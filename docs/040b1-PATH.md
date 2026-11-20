@@ -1334,3 +1334,17 @@ The rest of the fixed rehearsal at `395e15b` matches the first one:
 `scripts/check.sh` on `395e15b`: clean, 455 passed. `shellcheck scripts/release.sh`: clean.
 CI: run 44728436229 on `395e15b` and run 44728921686 on `0a3065b`, lint, python-matrix, test
 (3.12, 3.13, 3.14) and build pass.
+
+**Merged** (orchestrator): PR #53 merged into `feature/0321` as `fcba9ae`, a merge commit,
+with no review findings left open. The #30 change is `da4a4c2`, and the review fixes are
+`395e15b`. `scripts/release.sh` was only ever run in throwaway clones whose sole remote was a
+local bare repo. The review agent's own rehearsal: b1 → b2 → 0.4.0 → 0.4.1; every listed
+refusal; SIGINT, SIGTERM and SIGHUP during `check.sh`, each leaving the tree restored. It
+found that a failing `git commit` left the release edits staged, which is now fixed and
+rehearsed with a failing pre-commit hook. After the merge, `git ls-remote --tags origin` has
+no `v0.4*` tag, and the latest GitHub release is still v0.3.20. Post-merge on `feature/0321`
+at `fcba9ae`: `scripts/check.sh` clean, 455 passed; `examples/adequacy-test/run.py` exit 0.
+CI on the last PR push (`7c3b0b4`, run 44729179505): lint, build, test on 3.12, 3.13 and
+3.14 pass. **Open for the human gate:** after 0.4.0 there's no workable path to a 0.5.0
+beta, nor to a patch release while a new format is in development (see the observations
+above). Neither blocks b1.
