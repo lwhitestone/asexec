@@ -651,3 +651,15 @@ PR push (`04dfe45`, run 44670856152): lint, build, test on 3.12, 3.13 and 3.14 p
 - Commit: `b66bd01`. `scripts/check.sh`: clean, 417 passed (414 + 1 mark test + 2 `BDR`
   cases). CI on `b66bd01` (run 44676319652): lint, python-matrix, test (3.12, 3.13, 3.14)
   and build pass.
+
+**Merged** (orchestrator): PR #51 merged into `feature/0321` as `f1f2093`, a merge commit,
+with no review findings left open. The #26 change is `356b6d5`, and the review fixes are
+`b66bd01`. The review agent ran its own old-vs-new comparison of the installed packages
+(`f88881d` vs `89ed95f`): 646 runs of 1 to 6 paths, every optional test on, over valid,
+tampered, malformed and missing inputs. Every non-required result, every report block, and
+the CLI output and exit status matched, and `BDR` always equalled `format AND selfsig`. It
+found the ✓/✗ mark and the `BDR`-is-gone rule unpinned; both are pinned now and shown to
+fail when broken. Post-merge on `feature/0321` at `f1f2093`: `scripts/check.sh` clean, 417
+passed; `examples/adequacy-test/run.py` exit 0. CI on the last PR push (`ba01f26`, run
+44676473727): lint, build, test on 3.12, 3.13 and 3.14 pass. Carried forward: the
+non-string `signature.keyid` crash, noted above, goes to checkpoint 5 (#44).
