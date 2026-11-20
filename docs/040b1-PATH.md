@@ -3338,3 +3338,32 @@ examples, and attacked `order` and `--floor-round` without getting through):
 
 `scripts/check.sh` (in full, exit status checked, before each commit): clean, 1021 passed at
 `576cbd9` (checked with the #38 changes stashed) and 1023 at `6ada68d`.
+
+**Merged** (orchestrator): PR #57 merged into `feature/0321` as `e1a5e46`, a merge commit,
+with no review findings left open. The changes: #34 is `5b97649`, with the review fix
+`576cbd9`; #38 is `fcd09a2`, with the review fix `6ada68d`. The review agent's checks:
+- **drand constants:** it fetched quicknet's `/info` from api.drand.sh. Genesis 1692803367,
+  period 3, the public key and the scheme match the pinned `CHAINS`. `/public/1000` has exactly
+  the shape `--floor-round` accepts.
+- **Examples:** it reproduced both `order` examples.
+- **Attacks on `order`, none got through:**
+  - floors: a forged round, an unpinned chain, bad randomness, rounds of 0, -1 and 2^70,
+    junk types;
+  - prereg ceilings: a ceiling copied from another manifest, and copies that are not the
+    commitment, now pinned by two tests a by-ref mutant fails;
+  - huge witness times.
+- **Display:** escapes, U+2028, a lone surrogate, deep nesting and huge values in `untrusted`
+  and unknown fields each printed as one escaped line.
+
+Post-merge on `feature/0321` at `e1a5e46`: `scripts/check.sh` clean, 1023 passed in about
+71 s, about half of it BLS checks of drand floors; `examples/adequacy-test/run.py` exit 0.
+CI on the last PR push (`bcd6857`, run 44831075094): lint, build, test on 3.12, 3.13 and 3.14
+pass.
+
+**Open for the human gate:**
+- the unsigned `ceiling.midpoint` and `ceiling.radius`: show them as unchecked, require them
+  to equal the signed values, or drop them;
+- the tier check from ROADMAP *Tests* isn't built, and would fail today on *TrustedDeclared*.
+
+Carried to checkpoint 9 (#45): the error-message gaps in the shared JSON helpers listed in
+the review round 1 notes above.
