@@ -144,6 +144,18 @@ def test_untrusted__deeper_than_the_file_limit_makes_the_file_malformed(sc):
     assert report["code"] == "asexec-verify/1 chain=PASS format=FAIL selfsig=PASS"
 
 
+def test_untrusted__an_integer_past_the_digit_limit_makes_the_file_malformed(sc):
+    """The same for an integer of more than 4,300 digits, which the file's JSON rules (Python's
+    default limit) do not read: anywhere in the file, untrusted included."""
+    raw = sc.read("postreg2")[:-2] + ', "untrusted": {"big": ' + "1" * 5001 + "}\n}\n"
+    sc.drop("postreg2")
+    sc.add_raw("postreg2-big", raw)
+    report = sc.verify("chain")
+    (error,) = _record(report, "postreg2-big")["format"]["errors"]
+    assert error.startswith("malformed: Exceeds the limit (4300 digits)")
+    assert report["code"] == "asexec-verify/1 chain=PASS format=FAIL selfsig=PASS"
+
+
 def test_untrusted__not_shown_for_a_file_that_fails_format(scenario):
     """A file that fails format is read by nothing past format, untrusted included."""
     env = d.malformed(d.PREREG)

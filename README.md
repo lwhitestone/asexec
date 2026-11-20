@@ -389,8 +389,9 @@ postreg carries its prereg's `target`, `due` and `declaration`, links back with 
 `pubkey` sit outside the signed body: the ceiling's nonce is the body's own hash, and
 `selfsig` requires the signature's `keyid` to derive from `pubkey`, so a substituted key
 fails. The floor sits inside the body, because a value fixed before signing can be signed.
-`untrusted` is the one part of the file nothing checks: unsigned, read by no test and never
-part of `ref`, so anyone can edit it after signing. `verify` shows it, and any field the
+`untrusted` is the one section of the file nothing checks: unsigned, read by no test and
+never part of `ref`, so anyone can edit it after signing. (The ceiling's own `midpoint` and
+`radius` only restate its signed response, and are not read either.) `verify` shows it, and any field the
 format does not define, under headings saying nothing in them was checked (see
 [Untrusted](./docs/VERIFICATION.md#untrusted)).
 

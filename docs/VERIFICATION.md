@@ -1308,14 +1308,18 @@ asexec release that wrote the file, for diagnostics only. It is outside the body
 neither signed nor part of `ref` (the digest of the body bytes), and anyone can edit it after
 signing: that is what it is for. Unsigned is not the same as untrusted: `ceiling` and
 `pubkey` are unsigned too, but checked, by the witness's signature and by `selfsig` #4.
-`untrusted` is the one part of the file that nothing checks. Its tier is *Untrusted*
-(ROADMAP, *Three trust tiers*).
-- No test reads `untrusted`, and it is never part of `ref` or the code. It may hold any JSON
-  value, of any type and size: no value of it makes a file malformed or changes a result.
-- It is part of the file, so the file's [JSON](#conventions) rules hold inside it as
-  everywhere: a duplicate key in it, or nesting that takes the file past 64 deep, makes the
-  whole file malformed, as it would anywhere in the file. That is `format`'s rule about
-  reading the file, not a reading of `untrusted`.
+`untrusted` is the one section of the file that nothing checks. (The ceiling's own
+`ceiling.midpoint` and `ceiling.radius` are unsigned and not read either: they only restate
+the signed response, whose `MIDP` and `RADI` every test and the report read instead.) Its
+tier is *Untrusted* (ROADMAP, *Three trust tiers*).
+- No test reads `untrusted`, and it is never part of `ref` or the code. It may hold any value
+  the file's [JSON](#conventions) rules accept, of any type and size: none makes a file
+  malformed or changes a result.
+- It is part of the file, so the file's JSON rules hold inside it as everywhere: a duplicate
+  key in it, nesting that takes the file past 64 deep, or an integer of more than 4,300
+  digits (Python's default limit for reading one) makes the whole file malformed, as it would
+  anywhere in the file. That is `format`'s rule about reading the file, not a reading of
+  `untrusted`.
 - An `untrusted` that is absent (missing or `null`) is not shown.
 
 **Unknown keys outside the body.** A key outside the body that this format does not define is
