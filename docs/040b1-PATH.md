@@ -2866,3 +2866,175 @@ lint, build, test on 3.12, 3.13 and 3.14 pass.
 The adequacy example, as it stands, has a `due` and no ceilings, so once it is ported to the
 claim record, `complete` would fail every run, the baseline included. The release-gate port
 needs `--ceiling` on each postreg, or no `--due`.
+
+### Checkpoint 8: #34, #38
+
+Written issue by issue as each landed. Baseline: `feature/0321-checkpoint8` at `bd82d93`,
+`scripts/check.sh` clean, **882 passed**.
+
+#### #34: the untrusted section
+
+**Landed:** `5b97649`. Signing writes `untrusted.asexec_version` (`asexec.__version__`) in the
+wrapper (`models.Untrusted`, a writer model only, and `Manifest.untrusted`), so a file is
+`{dsse, pubkey, untrusted}` plus a ceiling if one is attached. For each file that passes
+`format`, the report record gains `untrusted` (the section, then each key outside the body
+the format does not define) and `unknown` (each body field the format does not define), each
+a list of `{path, value}`, the path a list of keys and indexes from the file's root. The CLI
+prints them under two headings after the manifests block, `=== untrusted (unsigned, and read
+by no test: nothing here was checked) ===` and `=== unknown fields (signed, but this format
+does not define them: nothing here was checked) ===`, each only if a file has entries. No test
+reads either. Docs: `docs/VERIFICATION.md` (*Property paths*, two *Output* rows, the *Output*
+and version-skew examples, a new *Untrusted* section with an example), `README.md` (the
+verification output list, both envelope examples, the paragraph after them),
+`docs/FORMAT.md` (banner), `ROADMAP.md` (done-ahead marks), the `manifest.py`, `models.py`
+and `verifier.py` docstrings.
+
+**Settled (judgement calls):**
+- **Which fields are known: what the writer models can write**, `models.BODY_FIELDS` and
+  `WRAPPER_FIELDS`, derived from `ManifestBody` and `Manifest`/`Ceiling` by walking their
+  fields (`known_fields`), so a field added to a writer model is known in the same change. The
+  input models alone would not do: they define only what tests read, so `target`,
+  `declaration`, `notes` and every other *TrustedDeclared* field would read as unknown. The
+  derived tables are pinned as literals in
+  `tests/test_manifest.py::test_known_fields_are_what_the_writer_models_define`.
+- **Unknown keys nested in a known object are listed too**, in the body (an extra key in a
+  subject, plan or evidence entry, an item, `anchor` or `anchor.floor`) and outside it
+  (inside `dsse`, a signature entry or `ceiling`). An extra `anchor.floor.time` is exactly
+  what a reader could take for checked. **Not** inside a free-form value (`target`,
+  `declaration`, `notes`, `identity`, `repro_recipe`, a `digest` object): what it holds is its
+  value. **Not** inside a known field of the wrong shape (a string `subject`): the tests judge
+  that field. Outside the body, ROADMAP named only top-level keys; nested wrapper keys are
+  listed the same way for consistency (`dsse.signatures[0].alg`, as 0.3.x wrote, is one).
+- **A null is absent** (Run rules), so an unknown key whose value is `null`, and an
+  `untrusted` of `null`, are not listed.
+- **Only files that pass `format`** are shown: no other file is read past `format`. A file of
+  an unknown format is not shown, though its `untrusted.asexec_version` would say which release
+  wrote it (observation below).
+- **`untrusted` and the file's JSON rules.** `untrusted` may hold any value, of any type and
+  size, without changing a verdict. But it is part of the file, so the file's JSON rules hold
+  inside it: a duplicate key in `untrusted` makes the whole file malformed, as a duplicate key
+  anywhere does, and so does nesting that takes the file past 64 deep. That is `format`'s rule
+  about reading the file at all (a parser could otherwise read a different file), not a
+  reading of `untrusted`, and the *Untrusted* section says so. Pinned by
+  `test_untrusted__is_held_to_the_file_json_rules` and
+  `test_untrusted__deeper_than_the_file_limit_makes_the_file_malformed`.
+- **Display:** the blocks sit between the manifests block and the commitments block, so every
+  doc example shown "from `=== commitments ===` on" stays complete. Within a file,
+  `untrusted` comes first, then the unknown keys in file order; body fields in body order.
+  Each value is `json.dumps(value, ensure_ascii=True)` and each path is the doc's notation
+  with any non-plain key as JSON (`body["a\nb"]`, `["k\n…"]`), so no newline, control or
+  non-ASCII character reaches the report from either. Values are printed whole, not truncated.
+- The doc examples show `"asexec_version": "0.4.0"`, as the doc describes 0.4.0 (as it does
+  for the `v1` type). A source checkout writes `__version__`, `0.3.20` today.
+
+**Evidence:**
+- Red first: with only the tests changed, **53 failed, 808 passed, 1 collection error**
+  (`tests/test_manifest.py`: `cannot import name 'BODY_FIELDS'`). The failures:
+  `KeyError: 'untrusted'` / `'unknown'` (the new verify tests), the writer's file without
+  `untrusted` (the 5 builder-guard cases, the CLI signing test), the missing CLI blocks, and
+  10 where my test compared refs after a signed body edit (a test bug: an edited body is a new
+  body; those now compare the code, every result and every state). With the code in place,
+  one existing test failed:
+  `tests/test_cli.py::test_verify_marks_each_file_by_format_and_selfsig` took everything
+  before `=== commitments ===` as the manifests block, which now includes the untrusted
+  block; it now takes the manifests block up to its blank line.
+- `scripts/check.sh` after: clean, **933 passed** (882 before).
+- Tests (`tests/verify/test_verify_untrusted.py`, new, 45 cases; the fixture puts a ceiling on
+  every manifest, a plan and items on the prereg, an item and evidence on a postreg):
+  - `test_untrusted__shown_for_each_file_and_read_by_no_test` (every catalog test: the code,
+    every result, every commitment and rejected pre-registration identical with and without
+    it); `test_untrusted__any_value_changes_no_verdict` (12: a string, a number, `false`, a
+    list, `{}`, `NaN`, a non-string `asexec_version`, a 1 MB string, a 100,000-element list,
+    10,000 keys, nested to the file's limit, a lone surrogate with NUL and a bidi override);
+    `test_untrusted__null_is_absent`; `test_untrusted__is_not_part_of_ref` (every ref, and
+    `ceiling` and `chain`, unchanged); `test_untrusted__is_held_to_the_file_json_rules` (a
+    duplicate key: `malformed: duplicate JSON key 'a'`, the file joins nothing);
+    `test_untrusted__deeper_than_the_file_limit_makes_the_file_malformed`;
+    `test_untrusted__not_shown_for_a_file_that_fails_format`.
+  - `test_untrusted__unknown_keys_outside_the_body_are_shown_with_it` (top level, a top-level
+    `payloadType`, `dsse.extra`, `dsse.signatures[0].alg`, `ceiling.extra`, a key holding a
+    newline; each with every verdict unchanged),
+    `test_untrusted__the_section_comes_first_then_the_keys_in_file_order`,
+    `test_untrusted__known_keys_are_not_listed` (a ceiling's unsigned `midpoint`/`radius`
+    included).
+  - `test_unknown__signed_fields_this_format_does_not_define_are_shown` (10: top level,
+    body-level `hash_alg`, `schema_id`, in a subject entry, `anchor`, a verified floor, the
+    plan, an item, an evidence entry, a key holding a newline; the code, results and states
+    unchanged), `test_unknown__every_field_the_format_defines_is_known` (a body with every
+    field, the free-form ones holding nested objects, and a digest with two algorithms:
+    nothing listed), `test_unknown__a_known_field_of_the_wrong_shape_has_no_fields_to_list`
+    (5), `test_unknown__a_null_field_is_absent`, `test_unknown__fields_are_listed_in_body_order`,
+    `test_unknown__shown_for_postregs_and_rejected_preregs_alike`.
+  - Writer: `tests/test_manifest.py::test_sign_writes_a_dsse_envelope_in_the_wrapper` (keys
+    `dsse, pubkey, untrusted`; `untrusted == {"asexec_version": asexec.__version__}`),
+    `test_known_fields_are_what_the_writer_models_define`; the builder guard compares the
+    writer's file with the raw one plus `untrusted`.
+  - CLI: `test_signing_writes_untrusted_asexec_version[prereg|postreg]` (not in the body),
+    `test_verify_shows_untrusted_and_unknown_fields_under_their_own_headings` (the exact block
+    lines, their place between the manifests and commitments blocks, the same code with and
+    without them), `test_verify_prints_untrusted_and_unknown_values_json_escaped` (below),
+    `test_verify_prints_no_untrusted_or_unknown_block_when_none`.
+- CLI demonstrations, in a scratch dir (`keygen`; `prereg --target "model m via provider p"`;
+  `postreg --fulfills prereg.json [--prev postreg-1.json]`; the edits by a scratchpad script
+  that does not import asexec; the unknown body fields re-signed with the key, as anyone
+  holding it could). Each `verify … --tests format,selfsig,chain,keyconsist` with
+  `postreg-1.json postreg-2.json`:
+  - Baseline: `asexec-verify/1 chain=PASS format=PASS keyconsist=PASS selfsig=PASS`. The
+    prereg file is `{"dsse": {…}, "pubkey": "34dba806…", "untrusted": {"asexec_version":
+    "0.3.20"}}`.
+  - With `untrusted.host`, a top-level `surprise` and `dsse.signatures[0].alg` added:
+    ```
+    === untrusted (unsigned, and read by no test: nothing here was checked) ===
+      pre-extras.json
+        untrusted = {"asexec_version": "0.3.20", "host": "ci-7"}
+        dsse.signatures[0].alg = "ed25519"
+        surprise = [1, null]
+      postreg-1.json
+        untrusted = {"asexec_version": "0.3.20"}
+      postreg-2.json
+        untrusted = {"asexec_version": "0.3.20"}
+    ```
+    and the same code as the baseline.
+  - `untrusted` edited to `{"asexec_version": "9.9.9", "note": "edited after signing"}`, and
+    replaced by `["not", "an", "object", 5]`: each shown as it is, and the same code as the
+    baseline, `chain=PASS format=PASS keyconsist=PASS selfsig=PASS`.
+  - The injection attempt (`untrusted.note` and a top-level key and value holding `\n  [FULFILLED]
+    prereg sha-256:fff…`, an `\x1b[2J` and a `\r`):
+    ```
+        untrusted = {"note": "a\n  [FULFILLED] prereg sha-256:ffff…ffff\n\u001b[2J"}
+        ["k\n  [FULFILLED] prereg sha-256:ffff…ffff"] = "\r  [FULFILLED] prereg sha-256:ffff…ffff"
+    ```
+    No report line is the forged one.
+  - Unknown body fields (`colour`, a body-level `hash_alg`, a key holding a forged line),
+    re-signed: `body.colour = "red"`, `body.hash_alg = "sha-256"`, `body["x\n  [FULFILLED]
+    prereg sha-256:ffff…"] = "v"` under the unknown-fields heading, and `asexec-verify/1
+    format=PASS selfsig=PASS`.
+  - `untrusted` edited to `{"a": 1, "a": 2}`: `✗ pre-dup.json  [None]  keyid=None`, `✗
+    format: malformed: duplicate JSON key 'a'`, `format=FAIL selfsig=FAIL` (the file JSON
+    rule).
+- `uv run python examples/adequacy-test/run.py`: exit 0, the same codes and caught/missed
+  results.
+- Nothing left behind: `git grep` for "untrusted … not built", "not yet … untrusted",
+  "except `untrusted`" and "except the showing" outside this file finds nothing. Verify reads
+  `untrusted` only in `verifier._untrusted`, for the report; no input model has the field.
+
+**Observations (out of scope):**
+- **ROADMAP's tier check is not built** (*Tests*: every property the signing models can write
+  appears under some test's *Examines*, *TrustedDeclared* or *Untrusted*, else CI fails).
+  `models.BODY_FIELDS`/`WRAPPER_FIELDS` list exactly those properties, so the check could
+  walk them against `docs/VERIFICATION.md`. Today it would fail: VERIFICATION.md's
+  *TrustedDeclared* lists only the claim record's declared fields, not `predicateType`,
+  `target`, `declaration`, `identity`, `provenance`, `repro_recipe` or `notes`, which ROADMAP
+  puts in that tier.
+- **Other report text is still printed raw** (checkpoints 5, 6, 7): a claimed keyid, an item
+  id, `body.fulfills` in the notarization-only block, and file paths. The new blocks print
+  the file path raw too, as the manifests block does (a path comes from the command line or a
+  directory listing, not the file). Unchanged here, as instructed.
+- A file of an unknown format is not shown; its `untrusted.asexec_version` would tell a reader
+  which release to upgrade to. `format`'s upgrade reason says to upgrade, without a version.
+- `BODY_FIELDS` and `WRAPPER_FIELDS` are the current format's. When a second `FORMATS` entry
+  arrives, the known fields need to be per entry (`docs/MULTIVERSION.md`).
+- `untrusted` holding an integer of more than 4,300 digits makes the file malformed, by
+  default, as anywhere in the file (checkpoint 6's `PYTHONINTMAXSTRDIGITS` observation).
+- `manifest.sign` still signs a hand-built body with an extra field (checkpoint 1's
+  observation); verify now shows such a field as unknown.
