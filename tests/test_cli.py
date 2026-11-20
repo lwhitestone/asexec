@@ -253,7 +253,7 @@ def test_verify_marks_each_file_by_format_and_selfsig(tmp_path, key, prereg, cap
             "payloadType names a format newer than this release: upgrade asexec to read it",
         ),
         (
-            "application/vnd.asexec.0.4.0b1+json",
+            "application/vnd.asexec.0.3.0b1+json",  # a beta no release will read
             "payloadType names an asexec beta format, and betas are not supported",
         ),
     ],

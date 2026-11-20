@@ -50,8 +50,8 @@ MALFORMED_FILES = {
     "array": "[1, 2]",
     "string": '"x"',
     "null": "null",
-    "missing-payload": '{"payloadType": "application/vnd.asexec.v1+json", "signature": {}}',
-    "missing-signature": '{"payloadType": "application/vnd.asexec.v1+json", "payload": {}}',
+    "missing-payload": json.dumps({"payloadType": d.MANIFEST_PAYLOAD_TYPE, "signature": {}}),
+    "missing-signature": json.dumps({"payloadType": d.MANIFEST_PAYLOAD_TYPE, "payload": {}}),
 }
 
 
@@ -161,7 +161,7 @@ def test_format__fail__1_unlistable_directory_is_examined_and_malformed(tmp_path
         (None, "malformed: payloadType: Field required"),
         (1, "malformed: payloadType: Input should be a valid string"),
         (
-            ["application/vnd.asexec.v1+json"],
+            [d.MANIFEST_PAYLOAD_TYPE],
             "malformed: payloadType: Input should be a valid string",
         ),
         ({}, "malformed: payloadType: Input should be a valid string"),
@@ -198,9 +198,9 @@ def test_format__fail__2_pubkey_and_sig_are_hex(scenario, field):
         ("application/vnd.asexec.v10+json", NEWER),
         ("application/something-else", NEWER),
         ("", NEWER),
-        ("APPLICATION/VND.ASEXEC.V1+JSON", NEWER),
-        ("application/vnd.asexec.v1+json ", NEWER),
-        ("application/vnd.asexec.0.4.0b1+json", BETA),
+        (d.MANIFEST_PAYLOAD_TYPE.upper(), NEWER),
+        (d.MANIFEST_PAYLOAD_TYPE + " ", NEWER),
+        ("application/vnd.asexec.0.3.0b1+json", BETA),
         ("application/vnd.asexec.1.12.3b20+json", BETA),
         ("application/vnd.asexec+json", PRE_V1),
     ],

@@ -197,7 +197,7 @@ def test_signing_pae_version_and_manifest_payload_type():
     assert signing_input(FROZEN_BODY) == (
         b'asexec-PAE/v1 30 application/vnd.asexec.v1+json 31 {"phase":"prereg","target":"m"}'
     )
-    assert signing_input(FROZEN_BODY, "application/vnd.asexec.v1+json") == (
+    assert signing_input(FROZEN_BODY, constants.MANIFEST_PAYLOAD_TYPE) == (
         signing_input(FROZEN_BODY)
     )
     assert _signed_prereg()["payloadType"] == "application/vnd.asexec.v1+json"
@@ -255,9 +255,10 @@ def test_formats__a_file_is_read_under_its_own_entry(tmp_path, monkeypatch):
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir()
     (artifacts / "a.txt").write_bytes(b"x")
+    current = _signed_under(constants.MANIFEST_PAYLOAD_TYPE, FROZEN_NO_HASH_ALG_MANIFEST["payload"])
     report = _report(
         tmp_path,
-        [FROZEN_NO_HASH_ALG_MANIFEST, other],
+        [current, other],
         ["content", "format", "selfsig"],
         str(artifacts),
     )
@@ -289,7 +290,7 @@ def test_formats__signing_uses_the_entry_of_manifest_payload_type(monkeypatch):
     # Signing always writes the newest format, whatever other entries exist.
     monkeypatch.setitem(constants.FORMATS, OTHER_FORMAT, OTHER_RULES)
     signed = _signed_prereg()
-    assert signed["payloadType"] == "application/vnd.asexec.v1+json"
+    assert signed["payloadType"] == constants.MANIFEST_PAYLOAD_TYPE
     assert signed["signature"]["keyid"].startswith("sha-256:")
     assert manifest.ref(signed["payload"]).startswith("sha-256:")
 

@@ -5,10 +5,12 @@ Naming: ``test_<section>__<rule>`` where section is ``tests_arg`` (`--tests`), `
 an exception). Per-test items live in the ``test_verify_<name>.py`` files.
 """
 
+import json
 import re
 import socket
 import urllib.request
 
+import manifest_data as d
 import pytest
 
 from asexec.errors import VerificationError
@@ -106,11 +108,9 @@ def test_run__malformed_file_fails_format_and_no_other_test_examines_it(scenario
     other test's verdict, selfsig's included, is as if it were absent."""
     scenario.with_ceiling("prereg")
     if target == "unknown-format":  # a copy of the prereg, ceiling and all, relabelled
-        raw = scenario.read("prereg").replace(
-            '"application/vnd.asexec.v1+json"', '"application/vnd.asexec.v2+json"', 1
-        )
-        assert "v2+json" in raw
-        scenario.add_raw("bad", raw)
+        envelope = json.loads(scenario.read("prereg"))
+        envelope["payloadType"] = "application/vnd.asexec.v2+json"
+        scenario.add_raw("bad", json.dumps(envelope))
     elif target == "duplicate-key":
         raw = scenario.read("prereg").replace(
             '"phase": "prereg"', '"phase": "prereg", "phase": "x"', 1
@@ -129,7 +129,7 @@ def test_run__malformed_file_fails_format_and_no_other_test_examines_it(scenario
 
 @pytest.mark.parametrize(
     "payload_type,hex_value",
-    [("application/vnd.asexec.v1+json", "zz"), ("application/vnd.asexec.v2+json", "00")],
+    [(d.MANIFEST_PAYLOAD_TYPE, "zz"), ("application/vnd.asexec.v2+json", "00")],
     ids=["bad-hex", "unknown-format"],
 )
 def test_run__file_failing_format_is_examined_by_no_other_test(scenario, payload_type, hex_value):
@@ -158,7 +158,7 @@ def test_run__file_failing_format_is_examined_by_no_other_test(scenario, payload
     [
         ("signature.pubkey", "zz"),
         ("payloadType", "application/vnd.asexec.v2+json"),
-        ("payloadType", "application/vnd.asexec.0.4.0b1+json"),
+        ("payloadType", "application/vnd.asexec.0.3.0b1+json"),
     ],
     ids=["bad-hex", "newer-format", "beta-format"],
 )
