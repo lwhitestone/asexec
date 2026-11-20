@@ -472,29 +472,41 @@ def verify_paths(
         elif links.phase == "postreg":
             postregs.append((links, rec))
 
+    # The provided preregs by ref: the commitments (``preregs`` is them by (ref, keyid)), and
+    # the rejected pre-registrations, which are never looked up by their unauthenticated keyid.
+    commitments_by_ref: dict[str, list[dict[str, Any]]] = {}
+    for (ref, _keyid), pr in preregs.items():
+        commitments_by_ref.setdefault(ref, []).append(pr)
+    rejected_by_ref: dict[str, list[dict[str, Any]]] = {}
+    for rp in rejected_preregs:
+        rejected_by_ref.setdefault(rp["ref"], []).append(rp)
+
     # A manifest is identified by its ref, so a copy (same ref and keyid) of one already
-    # listed adds nothing: the same ref is the same body, links and all. A postreg counts
-    # toward the commitment of its ref whose signer it shares; one that counts toward none
-    # is rejected under every commitment and every rejected pre-registration of that ref.
-    # Under a rejected pre-registration the reason is always its own invalid signature: its
-    # keyid is compared with nothing.
+    # listed adds nothing: the same ref is the same body, links and all. A postreg that names
+    # a provided prereg counts toward the commitment of its ref whose signer it shares (it
+    # meets the selfsig conditions and has that keyid); one that counts toward none is
+    # rejected under every commitment of that ref (invalid signature, else a different key)
+    # and every rejected pre-registration of that ref. Under a rejected pre-registration the
+    # reason is always the prereg's invalid signature: its keyid is compared with nothing.
     notarization_only: list[dict[str, Any]] = []
     for links, rec in postregs:
-        candidates = [pr for (ref, _keyid), pr in preregs.items() if ref == links.fulfills]
-        rejected_named = [rp for rp in rejected_preregs if rp["ref"] == links.fulfills]
+        candidates = commitments_by_ref.get(links.fulfills, [])
+        rejected_named = rejected_by_ref.get(links.fulfills, [])
         if candidates or rejected_named:
             entry = {"ref": rec["ref"], "prev_hash": links.prev_hash, "keyid": rec["keyid"]}
-            reasons = [_get_postreg_rejection_reason(rec, pr) for pr in candidates]
-            if None in reasons:
-                _add_once(candidates[reasons.index(None)]["counted_postregs"], entry)
+            if not _selfsig_ok(rec):
+                reason = REASON_INVALID_SIGNATURE
+            elif (links.fulfills, rec["keyid"]) in preregs:  # a keyid that passed selfsig: a str
+                _add_once(preregs[(links.fulfills, rec["keyid"])]["counted_postregs"], entry)
+                continue
             else:
-                for pr, reason in zip(candidates, reasons, strict=True):
-                    _add_once(pr["rejected_postregs"], {**entry, "reason": reason})
-                for rp in rejected_named:
-                    _add_once(
-                        rp["rejected_postregs"],
-                        {**entry, "reason": REASON_PREREG_INVALID_SIGNATURE},
-                    )
+                reason = REASON_DIFFERENT_KEY
+            for pr in candidates:
+                _add_once(pr["rejected_postregs"], {**entry, "reason": reason})
+            for rp in rejected_named:
+                _add_once(
+                    rp["rejected_postregs"], {**entry, "reason": REASON_PREREG_INVALID_SIGNATURE}
+                )
         else:
             _add_once(
                 notarization_only,
@@ -640,18 +652,6 @@ def _build_code(tests: list[str], results: dict[str, dict[str, Any]]) -> str:
 REASON_INVALID_SIGNATURE = "invalid signature"
 REASON_DIFFERENT_KEY = "signed by a different key than the pre-registration"
 REASON_PREREG_INVALID_SIGNATURE = "the pre-registration's signature is invalid"
-
-
-def _get_postreg_rejection_reason(rec: dict[str, Any], prereg: dict[str, Any]) -> str | None:
-    """Why a postreg that references ``prereg`` does not count toward fulfilling
-    it, or None if it counts: it meets the ``selfsig`` conditions and has the prereg's
-    own keyid. Only a postreg that passed ``format`` gets here (one that fails it joins
-    no commitment)."""
-    if not _selfsig_ok(rec):
-        return REASON_INVALID_SIGNATURE
-    if rec["keyid"] != prereg["keyid"]:
-        return REASON_DIFFERENT_KEY
-    return None
 
 
 def _commitment_state(
