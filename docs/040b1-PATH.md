@@ -2704,3 +2704,5 @@ with `--tests format,selfsig,content --artifacts .`, and `docs/DEVELOPMENT.md` s
 Rehearsed locally (`content=PASS format=PASS selfsig=PASS`); `actionlint` clean.
 `publish.yml`'s release smoke already signs a file (`ci.key.pub`). `git grep -n -- '--subject'
 .github scripts` finds no other directory subject.
+CI on PR #56 at `ea3afa2` (run 44793807989): lint, python-matrix, test (3.12, 3.13, 3.14,
+each with the new CLI smoke) and build pass. `scripts/check.sh` locally: clean, 842 passed.
