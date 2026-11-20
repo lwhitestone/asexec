@@ -165,6 +165,7 @@ class Scenario:
         ``ceiling.*``) is edited after signing. Missing objects on the way are created; a
         numeric segment or ``[N]`` indexes an array.
         """
+        value = copy.deepcopy(value)  # a body edit never reaches the caller's object
         self._edit(name, path, lambda root: data.set_path(root, path, value), after_signing)
 
     def unset(self, name: str, path: str, *, after_signing: bool = False) -> None:

@@ -273,3 +273,56 @@ def test_floor_lands_in_anchor_and_ref_stable_across_ceiling():
     manifest.attach_ceiling(signed, {"ceiling_type": "roughtime", "nonce": ref_before})
     assert manifest.ref(manifest.read_body(signed)[0]) == ref_before
     assert manifest.get_ceiling(signed)["nonce"] == ref_before
+
+
+# --- the claim record ------------------------------------------------------- #
+PLAN = {"name": "plan.md", "hash_alg": "sha-256", "digest": {"sha-256": "00"}}
+EVIDENCE = [{"name": "e.json", "hash_alg": "sha-256", "digest": {"sha-256": "00"}}]
+
+
+def test_claim_record_fields_are_written_as_given():
+    plan = {**PLAN, "media_type": "text/markdown", "label": "L"}
+    items = [{"id": "S1", "kind": "run"}, {"id": "S2"}]
+    pre = manifest.build_prereg(_target(), plan=plan, items=items)
+    assert pre["plan"] == plan and pre["items"] == items
+    evidence = [{**EVIDENCE[0], "media_type": "application/json", "uri": "https://e"}]
+    post = manifest.build_postreg(
+        _target(), fulfills="sha-256:00", item_id="S1", status="reported", evidence=evidence
+    )
+    assert (post["item_id"], post["status"], post["evidence"]) == ("S1", "reported", evidence)
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"plan": {**PLAN, "extra": 1}},
+        {"plan": {k: v for k, v in PLAN.items() if k != "hash_alg"}},
+        {"plan": {**PLAN, "name": "./plan.md"}},
+        {"items": [{"id": "S1"}, {"id": "S1", "kind": "again"}]},
+        {"items": [{"kind": "run"}]},
+        {"items": [{"id": 1}]},
+        {"status": "done"},
+        {"status": None, "item_id": 5},
+        {"evidence": []},
+        {"evidence": EVIDENCE * 2},
+        {"evidence": [{**EVIDENCE[0], "uri": 5}]},
+    ],
+    ids=[
+        "plan-extra-field",
+        "plan-no-hash_alg",
+        "plan-name-not-normalized",
+        "item-ids-repeat",
+        "item-without-id",
+        "item-id-not-string",
+        "status-unknown",
+        "item_id-not-string",
+        "evidence-empty",
+        "evidence-names-repeat",
+        "uri-not-string",
+    ],
+)
+def test_writer_refuses_a_claim_record_content_or_complete_would_fail(fields):
+    """Signing validates status (reported | excluded | blocked) and item ids (strings,
+    unique), and holds plan and evidence entries to the subject entry's rules."""
+    with pytest.raises(ValidationError):
+        manifest.build_postreg(_target(), fulfills="sha-256:00", **fields)

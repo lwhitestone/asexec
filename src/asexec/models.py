@@ -153,8 +153,16 @@ class SubjectEntryInput(InputModel):
         return self
 
 
-# ``body.subject`` (content #1): a non-empty array; each entry is a ``SubjectEntryInput``.
+# ``body.subject`` and ``body.evidence`` (content #1): a non-empty array; each entry is a
+# ``SubjectEntryInput``. ``body.plan`` is one such entry.
 SubjectInput = TypeAdapter(Annotated[list[Any], Strict(), Field(min_length=1)])
+
+
+class ItemInput(InputModel):
+    """One ``body.items[]`` entry of a prereg: a string ``id``. Its ``kind`` is declared and
+    never tested, so it is not a field."""
+
+    id: str
 
 
 class LinkInput(InputModel):
@@ -185,6 +193,47 @@ class SubjectItem(SubjectEntryInput):
 
     name: NormalName
     digest: dict[str, str]
+
+
+class Plan(SubjectEntryInput):
+    """``body.plan``: the plan document, by digest, as a subject entry is, with its declared
+    (never tested) ``media_type`` and ``label``. asexec never parses the plan."""
+
+    model_config = ConfigDict(extra="forbid")
+    null_is_absent = False
+
+    name: NormalName
+    digest: dict[str, str]
+    media_type: str | None = None
+    label: str | None = None
+
+
+class EvidenceItem(SubjectEntryInput):
+    """One ``body.evidence[]`` entry: a file that backs a postreg, by digest, as a subject
+    entry is, with its declared (never tested) ``media_type`` and ``uri``."""
+
+    model_config = ConfigDict(extra="forbid")
+    null_is_absent = False
+
+    name: NormalName
+    digest: dict[str, str]
+    media_type: str | None = None
+    uri: str | None = None
+
+
+class Item(ItemInput):
+    """One committed item: an ``id`` a postreg's ``item_id`` names, and a declared ``kind``
+    (a run, an ablation, a search)."""
+
+    model_config = ConfigDict(extra="forbid")
+    null_is_absent = False
+
+    kind: str | None = None
+
+
+# What happened to an item (ROADMAP, New properties): the values a postreg's status may take.
+STATUSES = ("reported", "excluded", "blocked")
+Status = Literal["reported", "excluded", "blocked"]
 
 
 class Floor(FloorInput):
@@ -244,6 +293,13 @@ class ManifestBody(BaseModel):
     fulfills: str | None = None
     prev_hash: str | None = None
 
+    # the claim record: a prereg's plan and items, a postreg's item_id, status and evidence
+    plan: Plan | None = None
+    items: list[Item] | None = None
+    item_id: str | None = None
+    status: Status | None = None
+    evidence: Annotated[list[EvidenceItem], Field(min_length=1)] | None = None
+
     # optional context
     anchor: Anchor | None = None
     identity: list[Any] | None = None
@@ -263,11 +319,17 @@ class ManifestBody(BaseModel):
         # semantic bedrock: target is the only mandatory claim (due is optional).
         if self.target in (None, "", {}, []):
             raise ValueError("manifest body missing mandatory 'target'")
-        # content #4: one file, one entry.
-        names = [entry.name for entry in self.subject or []]
-        repeated = sorted({name for name in names if names.count(name) > 1})
+        # content #4: one file, one entry, in each list.
+        for field, entries in (("subject", self.subject), ("evidence", self.evidence)):
+            names = [entry.name for entry in entries or []]
+            repeated = sorted({name for name in names if names.count(name) > 1})
+            if repeated:
+                raise ValueError(f"{field} lists {', '.join(map(repr, repeated))} twice")
+        # one id, one item: a prereg whose item ids repeat fails complete.
+        ids = [item.id for item in self.items or []]
+        repeated = sorted({i for i in ids if ids.count(i) > 1})
         if repeated:
-            raise ValueError(f"subject lists {', '.join(map(repr, repeated))} twice")
+            raise ValueError(f"items list the id {', '.join(map(repr, repeated))} twice")
         # a postreg without a link cannot be checked against any commitment.
         if self.phase == "postreg" and not self.fulfills:
             raise ValueError("postreg manifest missing mandatory 'fulfills'")

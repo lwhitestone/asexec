@@ -164,7 +164,7 @@ Checked at 2026-12-31T23:59:59Z
 |---|---|---|
 | [`ceiling`](#ceiling) | • `ceiling.ceiling_type`<br>• `ceiling.nonce`<br>• `ceiling.witness_id`<br>• `ceiling.pubkey`<br>• `ceiling.response`<br>• `dsse.payload` | 1. `ceiling.ceiling_type` is `roughtime`<br>2. `ceiling.nonce` equals `ref`<br>3. `ceiling.witness_id` has a pinned key<br>4. `ceiling.pubkey`, if present, equals the pinned key<br>5. `ceiling.response` verifies against the pinned key |
 | [`chain`](#chain) | • `body.phase`<br>• `body.fulfills`<br>• `body.prev_hash`<br>• `pubkey`<br>• `dsse.signatures`<br>• `dsse.signatures[0].sig`<br>• `dsse.signatures[0].keyid` | 1. exactly one counted postreg has no `body.prev_hash`<br>2. every other `body.prev_hash` is the `ref` of a counted postreg<br>3. no `ref` is the `body.prev_hash` of more than one counted postreg |
-| [`content`](#content) | • `body.subject`<br>• `body.subject[].name`<br>• `body.subject[].hash_alg`<br>• `body.subject[].digest`<br>• `--artifacts` | 1. `body.subject` is a non-empty array of well-formed entries<br>2. the entry's `hash_alg` is available<br>3. `name` is a normalized relative path<br>4. no other entry has the same `name`<br>5. `name` resolves inside `--artifacts`<br>6. the artifact exists<br>7. the artifact is a regular file<br>8. the artifact is readable<br>9. recomputed digest equals `digest[hash_alg]` |
+| [`content`](#content) | • `body.subject`<br>• `body.subject[].name`<br>• `body.subject[].hash_alg`<br>• `body.subject[].digest`<br>• `body.plan` and its `name`, `hash_alg`, `digest`<br>• `body.evidence` and each entry's `name`, `hash_alg`, `digest`<br>• `--artifacts` | 1. `body.subject` and `body.evidence` are non-empty arrays, and `body.plan` an object, of well-formed entries<br>2. the entry's `hash_alg` is available<br>3. `name` is a normalized relative path<br>4. no other entry of the list has the same `name`<br>5. `name` resolves inside `--artifacts`<br>6. the artifact exists<br>7. the artifact is a regular file<br>8. the artifact is readable<br>9. recomputed digest equals `digest[hash_alg]` |
 | [`floor`](#floor) | • `body.anchor.floor.floor_type`<br>• `body.anchor.floor.chain_hash`<br>• `body.anchor.floor.round`<br>• `body.anchor.floor.signature`<br>• `body.anchor.floor.randomness` | 1. `floor_type` is `drand`<br>2. `chain_hash` is pinned<br>3. `round` is an integer and `signature` is hex<br>4. `randomness`, if present, equals `sha256(signature)`<br>5. `signature` BLS-verifies for `round` under the pinned key |
 | [`format`](#format) | • the file<br>• `dsse`<br>• `dsse.payloadType`<br>• `dsse.signatures`<br>• `dsse.payload` | 1. file is a well-formed JSON object with the `dsse` frame<br>2. `dsse.payload` is strict base64 of a well-formed JSON object<br>3. `dsse.payloadType` names a format this release reads |
 | [`keyconsist`](#keyconsist) | • `body.phase`<br>• `body.fulfills`<br>• `pubkey`<br>• `dsse.signatures`<br>• `dsse.signatures[0].sig`<br>• `dsse.signatures[0].keyid` | 1. every validly signed postreg naming the commitment's `ref` has the `dsse.signatures[0].keyid` of a commitment with that `ref` |
@@ -322,31 +322,46 @@ Checked at 2026-12-31T23:59:59Z
 
 ### `content`
 
-Subject digests recomputed from the original artifacts.
+Digests recomputed from the original artifacts: a manifest's subject, and the claim record's
+plan and evidence.
 
 A subject is an explicit list of files. Each entry names one file by its relative path under
 `--artifacts` and carries its own `hash_alg`; there is no default algorithm, and a
 body-level `body.hash_alg` (where asexec before 0.4.0 wrote it) is not read. Nothing hashes
 a directory: to commit to a tree, list its files, or pack it (a tar, for example) and list
-the archive.
+the archive. A prereg's `body.plan` (the plan document) is one entry of the same shape, and
+a postreg's `body.evidence` a list of them, each checked the way a subject entry is. Their
+`media_type`, `label` and `uri` are declared and not read (see
+[TrustedDeclared](#trusteddeclared)). asexec never parses the plan or the evidence.
 
 **Examines (\*)**
 - `body.subject`
 - `body.subject[].name`
 - `body.subject[].hash_alg`
 - `body.subject[].digest`
+- `body.plan`
+- `body.plan.name`
+- `body.plan.hash_alg`
+- `body.plan.digest`
+- `body.evidence`
+- `body.evidence[].name`
+- `body.evidence[].hash_alg`
+- `body.evidence[].digest`
 - `--artifacts`
 
-**Passes when all** (for each manifest that has a `body.subject`, and each of its entries)
-1. `body.subject` is a non-empty array, and each entry is an object whose `name` is a
-   string, whose own `hash_alg` is a string, and whose `digest[hash_alg]` is hex. An entry
-   without a `hash_alg` fails here.
+**Passes when all** (for each manifest that has a `body.subject`, a `body.plan` or a
+`body.evidence`, and each entry: each entry of `body.subject` and of `body.evidence`, and
+`body.plan` itself)
+1. `body.subject` and `body.evidence`, where present, are non-empty arrays, `body.plan`,
+   where present, is an object, and each entry is an object whose `name` is a string, whose
+   own `hash_alg` is a string, and whose `digest[hash_alg]` is hex. An entry without a
+   `hash_alg` fails here.
 2. `hash_alg` is available in this install: `sha-256` always, `blake3` only if installed.
 3. `name` is a relative path in normal form: segments separated by `/`, none of them empty,
    `.` or `..`, and no backslash. So an absolute name, `./a.txt`, `a//b.txt`, `a/`,
    `a/../b.txt` and `a\b.txt` fail, and one file has exactly one name on every system.
-4. No other entry of the same `body.subject` has the same `name`. Each entry that shares
-   its name fails.
+4. No other entry of the same list (`body.subject`, or `body.evidence`) has the same
+   `name`. Each entry that shares its name fails. A file may be both a subject and evidence.
 5. `name` resolved with symlinks against `--artifacts` is the `--artifacts` directory or
    beneath it. A symlink that points outside fails here.
 6. The resolved path exists. A `name` that no path on this system can have (one holding a
@@ -358,16 +373,17 @@ the archive.
    `digest[hash_alg]`, in either hex case.
 
 **When empty:** if `--artifacts` is not given or is empty (`--artifacts ""`), or no
-manifest that passes `format` has a `body.subject`, the test has nothing to examine and is
-`FAIL`, with the reason `requested but no content could be checked (need --artifacts and a
-manifest with a subject)`.
+manifest that passes `format` has a `body.subject`, a `body.plan` or a `body.evidence`, the
+test has nothing to examine and is `FAIL`, with the reason `requested but no content could
+be checked (need --artifacts and a manifest with a subject, plan or evidence)`.
 
-**Entry failure reasons** (shown per entry in the report), by item: `malformed subject entry`
-(or `malformed subject` for a `body.subject` that is no non-empty array) (#1),
-`algorithm unavailable: <alg>` (#2), `name is not a normalized relative path` (#3),
-`duplicate name` (#4), `path resolves outside --artifacts` (#5), `artifact not found` (#6),
-`artifact is not a file` (#7), `artifact unreadable: <error>` (#8), or a digest mismatch
-with `expected`/`actual` (#9).
+**Entry failure reasons** (shown per entry in the report, after `plan` or `evidence` for
+those entries), by item: `malformed subject entry`, `malformed plan entry` or `malformed
+evidence entry` (or `malformed subject` or `malformed evidence` for a list that is no
+non-empty array) (#1), `algorithm unavailable: <alg>` (#2), `name is not a normalized
+relative path` (#3), `duplicate name` (#4), `path resolves outside --artifacts` (#5),
+`artifact not found` (#6), `artifact is not a file` (#7), `artifact unreadable: <error>`
+(#8), or a digest mismatch with `expected`/`actual` (#9).
 
 **Not examined:** a manifest that fails `format`; any manifest when `--artifacts` is absent.
 
@@ -920,6 +936,23 @@ Each entry is the state in capitals and the prereg's `ref`, then its signer's ke
 a rejected postreg and why it does not count.
 [`notarization-only`](#matching-postregs-to-commitments) postregs are listed in their own
 block, since they have no prereg to sit under.
+
+## TrustedDeclared
+
+Signed properties that the report may show but no test reads. "Trusted" means only that the
+signer is accountable for them, not that they are true; a passing code says nothing about
+them. A declaration that gains a test moves to that test's *Examines* list.
+
+The claim record's (ROADMAP, *New properties*):
+- `body.plan.media_type`: the plan document's media type.
+- `body.plan.label`: a human-readable name for the plan.
+- `body.items[].kind`: what kind of item it is (a run, an ablation, a search), free text.
+- `body.evidence[].media_type`: an evidence file's media type.
+- `body.evidence[].uri`: where an evidence file can be fetched, if anywhere. `content`
+  hashes the file at `name` under `--artifacts`, never what `uri` names.
+
+The claim record's `body.items`, `body.items[].id`, `body.item_id` and `body.status` are read
+by no test in this version either.
 
 ## Not in this version
 

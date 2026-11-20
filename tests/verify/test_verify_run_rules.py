@@ -311,6 +311,19 @@ SIGNED_JUNK = [
     pytest.param("fulfills", {"a": 1}, id="fulfills-not-string"),
     pytest.param("prev_hash", ["a"], id="prev_hash-not-string"),
     pytest.param("due", ["a"], id="due-not-string"),
+    pytest.param("plan", "x", id="plan-not-object"),
+    pytest.param("plan", [1], id="plan-list"),
+    pytest.param("plan", {"name": {}, "hash_alg": [], "digest": "x"}, id="plan-fields"),
+    pytest.param("items", "x", id="items-not-list"),
+    pytest.param("items", [1, {"id": {}}, {"kind": 5}], id="items-entries"),
+    pytest.param("items", {"id": "S1"}, id="items-object"),
+    pytest.param("item_id", {"a": 1}, id="item_id-object"),
+    pytest.param("item_id", ["S1"], id="item_id-list"),
+    pytest.param("status", 5, id="status-number"),
+    pytest.param("status", ["reported"], id="status-list"),
+    pytest.param("evidence", "x", id="evidence-not-list"),
+    pytest.param("evidence", [{"name": None, "digest": 5}], id="evidence-entry-fields"),
+    pytest.param("evidence", {}, id="evidence-object"),
 ]
 
 
@@ -430,7 +443,7 @@ def test_never_raises__subject_named_as_no_path_can_be(scenario, name):
     assert report["code"] == "asexec-verify/1 content=FAIL format=PASS selfsig=PASS"
     (prereg,) = [m for m in report["manifests"] if m["phase"] == "prereg"]
     assert prereg["content"]["entries"] == [
-        {"name": name, "ok": False, "reason": "artifact not found"}
+        {"field": "subject", "name": name, "ok": False, "reason": "artifact not found"}
     ]
 
 

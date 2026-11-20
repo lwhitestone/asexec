@@ -17,9 +17,12 @@ import uuid
 from collections.abc import Callable
 from datetime import datetime
 
+from pydantic import ValidationError
+
 from . import __version__, drand, hashing, identity, keys, manifest, verifier
 from .constants import FORMATS, MANIFEST_PAYLOAD_TYPE, SUBJECT_DEFAULT_HASH_ALG
-from .errors import AsexecError, VerificationError
+from .errors import AsexecError, ManifestError, VerificationError
+from .models import STATUSES
 
 # A ref as the format signing writes it.
 REF_RE = re.compile(
@@ -50,13 +53,28 @@ def _load_json(path: str) -> str | dict:
 
 
 def _get_arg_or_file[T](
-    args, arg_name: str, file_arg_name: str, load_file: Callable[[str], T]
+    args,
+    arg_name: str,
+    file_arg_name: str,
+    load_file: Callable[[str], T],
+    parse_value: Callable[[str], T] | None = None,
 ) -> str | T | None:
-    """Load a value from ``--<arg>`` or ``--<file-arg>`` (argparse allows at most one)."""
+    """Load a value from ``--<arg>`` or ``--<file-arg>`` (argparse allows at most one).
+
+    ``parse_value``, if given, parses the inline ``--<arg>`` value into ``T`` (for example
+    ``json.loads``), as ``load_file`` reads the file. A ``ValueError`` from it is a usage
+    error: only the argument is wrong, so it exits ``EXIT_USAGE`` and nothing runs."""
     value = getattr(args, arg_name, None)
     file_path = getattr(args, file_arg_name, None)
     if value:
-        return value
+        if parse_value is None:
+            return value
+        try:
+            return parse_value(value)
+        except ValueError as e:
+            flag = "--" + arg_name.replace("_", "-")
+            sys.stderr.write(f"asexec {args.cmd}: error: argument {flag}: not valid JSON: {e}\n")
+            raise SystemExit(EXIT_USAGE) from None
     if file_path:
         try:
             return load_file(file_path)
@@ -80,6 +98,82 @@ def _get_declaration(args) -> str | dict | None:
 def _get_notes(args) -> str | dict | None:
     """Retrieve the notes value (from arg xor file), if any."""
     return _get_arg_or_file(args, "notes", "notes_file", _load_json)
+
+
+# What a --plan / --evidence entry may say. asexec hashes the file at ``name`` and fills in
+# ``hash_alg`` (--hash-alg) and ``digest``, as --subject does; the rest is declared, never
+# tested.
+_PLAN_FIELDS = ("name", "media_type", "label")
+_EVIDENCE_FIELDS = ("name", "media_type", "uri")
+
+
+def _described_entries(specs: list, flag: str, allowed: tuple[str, ...], alg: str) -> list[dict]:
+    """Entries for files described as ``{"name": <path>, ...}``: each file hashed as a
+    subject file is (``hashing.build_entries``), with its declared fields kept."""
+    for spec in specs:
+        if not isinstance(spec, dict) or not isinstance(spec.get("name"), str):
+            raise ManifestError(f"{flag} needs a 'name' (a file path) in each entry: {spec!r}")
+        if "hash_alg" in spec or "digest" in spec:
+            raise ManifestError(
+                f"{flag}: asexec hashes the file and fills in hash_alg and digest "
+                "(choose the algorithm with --hash-alg)"
+            )
+        unknown = sorted(set(spec) - set(allowed))
+        if unknown:
+            raise ManifestError(
+                f"{flag}: unknown field(s) {', '.join(map(repr, unknown))}; "
+                f"an entry may hold {', '.join(map(repr, allowed))}"
+            )
+    entries = hashing.build_entries([spec["name"] for spec in specs], alg)
+    return [
+        {**entry, **{k: v for k, v in spec.items() if k != "name"}}
+        for entry, spec in zip(entries, specs, strict=True)
+    ]
+
+
+def _get_plan(args) -> dict | None:
+    """``body.plan`` from --plan / --plan-file: one described file."""
+    spec = _get_arg_or_file(args, "plan", "plan_file", _load_json, json.loads)
+    if spec is None:
+        return None
+    if not isinstance(spec, dict):
+        raise ManifestError(f'--plan must be a JSON object, like {{"name": "plan.md"}}: {spec!r}')
+    if "name" not in spec:
+        raise ManifestError("--plan needs a 'name': the plan document's path")
+    return _described_entries([spec], "--plan", _PLAN_FIELDS, args.hash_alg)[0]
+
+
+def _get_items(args) -> list | None:
+    """``body.items`` from --items / --items-file: a list of ``{"id", "kind"}``, as given."""
+    items = _get_arg_or_file(args, "items", "items_file", _load_json, json.loads)
+    if items is not None and not isinstance(items, list):
+        raise ManifestError(f'--items must be a JSON array, like [{{"id": "S1"}}]: {items!r}')
+    return items
+
+
+def _get_evidence(args) -> list | None:
+    """``body.evidence`` from --evidence / --evidence-file: a non-empty list of described
+    files."""
+    specs = _get_arg_or_file(args, "evidence", "evidence_file", _load_json, json.loads)
+    if specs is None:
+        return None
+    if not isinstance(specs, list):
+        raise ManifestError(
+            f'--evidence must be a JSON array, like [{{"name": "out.json"}}]: {specs!r}'
+        )
+    if not specs:
+        raise ManifestError("--evidence must list at least one file")
+    return _described_entries(specs, "--evidence", _EVIDENCE_FIELDS, args.hash_alg)
+
+
+def _built(build: Callable[..., dict], *args, **kwargs) -> dict:
+    """A body from ``manifest.build_*``; what its writer model refuses is a clean error."""
+    try:
+        return build(*args, **kwargs)
+    except ValidationError as e:
+        raise ManifestError(
+            "; ".join(f"{'.'.join(map(str, x['loc'])) or 'body'}: {x['msg']}" for x in e.errors())
+        ) from None
 
 
 def _get_floor(args) -> dict | None:
@@ -191,13 +285,17 @@ def cmd_prereg(args) -> int:
         raise SystemExit(f"error: --target-file {args.target_file!r} holds no target")
     priv, pub = keys.load_signing_key(args.key)
     subject = _build_subject(args.subject, args.hash_alg)
-    body = manifest.build_prereg(
+    plan, items = _get_plan(args), _get_items(args)
+    body = _built(
+        manifest.build_prereg,
         target,
         due=args.due,
         declaration=_get_declaration(args),
         subject=subject,
         floor=_get_floor(args),
         notes=_get_notes(args),
+        plan=plan,
+        items=items,
     )
     mani = manifest.sign(body, priv, pub)
     ref = manifest.ref(manifest.read_body(mani)[0])
@@ -232,7 +330,9 @@ def cmd_postreg(args) -> int:
     due = args.due or (prereg_body or {}).get("due")
     declaration = _get_declaration(args) or (prereg_body or {}).get("declaration")
     subject = _build_subject(args.subject, args.hash_alg)
-    body = manifest.build_postreg(
+    evidence = _get_evidence(args)
+    body = _built(
+        manifest.build_postreg,
         target,
         fulfills=fulfills,
         due=due,
@@ -243,6 +343,9 @@ def cmd_postreg(args) -> int:
         notes=_get_notes(args),
         provenance=args.provenance,
         repro_recipe=args.repro_recipe,
+        item_id=args.item_id,
+        status=args.status,
+        evidence=evidence,
     )
     mani = manifest.sign(body, priv, pub)
     ref = manifest.ref(manifest.read_body(mani)[0])
@@ -295,7 +398,8 @@ def cmd_verify(args) -> int:
             _show(f"    {cs} content hashes {c['status']}")
             for e in c.get("entries", []):
                 if not e["ok"]:
-                    _show(f"        {NO} {e['name']}: {e.get('reason', 'digest mismatch')}")
+                    what = "" if e["field"] == "subject" else f"{e['field']} "  # plan, evidence
+                    _show(f"        {NO} {what}{e['name']}: {e.get('reason', 'digest mismatch')}")
 
     _show("\n=== commitments ===")
     if not report["commitments"] and report["rejected_preregs"]:
@@ -523,6 +627,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="free-form context (hypothesis/methodology)",
         file_help="structured JSON notes",
     )
+    _add_arg_or_file(
+        pr,
+        "plan",
+        help='the plan the claim is tested against, as JSON: {"name": <file path>, '
+        '"media_type": ..., "label": ...}; asexec hashes the file (--hash-alg)',
+        file_help="the --plan JSON, from a file",
+    )
+    _add_arg_or_file(
+        pr,
+        "items",
+        help='what the claim commits to deliver, as a JSON array: [{"id": "S1", "kind": '
+        '"run"}, ...]; ids must be unique, and each is accounted for by a postreg\'s --item-id',
+        file_help="the --items JSON array, from a file",
+    )
     _add_anchor_flags(pr)
     pr.add_argument("--out", default="preregistration.json")
     pr.set_defaults(func=cmd_prereg)
@@ -566,6 +684,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="JSON: {seed, decode, runtime} if provenance=reproducible",
     )
     _add_arg_or_file(po, "notes")
+    po.add_argument("--item-id", help="the id of the prereg's item this postreg accounts for")
+    po.add_argument(
+        "--status",
+        choices=STATUSES,
+        help="what happened to the item: " + " | ".join(STATUSES),
+    )
+    _add_arg_or_file(
+        po,
+        "evidence",
+        help='files that back this postreg, as a JSON array: [{"name": <file path>, '
+        '"media_type": ..., "uri": ...}, ...]; asexec hashes each file (--hash-alg)',
+        file_help="the --evidence JSON array, from a file",
+    )
     _add_anchor_flags(po)
     po.add_argument("--out", default="postregistration.json")
     po.set_defaults(func=cmd_postreg)

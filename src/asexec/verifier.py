@@ -377,13 +377,18 @@ def _resolve_inside(artifacts_dir: str, name: str) -> Any:
     return path
 
 
-def _verify_entry(item: Any, artifacts_dir: str, repeated: set[str]) -> dict[str, Any]:
-    """content #1-#9 for one entry, in order; the first that fails is its reason."""
+def _verify_entry(item: Any, artifacts_dir: str, repeated: set[str], field: str) -> dict[str, Any]:
+    """content #1-#9 for one entry of ``field`` (subject, plan or evidence), in order; the
+    first that fails is its reason."""
+    return {"field": field, **_check_entry(item, artifacts_dir, repeated, field)}
+
+
+def _check_entry(item: Any, artifacts_dir: str, repeated: set[str], field: str) -> dict[str, Any]:
     label = str(item.get("name") if isinstance(item, dict) else item)[:80]
     try:
         entry = SubjectEntryInput.model_validate(item)  # content #1
     except ValidationError:
-        return {"name": label, "ok": False, "reason": "malformed subject entry"}
+        return {"name": label, "ok": False, "reason": f"malformed {field} entry"}
     name, alg = entry.name, entry.hash_alg
     expected = entry.digest[alg]
     if alg not in hashing.available_algorithms():  # content #2
@@ -414,22 +419,33 @@ def _repeated_names(entries: list[Any]) -> set[str]:
 
 
 def verify_content(body: dict[str, Any], artifacts_dir: str | None) -> dict[str, Any]:
-    """``content`` for a manifest that passed ``format``: each ``body.subject`` entry, read
-    under its own ``hash_alg`` (there is no default)."""
+    """``content`` for a manifest that passed ``format``: each ``body.subject`` entry, the
+    ``body.plan`` entry and each ``body.evidence`` entry, each read under its own
+    ``hash_alg`` (there is no default). Names are unique within each list."""
     if not artifacts_dir:
         return {"status": "skipped", "reason": "no artifacts provided"}
-    present, subject = _lookup(body, "subject")
-    if not present:
-        return {"status": "skipped", "reason": "manifest has no subject"}
-    try:
-        SubjectInput.validate_python(subject)  # content #1 (an array of entries)
-    except ValidationError:
-        return {
-            "status": "mismatch",
-            "entries": [{"name": "(subject)", "ok": False, "reason": "malformed subject"}],
-        }
-    repeated = _repeated_names(subject)
-    entries = [_verify_entry(item, artifacts_dir, repeated) for item in subject]
+    entries: list[dict[str, Any]] = []
+    examined = False
+    for field in ("subject", "plan", "evidence"):
+        present, value = _lookup(body, field)
+        if not present:
+            continue
+        examined = True
+        if field == "plan":  # one entry
+            entries.append(_verify_entry(value, artifacts_dir, set(), field))
+            continue
+        try:
+            SubjectInput.validate_python(value)  # content #1 (a non-empty array of entries)
+        except ValidationError:
+            name = f"({field})"
+            entries.append(
+                {"field": field, "name": name, "ok": False, "reason": f"malformed {field}"}
+            )
+            continue
+        repeated = _repeated_names(value)
+        entries += [_verify_entry(item, artifacts_dir, repeated, field) for item in value]
+    if not examined:
+        return {"status": "skipped", "reason": "manifest has no subject, plan or evidence"}
     return {"status": "ok" if all(e["ok"] for e in entries) else "mismatch", "entries": entries}
 
 
@@ -679,7 +695,7 @@ def _evaluate(tests, manifests, commitments, artifacts_dir) -> dict[str, dict[st
         ]
         nowhere = (
             "requested but no content could be checked "
-            "(need --artifacts and a manifest with a subject)"
+            "(need --artifacts and a manifest with a subject, plan or evidence)"
         )
         res["content"] = _tally(units, nowhere, "subject(s)")
 

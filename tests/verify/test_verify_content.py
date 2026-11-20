@@ -16,18 +16,27 @@ from asexec.verifier import verify_paths
 
 PASS = "asexec-verify/1 content=PASS format=PASS selfsig=PASS"
 FAIL = "asexec-verify/1 content=FAIL format=PASS selfsig=PASS"
-EMPTY = "requested but no content could be checked (need --artifacts and a manifest with a subject)"
+EMPTY = (
+    "requested but no content could be checked"
+    " (need --artifacts and a manifest with a subject, plan or evidence)"
+)
 EVAL_DIGEST = d.DIGESTS["harness/eval.py"]
 
 
-def _entry_reasons(report):
-    """Failure reasons of every subject entry that did not match."""
+def _entry_reasons(report, field=None):
+    """Failure reasons of every entry (of ``field`` only, if given) that did not match."""
     return [
         entry["reason"]
         for mani in report["manifests"]
         for entry in mani["content"].get("entries", [])
-        if not entry["ok"]
+        if not entry["ok"] and field in (None, entry["field"])
     ]
+
+
+def _with_claim_record(scenario):
+    """The prereg carries a plan, and postreg0 evidence, both matching --artifacts."""
+    scenario.set("prereg", "body.plan", d.PLAN)
+    scenario.set("postreg0", "body.evidence", d.EVIDENCE)
 
 
 def _only_prereg(scenario):
@@ -261,6 +270,116 @@ def test_content__pass__9_digest_hex_accepts_either_case_and_whitespace(scenario
 
     scenario.mutate_all(respell)
     assert scenario.code("content") == PASS
+
+
+# --- plan and evidence: each checked the way a subject entry is ------------------ #
+
+
+def test_content__pass__1_plan_and_evidence_are_checked_like_subject_entries(scenario):
+    """content #1-#9 for body.plan (one entry) and each body.evidence entry: their media_type,
+    label and uri are not read."""
+    _with_claim_record(scenario)
+    report = scenario.verify("content")
+    assert report["code"] == PASS
+    fields = sorted({e["field"] for m in report["manifests"] for e in m["content"]["entries"]})
+    assert fields == ["evidence", "plan", "subject"]
+
+
+@pytest.mark.parametrize("field", ["plan", "evidence"])
+def test_content__pass__1_a_plan_or_evidence_alone_is_examined(scenario, field):
+    """content (*): a manifest with only a plan, or only evidence, is examined."""
+    scenario.mutate_all(lambda body: body.pop("subject"))
+    _only_prereg(scenario)
+    value = d.PLAN if field == "plan" else d.EVIDENCE
+    scenario.set("prereg", f"body.{field}", value)
+    report = scenario.verify("content")
+    assert report["code"] == PASS
+    assert report["results"]["content"]["applicable"] == 1
+
+
+@pytest.mark.parametrize(
+    "plan",
+    [
+        "plan.md",
+        ["plan.md"],
+        {"name": "plan.md", "digest": {"sha-256": d.DIGESTS["plan.md"]}},
+        {**d.PLAN, "digest": {"sha-256": "zz"}},
+    ],
+    ids=["string", "list", "hash_alg-missing", "digest-not-hex"],
+)
+def test_content__fail__1_plan_is_a_well_formed_entry(scenario, plan):
+    """content #1: a present body.plan is one well-formed entry."""
+    _only_prereg(scenario)
+    scenario.set("prereg", "body.plan", plan)
+    report = scenario.verify("content")
+    assert report["code"] == FAIL
+    assert _entry_reasons(report) == ["malformed plan entry"]
+
+
+@pytest.mark.parametrize(
+    "evidence,reason",
+    [
+        ([], "malformed evidence"),
+        (d.EVIDENCE[0], "malformed evidence"),
+        ([{"name": "results/scores.json"}], "malformed evidence entry"),
+        ([5], "malformed evidence entry"),
+    ],
+    ids=["empty-list", "object", "entry-without-digest", "entry-not-object"],
+)
+def test_content__fail__1_evidence_is_a_non_empty_array_of_entries(scenario, evidence, reason):
+    """content #1: a present body.evidence is a non-empty array of well-formed entries."""
+    scenario.set("postreg0", "body.evidence", evidence)
+    report = scenario.verify("content")
+    assert report["code"] == FAIL
+    assert _entry_reasons(report) == [reason]
+
+
+@pytest.mark.parametrize("field", ["plan", "evidence"])
+def test_content__fail__3_plan_and_evidence_names_are_normalized(scenario, field):
+    """content #3: as for a subject entry."""
+    _with_claim_record(scenario)
+    name = "body.plan.name" if field == "plan" else "body.evidence.0.name"
+    scenario.set("prereg" if field == "plan" else "postreg0", name, "./" + d.EVIDENCE[0]["name"])
+    report = scenario.verify("content")
+    assert report["code"] == FAIL
+    assert _entry_reasons(report, field) == ["name is not a normalized relative path"]
+
+
+def test_content__fail__4_evidence_names_are_unique(scenario):
+    """content #4: no two evidence entries have the same name."""
+    scenario.set("postreg0", "body.evidence", d.EVIDENCE * 2)
+    report = scenario.verify("content")
+    assert report["code"] == FAIL
+    assert _entry_reasons(report, "evidence") == ["duplicate name"] * 2
+
+
+def test_content__pass__4_a_name_in_subject_and_evidence_is_not_a_duplicate(scenario):
+    """content #4: names are unique within one list; a file may be a subject and evidence."""
+    scenario.set("postreg0", "body.evidence", [d.subject_entry("transcript0.txt")])
+    assert scenario.code("content") == PASS
+
+
+@pytest.mark.parametrize("field", ["plan", "evidence"])
+def test_content__fail__7_plan_and_evidence_name_a_file(scenario, field):
+    """content #7: a plan or evidence entry naming a directory fails."""
+    _with_claim_record(scenario)
+    path = "body.plan.name" if field == "plan" else "body.evidence.0.name"
+    scenario.set("prereg" if field == "plan" else "postreg0", path, "harness")
+    report = scenario.verify("content")
+    assert report["code"] == FAIL
+    assert _entry_reasons(report, field) == ["artifact is not a file"]
+
+
+@pytest.mark.parametrize("target", ["plan.md", "results/scores.json"])
+def test_content__fail__9_plan_and_evidence_digests(scenario, target):
+    """content #9: the plan document and the evidence files are hashed and compared."""
+    _with_claim_record(scenario)
+    (scenario.artifacts / target).write_text("CHANGED\n")
+    report = scenario.verify("content")
+    assert report["code"] == FAIL
+    (bad,) = [e for m in report["manifests"] for e in m["content"]["entries"] if not e["ok"]]
+    assert bad["field"] == ("plan" if target == "plan.md" else "evidence")
+    assert bad["name"] == target and "expected" in bad
 
 
 def test_content__fail__empty_no_artifacts_provided(scenario):

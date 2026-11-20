@@ -174,7 +174,8 @@ manifest, even if that manifest happens to carry it; there, it stays an unknown 
   resolves it under `--artifacts`. Signing also refuses an absolute path, a `..` component
   and a backslash, and `content` fails a name not in that normal form.)
 - The claim record: `plan`, `items`, and per-postreg `item_id`, `status` and `evidence`
-  (see *New properties*).
+  (see *New properties*). (Done ahead of 0.4.0: written by `--plan`, `--items`, `--item-id`,
+  `--status` and `--evidence`, and `content` checks `plan` and `evidence`.)
 - Convention: one prereg per commitment (a promise, or an assessment's plan). No
   list-level schema.
 

@@ -794,3 +794,157 @@ def test_version_flag(capsys):
         run("--version")
     assert e.value.code == 0
     assert capsys.readouterr().out.startswith("asexec ")
+
+
+# --- the claim record -------------------------------------------------------- #
+@pytest.fixture
+def claim_dir(tmp_path, monkeypatch):
+    """An artifacts directory with a plan and two evidence files, signing run inside it."""
+    art = tmp_path / "art"
+    (art / "results").mkdir(parents=True)
+    (art / "plan.md").write_text("# plan\n")
+    (art / "results" / "s1.json").write_text("{}\n")
+    (art / "results" / "s2.json").write_text("[]\n")
+    monkeypatch.chdir(art)
+    return art
+
+
+def _sha(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_prereg_writes_plan_and_items(tmp_path, key, claim_dir):
+    """--plan names a file (asexec hashes it and fills in hash_alg and digest), with its
+    declared media_type and label; --items is the list as given."""
+    pre = tmp_path / "pre.json"
+    plan = '{"name": "plan.md", "media_type": "text/markdown", "label": "the plan"}'
+    items = '[{"id": "S1", "kind": "run"}, {"id": "S2", "kind": "ablation"}]'
+    assert run("prereg", "--key", key, "--target", "t", "--plan", plan, "--items", items,
+               "--out", pre) == 0  # fmt: skip
+    body = _body(pre)
+    assert body["plan"] == {
+        "name": "plan.md",
+        "hash_alg": "sha-256",
+        "digest": {"sha-256": _sha(claim_dir / "plan.md")},
+        "media_type": "text/markdown",
+        "label": "the plan",
+    }
+    assert body["items"] == [{"id": "S1", "kind": "run"}, {"id": "S2", "kind": "ablation"}]
+
+
+def test_plan_items_and_evidence_from_files(tmp_path, key, claim_dir):
+    (tmp_path / "plan.json").write_text('{"name": "plan.md"}')
+    (tmp_path / "items.json").write_text('[{"id": "S1"}]')
+    (tmp_path / "evidence.json").write_text('[{"name": "results/s1.json"}]')
+    pre, post = tmp_path / "pre.json", tmp_path / "post.json"
+    assert run("prereg", "--key", key, "--target", "t", "--plan-file", tmp_path / "plan.json",
+               "--items-file", tmp_path / "items.json", "--out", pre) == 0  # fmt: skip
+    assert run("postreg", "--key", key, "--fulfills", pre, "--evidence-file",
+               tmp_path / "evidence.json", "--out", post) == 0  # fmt: skip
+    assert _body(pre)["plan"]["name"] == "plan.md" and _body(pre)["items"] == [{"id": "S1"}]
+    assert [e["name"] for e in _body(post)["evidence"]] == ["results/s1.json"]
+
+
+def test_postreg_writes_item_id_status_and_evidence(tmp_path, key, claim_dir, capsys):
+    pre, post = tmp_path / "pre.json", tmp_path / "post.json"
+    assert run("prereg", "--key", key, "--target", "t", "--plan", '{"name": "plan.md"}',
+               "--items", '[{"id": "S1"}]', "--out", pre) == 0  # fmt: skip
+    evidence = '[{"name": "results/s1.json", "media_type": "application/json", "uri": "https://e"}]'
+    assert run("postreg", "--key", key, "--fulfills", pre, "--item-id", "S1", "--status",
+               "excluded", "--evidence", evidence, "--hash-alg", "sha-256",
+               "--out", post) == 0  # fmt: skip
+    body = _body(post)
+    assert (body["item_id"], body["status"]) == ("S1", "excluded")
+    assert body["evidence"] == [
+        {
+            "name": "results/s1.json",
+            "hash_alg": "sha-256",
+            "digest": {"sha-256": _sha(claim_dir / "results" / "s1.json")},
+            "media_type": "application/json",
+            "uri": "https://e",
+        }
+    ]
+    assert "plan" not in body and "items" not in body  # prereg fields, not inherited
+    capsys.readouterr()
+    tests = "format,selfsig,content"
+    assert run("verify", pre, post, "--tests", tests, "--artifacts", claim_dir) == 0
+    (claim_dir / "plan.md").write_text("# another plan\n")
+    (claim_dir / "results" / "s1.json").write_text('{"x": 1}\n')
+    capsys.readouterr()
+    assert run("verify", pre, post, "--tests", tests, "--artifacts", claim_dir) == 2
+    out = capsys.readouterr().out
+    assert f"        {cli.NO} plan plan.md: digest mismatch" in out
+    assert f"        {cli.NO} evidence results/s1.json: digest mismatch" in out
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("prereg", "--plan", "{nope"),
+        ("prereg", "--items", "[1,"),
+        ("postreg", "--evidence", "not json"),
+        ("postreg", "--status", "done"),
+        ("prereg", "--plan", "{}", "--plan-file", "p.json"),
+        ("prereg", "--items", "[]", "--items-file", "i.json"),
+        ("postreg", "--evidence", "[]", "--evidence-file", "e.json"),
+    ],
+    ids=[
+        "plan-not-json",
+        "items-not-json",
+        "evidence-not-json",
+        "status-unknown",
+        "plan-and-file",
+        "items-and-file",
+        "evidence-and-file",
+    ],
+)
+def test_claim_record_argument_errors_are_usage_errors(tmp_path, key, argv, capsys):
+    """Only the arguments are wrong: exit 64, and nothing is written."""
+    cmd, *rest = argv
+    link = ["--target", "t"] if cmd == "prereg" else ["--target", "t", "--fulfills", REF]
+    with pytest.raises(SystemExit) as e:
+        run(cmd, "--key", key, *link, *rest, "--out", tmp_path / "out.json")
+    assert e.value.code == cli.EXIT_USAGE
+    assert "error: argument" in capsys.readouterr().err
+    assert not (tmp_path / "out.json").exists()
+
+
+@pytest.mark.parametrize(
+    "argv,message",
+    [
+        (("prereg", "--plan", '{"name": "results"}'), "is a directory"),
+        (("prereg", "--plan", '"plan.md"'), "--plan must be a JSON object"),
+        (("prereg", "--plan", '{"label": "L"}'), "--plan needs a 'name'"),
+        (("prereg", "--plan", '{"name": "plan.md", "digest": {}}'), "fills in"),
+        (("prereg", "--plan", '{"name": "plan.md", "colour": 1}'), "colour"),
+        (("prereg", "--items", '{"id": "S1"}'), "--items must be a JSON array"),
+        (("prereg", "--items", '[{"id": "S1"}, {"id": "S1"}]'), "S1"),
+        (("prereg", "--plan", '{"name": "absent.md"}'), "absent.md"),
+        (("postreg", "--evidence", '{"name": "plan.md"}'), "--evidence must be a JSON array"),
+        (("postreg", "--evidence", "[]"), "at least one"),
+        (("postreg", "--evidence", '[{"name": "plan.md"}, {"name": "./plan.md"}]'), "twice"),
+        (("postreg", "--evidence", '[{"name": "plan.md", "hash_alg": "x"}]'), "fills in"),
+    ],
+    ids=[
+        "plan-directory",
+        "plan-not-object",
+        "plan-no-name",
+        "plan-digest-given",
+        "plan-unknown-field",
+        "items-not-array",
+        "item-ids-repeat",
+        "plan-missing-file",
+        "evidence-not-array",
+        "evidence-empty",
+        "evidence-twice",
+        "evidence-hash_alg-given",
+    ],
+)
+def test_claim_record_value_errors_exit_EXIT_ERROR(tmp_path, key, claim_dir, argv, message, capsys):
+    """A value that parses but cannot be signed: exit 1, one line, nothing written."""
+    cmd, *rest = argv
+    link = ["--target", "t"] if cmd == "prereg" else ["--target", "t", "--fulfills", REF]
+    assert run(cmd, "--key", key, *link, *rest, "--out", tmp_path / "out.json") == cli.EXIT_ERROR
+    err = capsys.readouterr().err
+    assert err.startswith("error: ") and "Traceback" not in err and message in err
+    assert not (tmp_path / "out.json").exists()

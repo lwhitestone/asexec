@@ -66,6 +66,11 @@ def _build(
     provenance=None,
     repro_recipe=None,
     notes=None,
+    plan=None,
+    items=None,
+    item_id=None,
+    status=None,
+    evidence=None,
 ) -> dict[str, Any]:
     """Construct + validate a body via the model, return the plain signed dict."""
     anchor = Anchor(floor=floor) if floor is not None else None
@@ -82,6 +87,11 @@ def _build(
         provenance=provenance,
         repro_recipe=repro_recipe,
         notes=notes,
+        plan=plan,
+        items=items,
+        item_id=item_id,
+        status=status,
+        evidence=evidence,
     )
     return body.to_body()
 
@@ -159,13 +169,16 @@ def _check_bedrock(body: dict[str, Any]) -> None:
     if missing:
         raise ManifestError(f"manifest body missing mandatory field(s): {', '.join(missing)}")
     _check_entries(body.get("subject"), "subject")
+    _check_entries(body.get("evidence"), "evidence")
+    if isinstance(body.get("plan"), dict):
+        _check_entries([body["plan"]], "plan")
     if body["phase"] == "postreg" and "fulfills" not in body:
         raise ManifestError("postreg manifest missing mandatory 'fulfills'")
 
 
 def _check_entries(entries: Any, field: str) -> None:
-    """Each entry of a hand-built ``subject`` carries its own ``hash_alg``, and no two share
-    a ``name`` (what ``content`` would fail)."""
+    """Each entry of a hand-built ``subject``, ``evidence`` or ``plan`` carries its own
+    ``hash_alg``, and no two of one list share a ``name`` (what ``content`` would fail)."""
     if not isinstance(entries, list):
         return
     names = []

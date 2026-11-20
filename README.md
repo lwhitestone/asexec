@@ -254,6 +254,14 @@ The body (`dsse.payload` decoded):
   "subject": [                                          // files, each hashed as listed
     { "name": "harness/run.py", "hash_alg": "sha-256", "digest": { "sha-256": "2c26b46b…" } }
   ],
+  "plan": {                                             // the plan (--plan), hashed
+    "name": "plan.md", "hash_alg": "sha-256", "digest": { "sha-256": "5d41402a…" },
+    "media_type": "text/markdown", "label": "refusal study plan" // declared, never tested
+  },
+  "items": [                                            // what each postreg accounts for
+    { "id": "R1", "kind": "run" },                      // kind: declared, never tested
+    { "id": "R2", "kind": "ablation" }
+  ],
   "anchor": {
     "floor": {                                          // drand (--floor): not before
       "floor_type": "drand",
@@ -297,6 +305,12 @@ The body (`dsse.payload` decoded):
   ],
   "fulfills": "sha-256:4be1c1f8…",                      // always in a postreg
   "prev_hash": "sha-256:07ad3b2e…",                     // previous postreg
+  "item_id": "R1",                                      // the prereg's item it accounts for
+  "status": "reported",                                 // reported | excluded | blocked
+  "evidence": [                                         // files that back it (--evidence)
+    { "name": "results/r1.json", "hash_alg": "sha-256", "digest": { "sha-256": "7c211433…" },
+      "media_type": "application/json", "uri": "https://lab.example/r1" } // declared
+  ],
   "anchor": {
     "floor": {                                          // drand (--floor): not before
       "floor_type": "drand",

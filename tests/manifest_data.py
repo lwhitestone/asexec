@@ -34,12 +34,16 @@ from asexec.constants import FORMATS, MANIFEST_PAYLOAD_TYPE
 ARTIFACTS = {
     "harness/eval.py": "def run():\n    return 42\n",
     **{f"transcript{i}.txt": f"run {i}: score=0.{i}\n" for i in range(3)},
+    "plan.md": "# Plan\n\nS1: run the suite.\n",
+    "results/scores.json": '{"score": 0.9}\n',
 }
 DIGESTS = {
     "harness/eval.py": "2d748fe25f2542176478b701458b2650b9a5dabd66b226f1565d0745c473e915",
     "transcript0.txt": "95df040e723a615372bc3d293ffef85be5b530e678fcb26e18f7177a41524691",
     "transcript1.txt": "0d576426c32f17c207749e124f2aa222dd863f92d7a810dcf8097f078398239b",
     "transcript2.txt": "9e692c724057f5d7662349313efb4420cc2b3d1124dda2d61d068eccaa074d4e",
+    "plan.md": "a373365687dd7a5512ed4a5060b7f97bb035876de36515611dfc07bc00f61cd5",
+    "results/scores.json": "e177acaa91d9882935eb4944222eed40cd805ec3019f7fc9b96df72063fcebf9",
 }
 
 TARGET = {"kind": "api", "provider": "anthropic", "model_id": "m", "endpoint": ""}
@@ -93,6 +97,24 @@ POSTREG = {
     "subject": [subject_entry("transcript0.txt"), subject_entry("harness/eval.py")],
     "fulfills": ref(PREREG),
     "notes": "postreg0",
+}
+
+
+# The claim record (ROADMAP, New properties): a prereg's plan and items, and a postreg's
+# item_id, status and evidence. plan and each evidence entry are checked like a subject entry.
+PLAN = {**subject_entry("plan.md"), "media_type": "text/markdown", "label": "the plan"}
+ITEMS = [{"id": "S1", "kind": "run"}, {"id": "S2", "kind": "ablation"}]
+EVIDENCE = [
+    {**subject_entry("results/scores.json"), "media_type": "application/json", "uri": "https://e"}
+]
+CLAIM_PREREG = {**PREREG, "plan": PLAN, "items": ITEMS, "notes": "claim prereg"}
+CLAIM_POSTREG = {
+    **POSTREG,
+    "fulfills": ref(CLAIM_PREREG),
+    "item_id": "S1",
+    "status": "reported",
+    "evidence": EVIDENCE,
+    "notes": "claim postreg",
 }
 
 
