@@ -188,7 +188,7 @@ breaks any vector that hardcodes it. The options:
 
 - [x] 0. Decisions D1–D6 above; #47 and #48 opened for D4
 - [x] 1. #35: predicate type, `payloadType` `v1`, drop `schema_id` (D1, D1b) (on feature/0321)
-- [ ] 2. #26: split `BDR` into `format` and `selfsig` (D3)
+- [x] 2. #26: split `BDR` into `format` and `selfsig` (D3) (on feature/0321)
 - [ ] 3. #31: `FORMATS` table; an unknown format fails `format`
 - [ ] 4. #30: beta release support (after #31, because it rewrites the `FORMATS` key)
 - [ ] 5. #44 (D2), then #42 and #43
@@ -393,3 +393,224 @@ predicateType: 6; `schema_id` back on `ManifestBody`: 6), and it re-derived ever
 vector with an independent PyNaCl script. Post-merge on `feature/0321` at `f17e083`:
 `scripts/check.sh` clean, 402 passed; `examples/adequacy-test/run.py` exit 0. CI on the last
 PR push (`04dfe45`, run 44670856152): lint, build, test on 3.12, 3.13 and 3.14 pass.
+
+### Checkpoint 2: #26
+
+**Landed** (branch `feature/0321-checkpoint2`):
+- #26, `356b6d5`: `BDR` is split into two required tests, `format` and `selfsig`.
+  `verifier.TEST_CATALOG` drops `BDR` and adds both, and `verifier.REQUIRED_TEST` becomes
+  the set `REQUIRED_TESTS = frozenset({"format", "selfsig"})`. `--tests` without either is
+  a usage error naming what is missing. `verify_signature` is replaced by `verify_format`
+  and `verify_selfsig`. Each manifest record now has a `format` slice (`ok`, `errors`) and a
+  `selfsig` slice (`examined`, `signature_ok`, `keyid_ok`) in place of `signature`. The
+  report prints a malformed file's reason as `✗ format: malformed: …`. The CLI help and
+  `models.py` comments are updated. `docs/VERIFICATION.md` has new run rules, a section
+  and a summary row for each test, the matching table and every example code and report.
+  `README.md`, `ROADMAP.md`, `docs/MULTIVERSION.md`, `docs/DEVELOPMENT.md` and
+  `docs/FORMAT.md`, the `ci.yml` and `publish.yml` smoke tests, and
+  `examples/adequacy-test` (`run.py`, the README's verify step) use the new names.
+  `tests/verify/test_verify_bdr.py` is split into `test_verify_format.py` and
+  `test_verify_selfsig.py`, and every other test is moved to the new tokens.
+
+**What the split means in this version** (before #31 and #32):
+- `format` examines every manifest file found. Its conditions are #1 (readable, a JSON
+  object, at most 64 deep, no duplicate key, an object `payload` and `signature`, canonical
+  bytes) and #2 (`signature.pubkey` and `signature.sig` are hex). Together these are exactly
+  the malformed rule, which is unchanged. *When empty* is the old `BDR` empty case, with the
+  reason `no manifests to verify`. #31's unknown-`payloadType` failure has a marked place in
+  `verify_format` and in `format`'s *Does not establish* line, and
+  `test_not_enforced_yet__envelope_payload_type` is where it will show up. It is not
+  implemented.
+- `selfsig` examines only files that pass `format`. Its conditions are #1 (the signature
+  verifies over the PAE input by `pubkey`) and #2 (`keyid` derives from `pubkey`), which were
+  `BDR` #2 and #3. When no file passes `format` (none found included) it is empty and fails
+  with `no manifest passes format`. #32's "exactly one signature" is not added.
+- Matching condition 2, `keyconsist`'s condition, the `✓`/`✗` in the manifests block and the
+  summary tables now read "the `selfsig` conditions".
+
+**Evidence:**
+- `scripts/check.sh`: ruff check and format check clean. pytest: 402 passed before
+  (`f88881d`), 414 after. The 24 tests of `test_verify_bdr.py` became 22 in
+  `test_verify_format.py` and 6 in `test_verify_selfsig.py` (+4). `test_cli.py` has +6 (the
+  two new usage-error cases, the three what-is-missing cases, help text) and
+  `test_verify_run_rules.py` +2 (the must-include test is parametrized three ways).
+- Red first: with only the tests changed, 258 failed and 156 passed. 232 were
+  `KeyError: 'format'` (`verify_paths` produced no such result) and 13 were
+  `SystemExit: 64` (`--tests format,selfsig` was an unknown test). The rest were 3
+  doc-coverage failures (the doc still listed `BDR` #1-#3 and had no `format` or `selfsig`
+  items), 3 `parse_tests` error-text mismatches, the `unknown test(s): selfsig, format`
+  dedup failure, and the CLI help and missing-test texts. With `verifier.py` and `cli.py`
+  changed, only the 3 doc-coverage tests failed, and they passed once
+  `docs/VERIFICATION.md` was rewritten.
+- Tests that pin each requirement:
+  - `format`: `test_format__pass__all`, `__pass__1_nesting_at_the_limit`,
+    `__pass__1_brackets_inside_strings_do_not_nest`,
+    `__pass__2_hex_accepts_either_case_and_whitespace`, `__fail__1_well_formed_file` (8
+    malformed files: each reads `format=FAIL selfsig=PASS`, and selfsig examines 4 of 5),
+    `__fail__1_no_duplicate_keys`, `__fail__1_nested_at_most_64_deep`,
+    `__fail__1_payload_has_canonical_bytes` (new),
+    `__fail__1_missing_file_is_examined_and_malformed`,
+    `__fail__1_unlistable_directory_is_examined_and_malformed`,
+    `__fail__2_pubkey_and_sig_are_hex`, `__fail__empty_no_manifests`,
+    `__fail__empty_directory_with_no_json_files`.
+  - `selfsig`: `test_selfsig__pass__all`, `__fail__1_signature_covers_payload`,
+    `__fail__1_signature_by_pubkey`, `__fail__2_keyid_derives_from_pubkey` (each
+    `format=PASS selfsig=FAIL`), `__fail__empty_no_manifest_passes_format` (every file has a
+    non-hex pubkey: `format=FAIL selfsig=FAIL`, applicable 0, its own reason),
+    `__fail__empty_no_manifests`.
+  - `--tests`: `test_tests_arg__must_include_format_and_selfsig[neither|no-selfsig|no-format]`
+    (the error names the missing test(s)), `test_tests_arg__is_deduplicated_in_catalog_order`,
+    `tests/test_cli.py::test_verify_bad_tests_is_a_usage_error[no-required|no-selfsig|no-format|unknown|none]`
+    (exit 64, no code), `test_verify_tests_without_a_required_test_names_what_is_missing`,
+    `test_verify_help_names_both_required_tests`.
+  - Codes sorted by name: `test_code__one_token_per_requested_test_sorted_by_name`
+    (`chain=PASS format=PASS keyconsist=PASS selfsig=PASS`, either order of request).
+  - Malformed reasons attributed to `format`: `test_verify_exit_codes_and_malformed_file`
+    (`    ✗ format: malformed: ` under the file, `format=FAIL selfsig=PASS`).
+  - Malformed is examined by no other test, `selfsig` included:
+    `test_run__malformed_file_fails_format_and_no_other_test_examines_it` and
+    `test_run__file_failing_format_is_examined_by_no_other_test`.
+  - `tests/test_constants.py::test_manifest_payload_type_change_fails_what_was_signed_before_it`
+    now pins `PRE_V1_MANIFEST` as `format=PASS selfsig=FAIL`. Verify doesn't read
+    `payloadType` yet, so the 0.3.x signature fails `selfsig` and not `format`. #31 changes
+    this to `format=FAIL`.
+- **No other verdict changes (the pin).** A pytest plugin (kept in the session scratchpad,
+  not in the repo) wraps `verifier.verify_paths`. Every call, the CLI's included, also runs
+  on the other version's `verifier.py`, loaded inside the same package. That gives both
+  versions the same files, `now`, pinned Roughtime servers and monkeypatched modules, with
+  `BDR` mapped to `format` + `selfsig`. The plugin compares every token except the required
+  ones, every other result (`result`, `applicable`, `reason`), every manifest record (path,
+  phase, ref, keyid, floor, ceiling, content, the malformed errors, and whether the
+  signature and keyid conditions hold), the commitments in full (states, counted and
+  rejected postregs with reasons, chain, key checks), notarization-only, ceiling trust and
+  `checked_at`. It also requires `BDR == (format AND selfsig)`. `src/` differs between the
+  two versions only in `verifier.py`, `cli.py` and comments in `models.py`.
+  - The old suite at `f88881d` (402 passed), each call also run by the new verifier: 250
+    calls over 243 tests, **0 differences**.
+  - The new suite (414 passed), each call also run by the old verifier: 254 calls over 247
+    tests, **0 differences**.
+  - How `BDR` mapped, new suite: `PASS` → `format=PASS selfsig=PASS` 205 times. `FAIL` →
+    `format=FAIL selfsig=PASS` 24, `format=PASS selfsig=FAIL` 14, `format=FAIL
+    selfsig=FAIL` 11. The old suite is 204 / 23 / 14 / 9.
+  - The plugin catches a real change. With the new verifier altered to examine `floor` on
+    malformed files, the old suite gave 2 differences
+    (`test_floor__fail__empty_malformed_manifest_not_examined` among them).
+  - `uv run python examples/adequacy-test/run.py`: exit 0. The four codes are identical
+    before and after except for `BDR=PASS` → `format=PASS … selfsig=PASS`
+    (`chain=PASS content=PASS format=PASS keyconsist=PASS selfsig=PASS`, and `content=FAIL`
+    for the swapped plants), with the same caught/missed results.
+- CLI demonstrations, in a scratch dir (`keygen`; `prereg --target "model m via provider
+  p"`; `postreg --fulfills prereg.json [--prev postreg-1.json]`; `truncated.json` is the
+  first 120 bytes of `prereg.json`; `tampered.json` is `postreg-1.json` with
+  `payload.target` changed):
+  - Good pair: `asexec verify prereg.json postreg-1.json --tests format,selfsig` prints
+    `✓ format=PASS  (2/2 manifest(s) ok)`, `✓ selfsig=PASS  (2/2 manifest(s) ok)`,
+    `asexec-verify/1 format=PASS selfsig=PASS`, exit 0.
+  - Malformed beside the pair: `... prereg.json postreg-1.json truncated.json` prints
+    `✗ truncated.json  [None]  keyid=None` with `    ✗ format: malformed: Unterminated string
+    starting at: line 5 column 15 (char 109)` beneath, `✗ format=FAIL  (1/3 manifest(s)
+    failed)`, `✓ selfsig=PASS  (2/2 manifest(s) ok)`, `asexec-verify/1 format=FAIL
+    selfsig=PASS`, exit 2. The malformed file alone gives `✗ selfsig=FAIL  (no manifest passes
+    format)` and `format=FAIL selfsig=FAIL`.
+  - Tampered body: `asexec verify prereg.json tampered.json --tests
+    format,selfsig,chain,keyconsist` prints `✗ tampered.json  [postreg]`, `[OPEN]`, `✗ postreg
+    sha-256:8f1ec88f… does NOT count toward fulfillment: invalid signature`,
+    `✓ format=PASS  (2/2 manifest(s) ok)`, `✗ selfsig=FAIL  (1/2 manifest(s) failed)`,
+    `asexec-verify/1 chain=FAIL format=PASS keyconsist=FAIL selfsig=FAIL`, exit 2.
+  - Empty directory: `asexec verify empty --tests format,selfsig` prints `✗ format=FAIL  (no
+    manifests to verify)`, `✗ selfsig=FAIL  (no manifest passes format)`,
+    `asexec-verify/1 format=FAIL selfsig=FAIL`, exit 2.
+  - `asexec verify prereg.json --tests chain`: `asexec verify: error: argument --tests:
+    missing required test(s) 'format', 'selfsig'; every run must include 'format' and
+    'selfsig'`, exit 64, no code.
+  - `asexec verify prereg.json --tests format,chain`: `... missing required test(s)
+    'selfsig'; ...`, exit 64, no code.
+  - `asexec verify prereg.json --tests BDR`: `unknown test(s): BDR; available: ceiling,
+    chain, content, floor, format, keyconsist, selfsig`, exit 64 (no alias).
+  - The `docs/VERIFICATION.md` examples (the full chain, the truncated file, the tampered
+    body) were checked against these runs. Only keys and times differ, and those are
+    elided or fixed in the doc.
+- Nothing left behind: `git grep -n -e BDR -e bedrock -e Bedrock -e BEDROCK -e
+  REQUIRED_TEST` over the whole repo, `docs/040b1-PATH.md` aside, finds:
+  - `ROADMAP.md:202` (the new bullet saying `BDR` was split), `:550` (*History* 0.2.0,
+    "bedrock vs. optional") and `:551` (*History* 0.3.0, "`BDR` token"). Both history rows
+    are kept as history.
+  - `examples/adequacy-test/README.md:57`: the *Results on asexec 0.3.19* table, a dated
+    record (see observations).
+  - `src/asexec/manifest.py` (`_BEDROCK_STRUCTURAL`, `_BEDROCK_SEMANTIC`,
+    `_check_bedrock`), `src/asexec/models.py:24,213,217,247-248` (the body's
+    structural/semantic "bedrock" comments and `ManifestBody._bedrock`) and
+    `tests/test_manifest.py` (its tests). This is the builder's own "bedrock", which
+    predates the `BDR` token (0.2.0's schema rebalance). Left alone (judgement call below).
+  - `REQUIRED_TESTS` in `verifier.py` and `cli.py`: the new name.
+  - No `BDR` in `src`, `tests`, `.github`, `scripts`, `docs/VERIFICATION.md`, `README.md`,
+    `docs/MULTIVERSION.md`, `docs/DEVELOPMENT.md` or `docs/FORMAT.md`, and no `#bdr`
+    anchor, `_bdr` or `test_verify_bdr` anywhere. In `docs/040b1-PATH.md`, the decisions
+    (D2, D3), the checklist item and checkpoint 1's notes keep `BDR` as history.
+- CI: see the PR.
+
+**Observations (out of scope):**
+- `examples/adequacy-test/README.md:53-60`: *Results on asexec 0.3.19* still shows `BDR`
+  codes. It is labelled as 0.3.19's results, which did print `BDR`, so it is left as a dated
+  record. `run.py` and step 4 of the README now use `format,selfsig`, so a run today prints
+  the new codes. The table needs a refresh when the example is ported to the claim record
+  (ROADMAP, 0.4.0 *Docs*).
+- `src/asexec/verifier.py` (`verify_selfsig`) parses `EnvelopeInput` a second time, after
+  `verify_format` has already done so. It's cheap and keeps the report free of pydantic
+  objects. #32 rewrites both functions for the DSSE frame anyway.
+- `src/asexec/models.py:79` (`SignatureInput`): a `signature` without `pubkey` or `sig`
+  fails `format` today, because the input model requires both (no test isolates that case;
+  the malformed-file cases miss the whole `payload` or `signature`). #32 moves "a missing
+  `pubkey` or `sig`" to `selfsig`, and should add that case to `test_verify_selfsig.py`.
+- The `=== manifests ===` line for a file that passes `format` but fails `selfsig` shows only
+  `✗`, with no reason beneath it (as `BDR` did). A reason line, e.g. `✗ selfsig: signature
+  does not verify` or `keyid does not derive from pubkey`, would make it readable on its own.
+  Left as it was.
+
+**Judgement calls:**
+- **Non-hex `pubkey`/`sig` stays in `format` (as #2).** D3a lists `format`'s malformed
+  cases as "unreadable, not a JSON object, too deep, a duplicate key, a missing frame". #32
+  says that after the DSSE envelope, "malformed means only a missing frame" and "a missing
+  `pubkey` or `sig` fails `selfsig`". That is a change #32 makes when it redefines the frame,
+  not one this rename makes. In today's envelope the hex check is part of the malformed rule,
+  and D3c says this checkpoint is "a rename plus a split over today's checks". Moving it now
+  would also change other verdicts. A file with a non-hex `pubkey` would join commitments, as
+  a postreg rejected for `invalid signature` rather than not listed (see
+  `test_run__malformed_postreg_joins_no_commitment`). It would also be examined by `floor`,
+  `ceiling` and `content` (`test_run__file_failing_format_is_examined_by_no_other_test`).
+  The instruction to keep every non-required verdict unchanged rules that out. So the
+  malformed rule is unchanged, and `format` = not malformed.
+- **`_BEDROCK_STRUCTURAL` and the other builder "bedrock" names are not renamed.** #26's
+  scope lists code in `verifier.py`, `cli.py` and `models.py` comments. The builder guard
+  in `manifest.py` (and the body's "structural/semantic bedrock" in `models.py`) names the
+  mandatory body fields a writer must supply. That concept comes from 0.2.0's schema
+  rebalance, not from the `BDR` test, and it never reaches a code, a report or a doc. In
+  `models.py` only the comments that cited `BDR` #1-#3 changed (to `format` #1-#2 and
+  `selfsig` #2).
+- **`REQUIRED_TEST` is renamed `REQUIRED_TESTS`** (a `frozenset`), since it is now a set and
+  the old name would read as one test. Nothing outside `verifier.py` and `cli.py` used it.
+- **The report record changes shape:** `manifests[].signature` is replaced by
+  `manifests[].format` and `manifests[].selfsig`. It is the verifier's internal report, not
+  a promised output (`--json` is #48), and only one test read it
+  (`entry["format"]["errors"]`, previously `entry["signature"]["errors"]`).
+- **Error text:** `missing required test(s) 'selfsig'; every run must include 'format' and
+  'selfsig'` names what is missing first and then the rule. An empty `--tests` says
+  `no tests requested; --tests must list at least 'format' and 'selfsig'`.
+- **Test order in `docs/VERIFICATION.md`:** the `format` and `selfsig` sections, and their
+  rows in the summary table, sit in alphabetical order (after `floor` and after
+  `keyconsist`), matching `TEST_CATALOG` and the code. A sentence under the summary table
+  and the run rules say that both are required and that only files that pass `format` are
+  examined by any other test. `selfsig` has a failing example (a tampered body,
+  `format=PASS selfsig=FAIL`), and `format` adds a malformed-file example. These show what
+  each token tells apart, as D3a intends.
+- **`selfsig`'s empty reason** is `no manifest passes format`. It is used both when no file
+  passes `format` and when no manifest file is found, since in both cases nothing passes
+  `format`.
+- **Doc-coverage name pattern** is now `[a-z_]+?` (it was `[A-Za-z_]+?`). Every catalog
+  name is lowercase now, and an uppercase name like `test_BDR__…` can't match a doc item.
+- The *History* rows in `ROADMAP.md` keep `BDR` and "bedrock". The new *Verify* bullet
+  says `BDR` was split, "(Done ahead of 0.4.0.)", like checkpoint 1's `schema_id` bullet.
+- `examples/adequacy-test/run.py` and step 4 of its README are outside #26's list, but
+  `--tests BDR,...` is now a usage error, so the example would have stopped working.
+  `docs/FORMAT.md:25` named `BDR` as the test that checks the signature, and now names
+  `selfsig`.
