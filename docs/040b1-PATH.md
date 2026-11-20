@@ -313,9 +313,9 @@ Affected: nothing published (written into new bodies only; verify does not compa
 Action: none
 
 Identifier: MANIFEST_SCHEMA_ID, asexec -> removed (the body field schema_id is no longer written)
-Impact: NEW_OUTPUT
-Affected: nothing published (a body that still carries schema_id reads as an unknown field, which nothing examines); the Python export asexec.MANIFEST_SCHEMA_ID is gone
-Action: none; read predicateType to identify an asexec body
+Impact: BREAKS_USERS
+Affected: a tool that imports asexec.MANIFEST_SCHEMA_ID stops working (ImportError); no published manifest (a body that still carries schema_id reads as an unknown field, which nothing examines)
+Action: drop any import of asexec.MANIFEST_SCHEMA_ID; read predicateType to identify an asexec body
 ```
 
 For #40: b1 itself ships `application/vnd.asexec.0.4.0b1+json`, set by `release.sh` (#30,
@@ -365,3 +365,22 @@ Nothing to change.
   fields-no-test-examines cases, the existing home of unknown body fields. VERIFICATION.md
   doesn't name `schema_id`: it is covered by the run rules (only *Examines* properties are
   read) and by `BDR`'s *Does not establish* line.
+
+**Review round 1** (findings on PR #50):
+- `docs/FORMAT.md:57`: the example labelled `// today (0.3.x)` showed
+  `application/vnd.asexec.v1+json`, a value no 0.3.x release wrote → the line is back to
+  `application/vnd.asexec+json`. The PAE line at `FORMAT.md:19` (pinned by
+  `test_signing_pae_version_and_manifest_payload_type`) and the 0.4.0 examples keep `v1`.
+  This corrects the observation above that #32 rewrites that section: #32's scope doesn't
+  include `docs/FORMAT.md`, so nothing later would have corrected it.
+- The `MANIFEST_SCHEMA_ID` release-note draft named the removed export under *Affected* but
+  said *Action: none* → *Action* now says to drop any import of `asexec.MANIFEST_SCHEMA_ID`
+  and read `predicateType`. *Impact* is now `BREAKS_USERS`: the header defines it to cover a
+  change that "stops an existing ... tool from working", and an `ImportError` does that,
+  even though `ROADMAP.md` doesn't promise the Python API.
+- `README.md:210-236` and `:255-282`: the `// always` comment after the longer
+  `predicateType` value was off the comment column → the whole column in both examples moves
+  three places right, so `predicateType` and `target` now fit with two spaces, as the other
+  lines have. `declaration` still runs past the column, as it already did.
+- Commits: `50a9054` (README, FORMAT.md); the release-note draft and these notes are
+  in the commit that follows it. `scripts/check.sh`: clean, 402 passed. CI: see the PR.
