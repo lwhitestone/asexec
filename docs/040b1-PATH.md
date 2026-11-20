@@ -1332,3 +1332,5 @@ The rest of the fixed rehearsal at `395e15b` matches the first one:
 - The re-key case gives 5 failed.
 
 `scripts/check.sh` on `395e15b`: clean, 455 passed. `shellcheck scripts/release.sh`: clean.
+CI: run 44728436229 on `395e15b` and run 44728921686 on `0a3065b`, lint, python-matrix, test
+(3.12, 3.13, 3.14) and build pass.
