@@ -100,22 +100,41 @@ def test_run__manifest_lacking_the_examined_properties_is_not_examined(scenario)
     assert report["results"]["ceiling"]["applicable"] == 1
 
 
+def _relabelled(envelope: dict, payload_type: str) -> dict:
+    return {**envelope, "dsse": {**envelope["dsse"], "payloadType": payload_type}}
+
+
 @pytest.mark.parametrize(
-    "target", ["not-json", "binary", "duplicate-key", "missing-file", "unknown-format"]
+    "target",
+    [
+        "not-json",
+        "binary",
+        "duplicate-key",
+        "duplicate-key-in-body",
+        "not-base64",
+        "missing-file",
+        "unknown-format",
+    ],
 )
 def test_run__malformed_file_fails_format_and_no_other_test_examines_it(scenario, target):
     """A malformed file, or one of a format this release does not read, fails format; every
     other test's verdict, selfsig's included, is as if it were absent."""
     scenario.with_ceiling("prereg")
+    envelope = json.loads(scenario.read("prereg"))
     if target == "unknown-format":  # a copy of the prereg, ceiling and all, relabelled
-        envelope = json.loads(scenario.read("prereg"))
-        envelope["payloadType"] = "application/vnd.asexec.v2+json"
-        scenario.add_raw("bad", json.dumps(envelope))
+        scenario.add_raw("bad", json.dumps(_relabelled(envelope, "application/vnd.asexec.v2+json")))
     elif target == "duplicate-key":
-        raw = scenario.read("prereg").replace(
-            '"phase": "prereg"', '"phase": "prereg", "phase": "x"', 1
+        raw = scenario.read("prereg")
+        pubkey = envelope["pubkey"]
+        scenario.add_raw(
+            "bad", raw.replace(f'"pubkey": "{pubkey}"', f'"pubkey": "{pubkey}", "pubkey": "00"', 1)
         )
-        scenario.add_raw("bad", raw)
+    elif target == "duplicate-key-in-body":  # validly signed, ceiling kept
+        dup = d.decoded(envelope).replace(b'"phase":"prereg"', b'"phase":"prereg","phase":"x"')
+        scenario.add_raw("bad", json.dumps({**d.sign_bytes(dup), "ceiling": envelope["ceiling"]}))
+    elif target == "not-base64":
+        envelope["dsse"]["payload"] += "="  # excess padding, whatever it had
+        scenario.add_raw("bad", json.dumps(envelope))
     elif target == "missing-file":
         scenario.add_missing("missing")
     else:
@@ -127,26 +146,31 @@ def test_run__malformed_file_fails_format_and_no_other_test_examines_it(scenario
     )
 
 
-@pytest.mark.parametrize(
-    "payload_type,hex_value",
-    [(d.MANIFEST_PAYLOAD_TYPE, "zz"), ("application/vnd.asexec.v2+json", "00")],
-    ids=["bad-hex", "unknown-format"],
-)
-def test_run__file_failing_format_is_examined_by_no_other_test(scenario, payload_type, hex_value):
-    """A file that fails format (bad hex, or a format this release does not read) is not
-    examined for selfsig, floor, ceiling or content."""
+# A body every optional test would examine, and fail: a junk floor and a subject whose digest
+# matches nothing.
+_JUNK_BODY = {
+    "phase": "prereg",
+    "anchor": {"floor": {"floor_type": "drand", "round": 1001, "signature": "00"}},
+    "subject": [{"name": "harness/", "digest": {"sha-256": "00"}}],
+}
+
+
+@pytest.mark.parametrize("case", ["duplicate-key-in-body", "body-not-object", "unknown-format"])
+def test_run__file_failing_format_is_examined_by_no_other_test(scenario, case):
+    """A file that fails format (a body with a duplicate key or that is no object, though
+    validly signed, or a format this release does not read) is not examined for selfsig,
+    floor, ceiling or content."""
     scenario.with_floor("prereg")
     scenario.with_ceiling("prereg")
-    bad_floor = {"floor_type": "drand", "round": 1001, "signature": "00"}
-    scenario.add_raw(
-        "bad",
-        f'{{"payloadType": "{payload_type}",'
-        ' "payload": {"phase": "prereg", "anchor": {"floor": '
-        + str(bad_floor).replace("'", '"')
-        + '}, "subject": [{"name": "harness/", "digest": {"sha-256": "00"}}]},'
-        f' "signature": {{"pubkey": "{hex_value}", "sig": "{hex_value}"}},'
-        ' "ceiling": {"ceiling_type": "roughtime"}}',
-    )
+    raw = d.body_bytes(_JUNK_BODY)
+    if case == "duplicate-key-in-body":
+        raw = raw.replace(b'"phase":"prereg"', b'"phase":"prereg","phase":"prereg"')
+    elif case == "body-not-object":
+        raw = b"[" + raw + b"]"
+    envelope = d.sign_bytes(raw)
+    if case == "unknown-format":
+        envelope = _relabelled(envelope, "application/vnd.asexec.v2+json")
+    scenario.add_raw("bad", json.dumps({**envelope, "ceiling": {"ceiling_type": "roughtime"}}))
     report = scenario.verify("ceiling", "content", "floor")
     assert report["code"] == (
         "asexec-verify/1 ceiling=PASS content=PASS floor=PASS format=FAIL selfsig=PASS"
@@ -156,16 +180,17 @@ def test_run__file_failing_format_is_examined_by_no_other_test(scenario, payload
 @pytest.mark.parametrize(
     "path,value",
     [
-        ("signature.pubkey", "zz"),
-        ("payloadType", "application/vnd.asexec.v2+json"),
-        ("payloadType", "application/vnd.asexec.0.3.0b1+json"),
+        ("dsse.signatures", "x"),
+        ("dsse.payload", "not base64"),
+        ("dsse.payloadType", "application/vnd.asexec.v2+json"),
+        ("dsse.payloadType", "application/vnd.asexec.0.3.0b1+json"),
     ],
-    ids=["bad-hex", "newer-format", "beta-format"],
+    ids=["signatures-not-array", "payload-not-base64", "newer-format", "beta-format"],
 )
 def test_run__malformed_postreg_joins_no_commitment(scenario, path, value):
-    """A postreg that fails format (here: a non-hex pubkey, or a format this release does
-    not read) fulfilling the prereg is neither counted nor rejected, so chain and
-    keyconsist have nothing to examine."""
+    """A postreg that fails format (here: no array of signatures, a payload that is not
+    base64, or a format this release does not read) fulfilling the prereg is neither
+    counted nor rejected, so chain and keyconsist have nothing to examine."""
     scenario.drop("postreg1")
     scenario.drop("postreg2")
     scenario.set("postreg0", path, value)
@@ -180,15 +205,57 @@ def test_run__malformed_postreg_joins_no_commitment(scenario, path, value):
 @pytest.mark.parametrize(
     "path,value",
     [
-        ("signature.pubkey", "zz"),
-        ("payloadType", "application/vnd.asexec.v2+json"),
+        ("pubkey", "zz"),
+        ("pubkey", None),
+        ("dsse.signatures[0].sig", None),
+        ("dsse.signatures[0].keyid", None),
+        ("dsse.signatures", []),
+        ("dsse.signatures[1]", {"keyid": "sha-256:00", "sig": "00"}),
     ],
-    ids=["bad-hex", "newer-format"],
+    ids=[
+        "pubkey-not-hex",
+        "pubkey-missing",
+        "sig-missing",
+        "keyid-missing",
+        "no-signature",
+        "two-signatures",
+    ],
+)
+def test_run__postreg_failing_only_selfsig_is_rejected_under_its_commitment(scenario, path, value):
+    """A postreg that passes format but fails selfsig (a missing or non-hex pubkey, a missing sig, a
+    missing keyid, zero or two signatures) is read: it names the commitment, so it is
+    listed under it as rejected for invalid signature, with dsse.signatures[0].keyid (if
+    any) as its keyid, and is not counted."""
+    scenario.drop("postreg1")
+    scenario.drop("postreg2")
+    if path == "dsse.signatures[1]":  # a second entry beside the valid one
+        scenario.tamper("postreg0", lambda env: env["dsse"]["signatures"].append(value))
+    else:
+        scenario.set("postreg0", path, value)
+    report = scenario.verify("chain", "keyconsist")
+    assert report["code"] == ("asexec-verify/1 chain=FAIL format=PASS keyconsist=FAIL selfsig=FAIL")
+    (commitment,) = report["commitments"]
+    assert commitment["counted_postregs"] == []
+    (rejected,) = commitment["rejected_postregs"]
+    assert rejected["reason"] == "invalid signature"
+    postreg = json.loads(scenario.read("postreg0"))
+    signatures = postreg["dsse"]["signatures"]
+    assert rejected["keyid"] == (signatures[0].get("keyid") if signatures else None)
+    assert report["notarization_only"] == []
+
+
+@pytest.mark.parametrize(
+    "path,value",
+    [
+        ("dsse.signatures", "x"),
+        ("dsse.payloadType", "application/vnd.asexec.v2+json"),
+    ],
+    ids=["signatures-not-array", "newer-format"],
 )
 def test_run__prereg_failing_format_is_not_a_provided_prereg(scenario, path, value):
-    """A prereg that fails format (here: a non-hex pubkey, or a format this release does
-    not read) is not a provided prereg: there is no commitment, and a valid postreg naming
-    it is notarization-only, so chain and keyconsist have nothing to examine."""
+    """A prereg that fails format (here: no array of signatures, or a format this release
+    does not read) is not a provided prereg: there is no commitment, and a valid postreg
+    naming it is notarization-only, so chain and keyconsist have nothing to examine."""
     scenario.drop("postreg1")
     scenario.drop("postreg2")
     scenario.set("prereg", path, value)
@@ -198,7 +265,7 @@ def test_run__prereg_failing_format_is_not_a_provided_prereg(scenario, path, val
     assert report["results"]["keyconsist"]["applicable"] == 0
     assert report["commitments"] == []
     (lone,) = report["notarization_only"]
-    assert lone["fulfills"] == d.ref(json.loads(scenario.read("prereg"))["payload"])
+    assert lone["fulfills"] == d.ref(d.decoded(json.loads(scenario.read("prereg"))))
 
 
 def test_run__verification_is_offline(scenario, monkeypatch):
@@ -247,9 +314,9 @@ SIGNED_JUNK = [
 @pytest.mark.parametrize("field,value", SIGNED_JUNK)
 def test_never_raises__validly_signed_junk_in_a_body_field(scenario, field, value):
     """selfsig checks only the signature, so a signed-but-junk body must not crash any test."""
-    scenario.set("postreg1", f"payload.{field}", value)
+    scenario.set("postreg1", f"body.{field}", value)
     if field not in ("fulfills", "prev_hash"):
-        scenario.set("prereg", f"payload.{field}", value)
+        scenario.set("prereg", f"body.{field}", value)
     report = scenario.verify("ceiling", "chain", "content", "floor", "keyconsist")
     assert {"format=PASS", "selfsig=PASS"} <= set(report["code"].split()[1:])
 
@@ -270,7 +337,7 @@ def test_never_raises__validly_signed_junk_in_a_body_field(scenario, field, valu
 def test_never_raises__junk_floor_member(scenario, path, value):
     """A validly signed but malformed anchor.floor member fails floor; it never raises."""
     scenario.with_floor("prereg")
-    scenario.set("prereg", f"payload.anchor.floor.{path}", value)
+    scenario.set("prereg", f"body.anchor.floor.{path}", value)
     assert scenario.code("floor") == "asexec-verify/1 floor=FAIL format=PASS selfsig=PASS"
 
 
@@ -295,10 +362,10 @@ def test_never_raises__junk_ceiling_member(scenario, junk):
 )
 @pytest.mark.parametrize("name", ["prereg", "postreg0"])
 def test_never_raises__keyid_not_a_string(scenario, name, keyid):
-    """A signature.keyid that is not a string passes format and fails selfsig (#2), as a
-    prereg or a postreg; it never raises. Such a prereg is no commitment, and such a
+    """A dsse.signatures[0].keyid that is not a string passes format and fails selfsig (#4),
+    as a prereg or a postreg; it never raises. Such a prereg is no commitment, and such a
     postreg is rejected for invalid signature."""
-    scenario.set(name, "signature.keyid", keyid)
+    scenario.set(name, "dsse.signatures[0].keyid", keyid)
     report = scenario.verify("chain", "keyconsist")
     assert {"format=PASS", "selfsig=FAIL"} <= set(report["code"].split()[1:])
     if name == "prereg":
@@ -311,3 +378,80 @@ def test_never_raises__keyid_not_a_string(scenario, name, keyid):
         (rejected,) = commitment["rejected_postregs"]
         assert rejected["keyid"] == keyid
         assert rejected["reason"] == "invalid signature"
+
+
+# A lone surrogate escape is valid JSON text, and the body bytes are never re-serialized, so
+# a body may hold one, validly signed. It is a string that equals no ref, parses as no time
+# and names no file: it fails only the tests that compare it, and never raises.
+LONE = b'"\\ud800"'
+
+
+def _lone(scenario, name, path):
+    scenario.set(name, path, "LONE")
+    scenario.edit_body_bytes(name, lambda raw: raw.replace(b'"LONE"', LONE))
+
+
+@pytest.mark.parametrize(
+    "name,path",
+    [
+        ("prereg", "body.phase"),
+        ("prereg", "body.target"),
+        ("prereg", "body.declaration"),
+        ("prereg", "body.notes"),
+        ("prereg", "body.due"),
+        ("prereg", "body.hash_alg"),
+        ("prereg", "body.subject.0.name"),
+        ("prereg", "body.subject.0.digest.sha-256"),
+        ("postreg0", "body.fulfills"),
+        ("postreg1", "body.prev_hash"),
+    ],
+)
+def test_never_raises__lone_surrogate_escape_in_the_body(scenario, name, path):
+    """A lone surrogate escape in any body string passes format and selfsig (the bytes are as
+    signed), and every other test judges it as the string it is, without raising."""
+    scenario.with_ceiling("prereg")
+    _lone(scenario, name, path)
+    report = scenario.verify("ceiling", "chain", "content", "keyconsist")
+    assert {"format=PASS", "selfsig=PASS", "ceiling=PASS"} <= set(report["code"].split()[1:])
+
+
+@pytest.mark.parametrize("name", ["\ud800", "harness\x00/"], ids=["lone-surrogate", "nul"])
+def test_never_raises__subject_named_as_no_path_can_be(scenario, name):
+    """content #4: a subject name that no path on this system can have (a lone surrogate,
+    or a NUL) names no artifact: it is not found, and verify does not raise."""
+    if name == "\ud800":
+        _lone(scenario, "prereg", "body.subject.0.name")
+    else:
+        scenario.set("prereg", "body.subject.0.name", name)
+    report = scenario.verify("content")
+    assert report["code"] == "asexec-verify/1 content=FAIL format=PASS selfsig=PASS"
+    (prereg,) = [m for m in report["manifests"] if m["phase"] == "prereg"]
+    assert prereg["content"]["entries"] == [
+        {"name": name, "ok": False, "reason": "artifact not found"}
+    ]
+
+
+def test_never_raises__lone_surrogate_escape_as_due_or_link(scenario):
+    """A lone surrogate due is not a parseable time (invalid-due); one as fulfills names no
+    prereg (notarization-only)."""
+    _lone(scenario, "prereg", "body.due")
+    _lone(scenario, "postreg0", "body.fulfills")
+    scenario.drop("postreg1")
+    scenario.drop("postreg2")
+    report = scenario.verify()
+    assert report["code"] == "asexec-verify/1 format=PASS selfsig=PASS"
+    (commitment,) = report["commitments"]
+    assert commitment["due"] == "\ud800"
+    assert commitment["state"] == "invalid-due"
+    (lone,) = report["notarization_only"]
+    assert lone["fulfills"] == "\ud800"
+
+
+def test_never_raises__lone_surrogate_escape_as_a_claimed_keyid(scenario):
+    """A dsse.signatures[0].keyid holding a lone surrogate fails selfsig #4 and, on a prereg,
+    is listed as the rejected pre-registration's keyid."""
+    scenario.set("prereg", "dsse.signatures[0].keyid", "\ud800")
+    report = scenario.verify("chain", "keyconsist")
+    assert {"format=PASS", "selfsig=FAIL"} <= set(report["code"].split()[1:])
+    (rejected,) = report["rejected_preregs"]
+    assert rejected["keyid"] == "\ud800"

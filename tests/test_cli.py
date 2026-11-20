@@ -5,6 +5,8 @@ End-to-end tests: each drives ``cli.main``, and the ``verify`` tests build their
 trip. Verify's contract is tested on raw data in ``tests/verify/``.
 """
 
+import base64
+import hashlib
 import json
 import os
 import re
@@ -15,6 +17,8 @@ import sys
 import pytest
 
 from asexec import cli, drand, identity, keys, manifest, roughtime
+from asexec.canonical import canonical_bytes, signing_input
+from asexec.constants import MANIFEST_PAYLOAD_TYPE
 from asexec.errors import NetworkError
 
 pytestmark = pytest.mark.end_to_end
@@ -24,6 +28,25 @@ REF = "sha-256:" + "ab" * 32
 
 def run(*argv):
     return cli.main([str(arg) for arg in argv])
+
+
+def _body(path):
+    """The decoded body of the manifest file at ``path``."""
+    return manifest.read_body(manifest.load(str(path)))[1]
+
+
+def _ref(path):
+    """The ref of the manifest file at ``path``: the digest of its stored body bytes."""
+    return manifest.ref(manifest.read_body(manifest.load(str(path)))[0])
+
+
+def _edit_body_after_signing(path, edit):
+    """Edit the body of the file at ``path`` and store it again, keeping the old signature."""
+    mani = manifest.load(str(path))
+    body = manifest.read_body(mani)[1]
+    edit(body)
+    mani["dsse"]["payload"] = base64.b64encode(canonical_bytes(body)).decode()
+    manifest.save(mani, str(path))
 
 
 @pytest.fixture
@@ -104,7 +127,7 @@ def test_prereg_rejects_garbage_due(tmp_path, key):
 def test_prereg_accepts_explicit_offset_due(tmp_path, key, due):
     out = tmp_path / "p.json"
     assert run("prereg", "--key", key, "--target", "t", "--due", due, "--out", out) == 0
-    assert manifest.get_body(manifest.load(str(out)))["due"] == due  # stored verbatim
+    assert _body(out)["due"] == due  # stored verbatim
 
 
 def test_postreg_rejects_timezone_less_due_override(tmp_path, key, prereg):
@@ -145,7 +168,7 @@ def test_best_effort_floor_warns_and_signs(tmp_path, key, monkeypatch, capsys):
     code = run("prereg", "--key", key, "--target", "t", "--floor", "--best-effort", "--out", out)
     assert code == 0
     assert "warning" in capsys.readouterr().err
-    assert "anchor" not in manifest.get_body(manifest.load(str(out)))
+    assert "anchor" not in _body(out)
 
 
 def test_best_effort_ceiling_warns_and_signs(tmp_path, key, monkeypatch, capsys):
@@ -181,14 +204,13 @@ def test_fulfills_malformed_ref_is_an_error(tmp_path, key, bad):
 def test_fulfills_well_formed_literal_ref_accepted(tmp_path, key):
     out = tmp_path / "po.json"
     assert run("postreg", "--key", key, "--target", "t", "--fulfills", REF, "--out", out) == 0
-    assert manifest.get_body(manifest.load(str(out)))["fulfills"] == REF
+    assert _body(out)["fulfills"] == REF
 
 
 def test_fulfills_existing_file_resolves_to_its_ref(tmp_path, key, prereg):
     out = tmp_path / "po.json"
     assert run("postreg", "--key", key, "--fulfills", prereg, "--out", out) == 0
-    expected = manifest.ref(manifest.get_body(manifest.load(prereg)))
-    assert manifest.get_body(manifest.load(str(out)))["fulfills"] == expected
+    assert _body(out)["fulfills"] == _ref(prereg)
 
 
 def test_prev_typo_is_an_error(tmp_path, key, prereg):
@@ -202,6 +224,106 @@ def test_fulfills_non_manifest_file_is_a_clean_error(tmp_path, key):
     junk.write_text("{nope")
     with pytest.raises(SystemExit):
         run("postreg", "--key", key, "--target", "t", "--fulfills", junk, "--out", tmp_path / "o")
+
+
+def _sign_stored_bytes(path, key, raw):
+    """Write ``path`` as a file around the body bytes ``raw``, validly signed by ``key``:
+    what another writer could store, spaced or ordered as it likes."""
+    priv, pub = keys.load_signing_key(key)
+    mani = {
+        "dsse": {
+            "payloadType": MANIFEST_PAYLOAD_TYPE,
+            "payload": base64.b64encode(raw).decode(),
+            "signatures": [
+                {
+                    "keyid": keys.keyid_for(pub),
+                    "sig": base64.b64encode(keys.sign(priv, signing_input(raw))).decode(),
+                }
+            ],
+        },
+        "pubkey": pub.hex(),
+    }
+    manifest.save(mani, str(path))
+
+
+def test_postreg_inherits_target_due_and_declaration_from_the_prereg_body(tmp_path, key):
+    pre, post = tmp_path / "pre.json", tmp_path / "post.json"
+    assert run("prereg", "--key", key, "--target", "t", "--due", "2099-01-01T00:00:00Z",
+               "--declaration", "all of it", "--out", pre) == 0  # fmt: skip
+    assert run("postreg", "--key", key, "--fulfills", pre, "--out", post) == 0
+    body = _body(post)
+    assert (body["target"], body["due"], body["declaration"]) == (
+        "t",
+        "2099-01-01T00:00:00Z",
+        "all of it",
+    )
+    assert body["fulfills"] == _ref(pre)
+
+
+def test_fulfills_is_the_digest_of_the_prereg_bytes_as_stored(tmp_path, key, capsys):
+    """--fulfills names the prereg by the digest of its stored body bytes, which another
+    writer may have spaced and ordered otherwise: nothing re-serializes them."""
+    pre, post = tmp_path / "pre.json", tmp_path / "post.json"
+    raw = b'{ "target": {"model": "m"},  "phase": "prereg",\n "due": "2099-01-01T00:00:00Z" }'
+    _sign_stored_bytes(pre, key, raw)
+    assert run("postreg", "--key", key, "--fulfills", pre, "--out", post) == 0
+    body = _body(post)
+    assert body["fulfills"] == "sha-256:" + hashlib.sha256(raw).hexdigest()
+    assert (body["target"], body["due"]) == ({"model": "m"}, "2099-01-01T00:00:00Z")
+    capsys.readouterr()
+    assert run("verify", pre, post, "--tests", "format,selfsig,keyconsist") == 0
+    assert "  [FULFILLED] prereg " in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        lambda mani: mani["dsse"].update(payload=mani["dsse"]["payload"] + "="),
+        lambda mani: mani["dsse"].update(payload=base64.b64encode(b"[1]").decode()),
+        lambda mani: mani.pop("dsse"),
+    ],
+    ids=["not-base64", "body-not-object", "no-dsse"],
+)
+def test_fulfills_file_with_no_readable_body_is_a_clean_error(tmp_path, key, prereg, edit):
+    mani = json.loads(open(prereg).read())
+    edit(mani)
+    open(prereg, "w").write(json.dumps(mani))
+    with pytest.raises(SystemExit) as e:
+        run("postreg", "--key", key, "--fulfills", prereg, "--out", tmp_path / "o")
+    assert "is not a readable manifest" in str(e.value)
+    assert not (tmp_path / "o").exists()
+
+
+def test_postreg_inheriting_a_string_with_no_utf8_form_is_a_clean_error(tmp_path, key, capsys):
+    """A prereg body may hold a lone surrogate escape (valid JSON, validly signed). A postreg
+    inheriting it can't be stored as UTF-8, so the writer refuses it: an error, exit 1."""
+    pre = tmp_path / "pre.json"
+    _sign_stored_bytes(pre, key, b'{"phase":"prereg","target":"t","declaration":"\\ud800"}')
+    assert run("postreg", "--key", key, "--fulfills", pre, "--out", tmp_path / "o") == 1
+    assert "no UTF-8 form" in capsys.readouterr().err
+    assert not (tmp_path / "o").exists()
+
+
+def test_verify_shows_lone_surrogates_escaped(tmp_path, key, capsys):
+    """Verify reads a body holding lone surrogate escapes as signed, and the report shows
+    each one escaped, as \\udXXX, rather than failing to print it."""
+    pre, post = tmp_path / "pre.json", tmp_path / "post.json"
+    _sign_stored_bytes(pre, key, b'{"phase":"prereg","target":"t","due":"\\ud800"}')
+    _sign_stored_bytes(
+        post,
+        key,
+        b'{"phase":"postreg","target":"t","fulfills":"\\udfff",'
+        b'"subject":[{"name":"\\ud801","digest":{"sha-256":"00"}}],"hash_alg":"sha-256"}',
+    )
+    (tmp_path / "art").mkdir()
+    capsys.readouterr()
+    assert run("verify", pre, post, "--tests", "format,selfsig,content",
+               "--artifacts", tmp_path / "art") == 2  # fmt: skip
+    out = capsys.readouterr().out
+    assert "    due          : \\ud800\n" in out
+    assert "(fulfills \\udfff)" in out
+    assert f"        {cli.NO} \\ud801: artifact not found" in out
+    assert "asexec-verify/1 content=FAIL format=PASS selfsig=PASS" in out
 
 
 # --- verify exit codes ----------------------------------------------------- #
@@ -221,12 +343,11 @@ def test_verify_marks_each_file_by_format_and_selfsig(tmp_path, key, prereg, cap
     malformed file's reason, attributed to format, only under that file."""
     tampered = tmp_path / "tampered.json"
     assert run("postreg", "--key", key, "--fulfills", prereg, "--out", tampered) == 0
-    mani = json.loads(tampered.read_text())
-    mani["payload"]["target"] = "something else"  # changed after signing: selfsig fails
-    tampered.write_text(json.dumps(mani))
+    # changed after signing: selfsig fails
+    _edit_body_after_signing(tampered, lambda body: body.update(target="something else"))
     other_keyid = tmp_path / "other-keyid.json"  # valid signature, another key's keyid
     mani = json.loads(open(prereg).read())
-    mani["signature"]["keyid"] = keys.keyid_for(keys.generate()[1])
+    mani["dsse"]["signatures"][0]["keyid"] = keys.keyid_for(keys.generate()[1])
     other_keyid.write_text(json.dumps(mani))
     truncated = tmp_path / "truncated.json"
     truncated.write_text(open(prereg).read()[:120])
@@ -268,13 +389,13 @@ def test_verify_version_skew_reads_as_format_not_signature(
     post = tmp_path / "post.json"
     assert run("postreg", "--key", key, "--fulfills", prereg, "--out", post) == 0
     mani = json.loads(post.read_text())
-    mani["payloadType"] = payload_type
+    mani["dsse"]["payloadType"] = payload_type
     post.write_text(json.dumps(mani))
     capsys.readouterr()
     assert run("verify", prereg, post, "--tests", "format,selfsig") == 2
     out = capsys.readouterr().out
     lines = out.split("=== commitments ===")[0].splitlines()
-    i = lines.index(f"{cli.NO} {post}  [postreg]  keyid=None")
+    i = lines.index(f"{cli.NO} {post}  [None]  keyid=None")  # a body it can't read: no phase
     assert lines[i + 1] == f"    {cli.NO} format: {reason}"
     assert lines[1].startswith(f"{cli.OK} {prereg}  [prereg]")
     assert "  [OPEN] prereg " in out
@@ -286,7 +407,7 @@ def test_verify_version_skew_reads_as_format_not_signature(
 def test_verify_renders_rejected_postreg_and_invalid_due(tmp_path, key, capsys):
     out = tmp_path / "pre.json"
     run("prereg", "--key", key, "--target", "t", "--out", out)
-    body = manifest.get_body(manifest.load(str(out)))
+    body = _body(out)
     body["due"] = "someday"
     priv, pub = keys.load_signing_key(key)
     manifest.save(manifest.sign(body, priv, pub), str(out))
@@ -299,7 +420,7 @@ def test_verify_shows_a_present_due_as_it_is(tmp_path, key, capsys, due, shown):
     """A due that is present but holds no timestamp is shown, not "(none declared)"."""
     out = tmp_path / "pre.json"
     run("prereg", "--key", key, "--target", "t", "--out", out)
-    body = manifest.get_body(manifest.load(str(out)))
+    body = _body(out)
     body["due"] = due
     priv, pub = keys.load_signing_key(key)
     manifest.save(manifest.sign(body, priv, pub), str(out))
@@ -430,8 +551,7 @@ FLOOR = {
 
 
 def _resign(path, key, mutate):
-    mani = manifest.load(path)
-    body = manifest.get_body(mani)
+    body = _body(path)
     mutate(body)
     priv, pub = keys.load_signing_key(key)
     manifest.save(manifest.sign(body, priv, pub), path)
@@ -458,7 +578,7 @@ def test_verify_prints_ceiling_and_trust_section(
     tmp_path, key, prereg, capsys, monkeypatch, make_server, ceiling_for
 ):
     mani = manifest.load(prereg)
-    nonce_hex = manifest.ref(manifest.get_body(mani)).split(":", 1)[-1]
+    nonce_hex = _ref(prereg).split(":", 1)[-1]
     lt_pub, sign_response = make_server()
     monkeypatch.setitem(roughtime.SERVERS, "synthetic", {"pubkey": lt_pub})
     manifest.attach_ceiling(mani, ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response))
@@ -538,19 +658,18 @@ def test_verify_lists_rejected_preregistrations(tmp_path, key, prereg, capsys):
     post = tmp_path / "post.json"
     assert run("postreg", "--key", key, "--fulfills", prereg, "--out", post) == 0
     mani = json.loads(open(prereg).read())
-    mani["signature"]["sig"] = "00" * 64
+    mani["dsse"]["signatures"][0]["sig"] = base64.b64encode(bytes(64)).decode()
     open(prereg, "w").write(json.dumps(mani))
     capsys.readouterr()
     assert run("verify", prereg, post, "--tests", "format,selfsig,chain,keyconsist") == 2
     out = capsys.readouterr().out
-    pre_ref = manifest.ref(mani["payload"])
-    post_ref = manifest.ref(json.loads(post.read_text())["payload"])
+    pre_ref, post_ref = _ref(prereg), _ref(post)
     commitments = out.split("=== commitments ===\n")[1].split("\n\n")[0]
     assert commitments == "  (no commitments: no pre-registration provided is validly signed)"
     block = out.split("=== rejected pre-registrations ===\n")[1].split("\n\n")[0]
     assert block.splitlines() == [
         f"  {cli.NO} prereg {pre_ref} is NOT a commitment: invalid signature",
-        f"    keyid        : {mani['signature']['keyid']}",
+        f"    keyid        : {mani['dsse']['signatures'][0]['keyid']}",
         f"    {cli.NO} postreg {post_ref} does NOT count toward fulfillment: "
         "the pre-registration's signature is invalid",
     ]

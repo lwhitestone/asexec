@@ -1,8 +1,9 @@
 # The 0.4.0 envelope
 
 > [!NOTE]
-> This describes the format planned for `0.4.0`, not current behavior. It is AI-assisted, so
-> treat it with due skepticism. The rules that follow from it are in
+> This describes the format planned for `0.4.0`. Its DSSE envelope is built; the
+> `untrusted` section is not yet. It is AI-assisted, so treat it with due skepticism. The
+> rules that follow from it are in
 > [`ROADMAP.md`](../ROADMAP.md#040--m1-the-first-supported-format).
 
 **PAE vs DSSE.** PAE (pre-authentication encoding) is the rule for which bytes get
@@ -12,11 +13,11 @@ signed:
 PAE(type, body) = prefix SP len(type) SP type SP len(body) SP body
 ```
 
-`SP` is a single ASCII space and `len` is the byte length in ASCII decimal. With today's
-prefix, a small body encodes as:
+`SP` is a single ASCII space and `len` is the byte length in ASCII decimal. With the
+`DSSEv1` prefix, a small body encodes as:
 
 ```
-asexec-PAE/v1 30 application/vnd.asexec.v1+json 31 {"phase":"prereg","target":"m"}
+DSSEv1 30 application/vnd.asexec.v1+json 31 {"phase":"prereg","target":"m"}
 ```
 
 The signature therefore covers the payload's type as well as its body, and the length
@@ -25,9 +26,13 @@ to sign and verify a signature. `ref` hashes the body bytes without it, and the 
 does not contain it: `selfsig` checks the signature, and the code reports only that result.
 
 DSSE is the envelope built around PAE: `payloadType`, `payload` as base64 of the exact
-signed bytes, and a `signatures` list.
+signed bytes, and a `signatures` list whose `sig` is base64 too. DSSE tools can read asexec's
+envelopes, but not every DSSE envelope is an asexec one: asexec is stricter in four ways,
+standard base64 only (DSSE verifiers must also accept URL-safe), padding required (DSSE is
+silent), a required `keyid` that is `sha-256:` of `pubkey` (optional in DSSE), and exactly
+one signature (DSSE allows several, with a threshold).
 
-- **Today (0.3.x):** asexec uses PAE with its own prefix, `asexec-PAE/v1`, but not the DSSE
+- **0.3.x:** asexec uses PAE with its own prefix, `asexec-PAE/v1`, but not the DSSE
   envelope. Canonicalization is a separate step before PAE: `payload` is stored as a JSON
   object, so signer and verifier must each re-derive the same body bytes (sorted keys,
   compact separators, UTF-8), and `ref` depends on them too. Any difference in
@@ -52,7 +57,7 @@ ref        = sha-256(body bytes)
 ```
 
 ```jsonc
-// today (0.3.x)
+// 0.3.x
 {
   "payloadType": "application/vnd.asexec+json",
   "payload": { "phase": "prereg", … },           // a JSON object

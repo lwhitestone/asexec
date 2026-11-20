@@ -1,11 +1,15 @@
-"""Pydantic models for asexec manifest bodies and envelopes, in two families.
+"""Pydantic models for asexec manifest bodies and the files around them, in two families.
 
-**Writer models** (``ManifestBody``, ``Floor``, ``Ceiling``, ...) gate what this tool
-writes: ``strict`` (no coercion) and ``extra="forbid"`` (a stray field is a caller bug).
-They do not participate in the cryptography: signing is always over the canonical bytes
-of a plain ``dict`` (see ``canonical.py``). A model is built, validated, then dumped to a
-dict via :meth:`ManifestBody.to_body` (``mode="json"``, ``exclude_none=True``) before it
-is signed/referenced/serialized.
+A file is a wrapper around a DSSE envelope: ``{"dsse": {"payloadType", "payload",
+"signatures": [{"keyid", "sig"}]}, "pubkey", "ceiling"}``, where ``dsse.payload`` is the
+base64 of the body bytes, and the body is the JSON object they hold.
+
+**Writer models** (``ManifestBody``, ``Floor``, ``Ceiling``, ``Manifest``, ...) gate what
+this tool writes: ``strict`` (no coercion) and ``extra="forbid"`` (a stray field is a caller
+bug). They do not participate in the cryptography: signing serializes a plain ``dict`` to
+the body bytes once (see ``canonical.py``), and signs those bytes. A body model is built,
+validated, then dumped to a dict via :meth:`ManifestBody.to_body` (``mode="json"``,
+``exclude_none=True``) before it is serialized and signed.
 
 **Input models** (``*Input``) parse what the verifier reads, one slice at a time. They
 are ``strict`` and ``extra="allow"``, so an unknown or future field in a published
@@ -41,12 +45,8 @@ from pydantic import (
 )
 
 from . import drand
-from .constants import (
-    FORMATS,
-    MANIFEST_PAYLOAD_TYPE,
-    MANIFEST_PREDICATE_TYPE,
-)
-from .fields import Hex, Link, LowerHex, PinnedChain, StrictInt
+from .constants import MANIFEST_PAYLOAD_TYPE, MANIFEST_PREDICATE_TYPE
+from .fields import Base64, Hex, Link, LowerHex, PinnedChain, SignatureBase64, StrictInt
 
 # A field the caller may express either as a plain string or as structured JSON.
 # "take what is provided and compile it" - more disclosure buys more trust, but
@@ -76,25 +76,40 @@ class InputModel(BaseModel):
         return data
 
 
-class SignatureInput(InputModel):
-    """``signature`` (VERIFICATION.md ### format, ### selfsig)."""
+class DsseInput(InputModel):
+    """``dsse``, the DSSE envelope (VERIFICATION.md ### format). ``signatures`` stays a list
+    of anything: how many entries it has, and what they hold, is ``selfsig``'s to judge."""
 
-    pubkey: Hex  # format #2
-    sig: Hex  # format #2
-    keyid: Any = None  # selfsig #2 compares it to the derived keyid; any other value fails there
+    payloadType: str  # format #1 (shape; #3, that it names a FORMATS entry, is code)
+    payload: Base64  # format #2 (strict base64; that the bytes are a JSON object is code)
+    signatures: list[Any]  # format #1
 
 
 class EnvelopeInput(InputModel):
-    """The file's top level (format #1). ``payload`` stays a dict: its slices are parsed on
-    demand, so a junk floor fails only ``floor``."""
+    """The file's top level (format #1). The body is not a field: it is ``dsse.payload``'s
+    bytes, decoded and parsed by the verifier, and its slices are parsed on demand, so a
+    junk floor fails only ``floor``."""
 
-    payload: dict[str, Any]
-    payloadType: str  # format #1 (shape; #3, that it names a FORMATS entry, is code)
-    signature: SignatureInput
+    dsse: DsseInput
+
+
+class SignatureInput(InputModel):
+    """``dsse.signatures[0]``, the one signature (VERIFICATION.md ### selfsig). Read only
+    when ``dsse.signatures`` holds exactly one entry, an object (selfsig #1)."""
+
+    keyid: Any = None  # selfsig #4 compares it to the derived keyid; any other value fails there
+    sig: SignatureBase64  # selfsig #2 (strict base64 of 64 bytes, as DSSE has it)
+
+
+class KeyInput(InputModel):
+    """The file's ``pubkey``, in the wrapper outside ``dsse``, as hex (VERIFICATION.md
+    ### selfsig)."""
+
+    pubkey: Hex  # selfsig #2
 
 
 class FloorInput(InputModel):
-    """``payload.anchor.floor`` (VERIFICATION.md ### floor)."""
+    """``body.anchor.floor`` (VERIFICATION.md ### floor)."""
 
     floor_type: Literal["drand"]  # floor #1
     chain_hash: PinnedChain = drand.DEFAULT_CHAIN  # floor #2
@@ -107,14 +122,14 @@ class CeilingInput(InputModel):
     """``ceiling`` (VERIFICATION.md ### ceiling)."""
 
     ceiling_type: Literal["roughtime"]  # ceiling #1
-    nonce: str  # ceiling #2 (shape; the binding to ref(payload) is code)
+    nonce: str  # ceiling #2 (shape; the binding to ref is code)
     witness_id: str  # ceiling #3 (shape; the pin lookup is code)
     pubkey: Hex | None = None  # ceiling #4 (shape; the equality is code)
     response: Hex  # ceiling #5 (shape; the response check is code)
 
 
 class SubjectEntryInput(InputModel):
-    """One ``payload.subject[]`` entry (content #1). Must be validated with
+    """One ``body.subject[]`` entry (content #1). Must be validated with
     ``context={"hash_alg": ...}``: ``digest[hash_alg]`` must be hex."""
 
     name: str  # content #1
@@ -139,12 +154,12 @@ class SubjectEntryInput(InputModel):
         return self
 
 
-# ``payload.subject`` (content #1): a non-empty array; each entry is a ``SubjectEntryInput``.
+# ``body.subject`` (content #1): a non-empty array; each entry is a ``SubjectEntryInput``.
 SubjectInput = TypeAdapter(Annotated[list[Any], Strict(), Field(min_length=1)])
 
 
 class LinkInput(InputModel):
-    """``payload.phase`` / ``fulfills`` / ``prev_hash``: a link is a string or absent
+    """``body.phase`` / ``fulfills`` / ``prev_hash``: a link is a string or absent
     (chain #2). Never fails: a non-string link is ``fields.DANGLING``."""
 
     phase: Link = None
@@ -153,7 +168,7 @@ class LinkInput(InputModel):
 
 
 class DueInput(InputModel):
-    """``payload.due``: a string or absent (Commitment states, ``invalid-due``). The
+    """``body.due``: a string or absent (Commitment states, ``invalid-due``). The
     ISO-8601 parse stays in the verifier."""
 
     due: str | None = None
@@ -183,7 +198,7 @@ class Floor(FloorInput):
 
 
 class Ceiling(CeilingInput):
-    """A Roughtime ceiling witness (envelope ``ceiling``), as ``roughtime.fetch_ceiling``
+    """A Roughtime ceiling witness (the file's ``ceiling``), as ``roughtime.fetch_ceiling``
     writes it."""
 
     model_config = ConfigDict(extra="forbid")
@@ -203,7 +218,7 @@ class Anchor(BaseModel):
 
 
 class ManifestBody(BaseModel):
-    """The signed body of a manifest (the ``payload``).
+    """The signed body of a manifest (what ``dsse.payload`` holds).
 
     ``extra="forbid"`` because construction is fully typed here - a stray field
     is a bug in the caller, not something to sign silently.
@@ -258,25 +273,36 @@ class ManifestBody(BaseModel):
         return self
 
     def to_body(self) -> dict[str, Any]:
-        """Return the plain dict that gets canonicalized and signed."""
+        """Return the plain dict that gets serialized to the body bytes and signed."""
         return self.model_dump(mode="json", exclude_none=True)
 
 
 class Signature(SignatureInput):
+    """One ``dsse.signatures[]`` entry, as DSSE has it: a ``keyid`` and a ``sig`` (the
+    signature's base64). It names no algorithm: that is the format's (``signing_key_alg``)."""
+
     model_config = ConfigDict(extra="forbid")
     null_is_absent = False
 
-    alg: str = FORMATS[MANIFEST_PAYLOAD_TYPE]["signing_key_alg"]  # the format signing writes
     keyid: str
-    pubkey: LowerHex
-    sig: LowerHex
 
 
-class Manifest(EnvelopeInput):
-    """The envelope. ``extra="allow"`` so a ceiling witness can be attached at
-    the envelope level after signing without tripping validation."""
+class Dsse(DsseInput):
+    """The DSSE envelope signing writes: the format's type, the body bytes' base64, and
+    exactly one signature."""
 
+    model_config = ConfigDict(extra="forbid")
     null_is_absent = False
 
     payloadType: str = MANIFEST_PAYLOAD_TYPE
-    signature: Signature
+    signatures: Annotated[list[Signature], Field(min_length=1, max_length=1)]
+
+
+class Manifest(EnvelopeInput):
+    """The file: the envelope and the key that signed it. ``extra="allow"`` so a ceiling
+    witness can be attached beside them after signing without tripping validation."""
+
+    null_is_absent = False
+
+    dsse: Dsse
+    pubkey: LowerHex

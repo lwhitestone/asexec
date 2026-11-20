@@ -126,18 +126,22 @@ def test_fault__fulfills_not_exactly_the_ref(tmp_path, post):
     assert len(report["notarization_only"]) == 1
 
 
-# --- envelope -------------------------------------------------------------------- #
+# --- the file around the body ---------------------------------------------------- #
 
 
 @pytest.mark.parametrize(
     "edit",
     [
         lambda env: env.update(surprise=1),
-        lambda env: env["signature"].pop("alg"),
+        lambda env: env.update(payloadType="application/vnd.asexec.v2+json"),
+        lambda env: env["dsse"].update(surprise=1),
+        lambda env: env["dsse"]["signatures"][0].update(alg="something-else"),
     ],
-    ids=["unknown-field", "signature-alg-missing"],
+    ids=["unknown-field", "top-level-payload-type", "unknown-dsse-field", "signature-alg"],
 )
 def test_fault__unsigned_envelope_field_verify_does_not_examine(tmp_path, edit):
+    """Fields of the file outside the body that this format does not define are read by no
+    test: the format is dsse.payloadType, and the algorithm is the format's."""
     pre, post = _pair(d.PREREG)
     edit(pre)
     assert _run(tmp_path, pre, post, tests=TESTS_LINKED)["code"] == (
@@ -145,35 +149,55 @@ def test_fault__unsigned_envelope_field_verify_does_not_examine(tmp_path, edit):
     )
 
 
-SIG = d.sign(d.PREREG)["signature"]
+SIGNED = d.sign(d.PREREG)
+SIG = SIGNED["dsse"]["signatures"][0]
 
 
 @pytest.mark.parametrize(
     "changes",
     [
         {"keyid": None},
-        {"sig": SIG["sig"][:-2]},
+        {"sig": d.b64(d.decoded({"dsse": {"payload": SIG["sig"]}})[:63])},
+        {"sig": d.b64(d.decoded({"dsse": {"payload": SIG["sig"]}}) + b"\0")},
         {"sig": ""},
+        {"sig": d.decoded({"dsse": {"payload": SIG["sig"]}}).hex()},
         {"pubkey": "00" * 31, "keyid": keys.keyid_for(bytes(31))},
         {"pubkey": "00" * 33},
     ],
-    ids=["keyid-missing", "sig-63-bytes", "sig-empty", "pubkey-31-bytes", "pubkey-33-bytes"],
+    ids=[
+        "keyid-missing",
+        "sig-63-bytes",
+        "sig-65-bytes",
+        "sig-empty",
+        "sig-as-hex",
+        "pubkey-31-bytes",
+        "pubkey-33-bytes",
+    ],
 )
 def test_fault__signature_fields_of_the_wrong_shape(tmp_path, changes):
-    """Hex of the wrong length, or a missing keyid, passes format and fails selfsig without
+    """A key or signature of the wrong length (a hex sig, as earlier versions wrote, is
+    base64 of 96 bytes), or a missing keyid, passes format and fails selfsig without
     raising."""
     env = d.sign(d.PREREG)
     for key, value in changes.items():
+        holder = env if key == "pubkey" else env["dsse"]["signatures"][0]
         if value is None:
-            del env["signature"][key]
+            del holder[key]
         else:
-            env["signature"][key] = value
+            holder[key] = value
     assert _run(tmp_path, env)["code"] == PREFIX + "format=PASS selfsig=FAIL"
 
 
-@pytest.mark.parametrize("payload", [[1], "x"], ids=["list", "string"])
-def test_fault__payload_not_an_object(tmp_path, payload):
-    env = {**d.sign(d.PREREG), "payload": payload}
+@pytest.mark.parametrize("raw", [b"[1]", b'"x"'], ids=["list", "string"])
+def test_fault__body_not_an_object(tmp_path, raw):
+    assert _run(tmp_path, d.sign_bytes(raw))["code"] == PREFIX + "format=FAIL selfsig=FAIL"
+
+
+@pytest.mark.parametrize("payload", [{}, [d.PREREG], d.PREREG], ids=["empty", "list", "object"])
+def test_fault__payload_as_json_rather_than_base64(tmp_path, payload):
+    """A payload stored as JSON, as asexec did before 0.4.0, is not the base64 of any body."""
+    env = d.sign(d.PREREG)
+    env["dsse"]["payload"] = payload
     assert _run(tmp_path, env)["code"] == PREFIX + "format=FAIL selfsig=FAIL"
 
 
@@ -184,20 +208,18 @@ def test_fault__very_deep_file_fails_format_everywhere(tmp_path):
     assert _run(tmp_path, raw)["code"] == PREFIX + "format=FAIL selfsig=FAIL"
 
 
-def test_fault__body_with_no_canonical_form_fails_format(tmp_path):
-    """A lone surrogate escape is valid JSON but has no UTF-8 form, so no canonical bytes."""
-    raw = json.dumps(d.sign(d.PREREG)).replace('"notes": "prereg"', '"notes": "\\ud800"')
-    assert "\\ud800" in raw
-    assert _run(tmp_path, raw)["code"] == PREFIX + "format=FAIL selfsig=FAIL"
+def test_fault__very_deep_body_fails_format_everywhere(tmp_path):
+    """The same for the body, validly signed: its own depth is checked before it is parsed."""
+    raw = b'{"junk":' + b"[" * 100_000 + b"]" * 100_000 + b"}"
+    assert _run(tmp_path, d.sign_bytes(raw))["code"] == PREFIX + "format=FAIL selfsig=FAIL"
 
 
-def test_fault__postreg_with_no_canonical_form_joins_no_commitment(tmp_path):
-    """Run rules: a postreg whose payload has no canonical bytes is malformed, so it is
-    neither counted nor rejected, nor notarization-only."""
-    post = d.with_field(d.with_field(d.POSTREG, "fulfills", d.ref(d.PREREG)), "notes", "LONE")
-    raw = json.dumps(d.sign(post)).replace('"LONE"', '"\\ud800"')
-    assert "\\ud800" in raw
-    report = _run(tmp_path, d.sign(d.PREREG), raw, tests=TESTS_LINKED)
+def test_fault__postreg_with_a_duplicate_key_in_the_body_joins_no_commitment(tmp_path):
+    """Run rules: a postreg whose body repeats a key is malformed, validly signed or not, so
+    it is neither counted nor rejected, nor notarization-only."""
+    post = d.with_field(d.POSTREG, "fulfills", d.ref(d.PREREG))
+    raw = d.body_bytes(post).replace(b'"notes":"postreg0"', b'"notes":"a","notes":"postreg0"')
+    report = _run(tmp_path, d.sign(d.PREREG), d.sign_bytes(raw), tests=TESTS_LINKED)
     assert report["code"] == PREFIX + "chain=FAIL format=FAIL keyconsist=FAIL selfsig=PASS"
     (commitment,) = report["commitments"]
     assert commitment["counted_postregs"] == [] and commitment["rejected_postregs"] == []

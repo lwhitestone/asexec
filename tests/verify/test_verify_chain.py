@@ -3,6 +3,7 @@
 The scenario's chain is postreg0 <- postreg1 <- postreg2.
 """
 
+import manifest_data as d
 import pytest
 
 from asexec import keys
@@ -29,7 +30,7 @@ def test_chain__pass__single_postreg(scenario):
 
 def test_chain__pass__1_null_prev_hash_is_absent(scenario):
     """chain #1: a null prev_hash is absent, so a root may carry one."""
-    scenario.set("postreg0", "payload.prev_hash", None)
+    scenario.set("postreg0", "body.prev_hash", None)
     assert scenario.code("chain") == PASS
 
 
@@ -71,14 +72,14 @@ def test_chain__fail__2_prev_hash_is_a_counted_postreg__other_commitment(scenari
 )
 def test_chain__fail__2_prev_hash_is_a_counted_postreg__not_a_string(scenario, junk):
     """chain #2: a non-string prev_hash links to nothing. It is a gap, never a root."""
-    scenario.set("postreg1", "payload.prev_hash", junk)
+    scenario.set("postreg1", "body.prev_hash", junk)
     assert scenario.code("chain") == FAIL
 
 
 def test_chain__fail__2_prev_hash_is_a_counted_postreg__empty_string(scenario):
     """chain #2: an empty-string prev_hash is present, so it is a link (to nothing), not a
     root. (On the root it unavoidably also breaks #1: no root is left.)"""
-    scenario.set("postreg0", "payload.prev_hash", "")
+    scenario.set("postreg0", "body.prev_hash", "")
     assert scenario.code("chain") == FAIL
 
 
@@ -115,7 +116,7 @@ def test_chain__fail__empty_prereg_fails_selfsig(scenario):
     """chain (*): a prereg that fails selfsig is no commitment, so its chain of validly
     signed postregs, which is linear, has nothing to be counted toward and is not
     examined."""
-    scenario.tamper("prereg", lambda envelope: envelope["signature"].update(sig="00" * 64))
+    scenario.set("prereg", "dsse.signatures[0].sig", d.ZERO_SIG)
     report = scenario.verify("chain")
     assert report["commitments"] == []
     assert report["code"] == "asexec-verify/1 chain=FAIL format=PASS selfsig=FAIL"

@@ -38,7 +38,7 @@ def test_state__open__no_counted_postreg_and_due_absent_or_future(scenario, due)
     """open: no counted postreg, and due is absent (missing or null) or in the future."""
     _only_prereg(scenario, None if due == "null" else due)
     if due == "null":
-        scenario.set("prereg", "payload.due", None)
+        scenario.set("prereg", "body.due", None)
     assert _state(scenario, now=NOW) == "open"
 
 

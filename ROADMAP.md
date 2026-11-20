@@ -51,10 +51,11 @@ format people adopt is the format we can stand behind.
     release notes.
   - **Until `0.4.0`:** a `MINOR` change may ship as a `0.3.x` `PATCH` instead, with the break
     called out in the release notes. From `0.4.0`, it needs a `MINOR`.
-- **Identifiers baked into signed bytes.** The PAE prefix (`asexec-PAE/v1`, a `FORMATS`
-  entry's `signing_pae_version`) and `MANIFEST_PAYLOAD_TYPE` are in the signing input, and
-  `MANIFEST_PREDICATE_TYPE` is written into the signed body. Changing any of them is a
-  deliberate format change, never incidental. In 0.4.0 the PAE prefix becomes `DSSEv1`.
+- **Identifiers baked into signed bytes.** The PAE prefix (`DSSEv1`, a `FORMATS` entry's
+  `signing_pae_version`; `asexec-PAE/v1` before the DSSE envelope) and
+  `MANIFEST_PAYLOAD_TYPE` are in the signing input, and `MANIFEST_PREDICATE_TYPE` is written
+  into the signed body. Changing any of them is a deliberate format change, never
+  incidental. `DSSEv1` is fixed by DSSE, so from 0.4.0 `payloadType` carries the version.
   The full list, and how each may change, is in
   [`tests/test_constants.py`](tests/test_constants.py).
 - **The verify-code grammar is versioned separately** (`asexec-verify/N`). The
@@ -138,9 +139,11 @@ manifest, even if that manifest happens to carry it; there, it stays an unknown 
 
 - DSSE envelope: `payload` is base64 of the exact signed bytes; the PAE prefix is
   `DSSEv1`; `signatures: [...]` (one entry for now). The verifier checks the stored
-  bytes and never re-canonicalizes. `ref` = digest of the payload bytes.
+  bytes and never re-canonicalizes. `ref` = digest of the payload bytes. (Done ahead of
+  0.4.0.)
 - The file is an asexec wrapper around that standard envelope: `dsse`, plus the unsigned
-  `ceiling`, `pubkey` and `untrusted` (see *Wrapper* below).
+  `ceiling`, `pubkey` and `untrusted` (see *Wrapper* below). (Done ahead of 0.4.0, except
+  `untrusted`.)
 - `untrusted`: a section for metadata nothing checks, starting with `asexec_version`.
 - `payloadType` is `application/vnd.asexec.v1+json` (betas write their own; see
   *Versioning*), and `predicateType` is `https://asexec.org/manifest/v1`, on a domain the
@@ -149,8 +152,7 @@ manifest, even if that manifest happens to carry it; there, it stays an unknown 
   says the body is an asexec manifest, and a third format identifier that no test checks
   could disagree with the other two. (Done ahead of 0.4.0.)
 - `dsse.payloadType` selects the format version, and unknown values fail `format`
-  ([`docs/MULTIVERSION.md`](docs/MULTIVERSION.md)). (Done ahead of 0.4.0 on the top-level
-  `payloadType`, which the DSSE envelope moves into `dsse`.)
+  ([`docs/MULTIVERSION.md`](docs/MULTIVERSION.md)). (Done ahead of 0.4.0.)
 - `hash_alg` moves into each subject entry. A body-level `hash_alg` is no longer read, and is
   shown as unknown and unchecked, like any unknown field.
 - Subjects are an explicit list of files, each hashed exactly as listed, because directory
@@ -180,11 +182,18 @@ How the 0.4.0 envelope is built, compared with 0.3.x, is in
   wins, so two verifiers could read different fields from the same signed bytes. The
   decoded body is held to the same JSON rules as the file, nesting limit included.
 
+(All three done ahead of 0.4.0; `untrusted` is not built yet.)
+
 **Wrapper.** DSSE defines only `payloadType`, `payload` and `signatures`, so what asexec
 adds sits outside it, in the wrapper:
 
 - `dsse` is a standard envelope that DSSE and in-toto tooling can lift out and verify
-  unchanged, which keeps the M2 export simple.
+  unchanged, which keeps the M2 export simple: `payload` and `sig` are base64, as DSSE
+  has them. The promise is that DSSE tools read asexec's `dsse`, not that asexec reads every
+  DSSE envelope: it is stricter than DSSE in four ways, namely standard base64 only (DSSE
+  verifiers must also accept URL-safe), padding required (DSSE is silent), a required
+  `keyid` that is `sha-256:` of `pubkey` (optional in DSSE), and exactly one signature
+  (DSSE allows several, with a threshold). (Done ahead of 0.4.0.)
 - `ceiling` cannot be inside the body (its nonce is the body's own hash). In the wrapper
   it can still be attached after signing; it is bound by `nonce == ref` and authenticated
   by the witness's own signature.
@@ -212,6 +221,7 @@ adds sits outside it, in the wrapper:
 - Malformed means only what stops `verify` reading a manifest: not valid JSON, nested too
   deep, a duplicate key, or a missing frame (`dsse` with `payloadType`, a `payload` that
   decodes to a JSON object, and a `signatures` list). Everything else is judged by tests.
+  (Done ahead of 0.4.0.)
 - `--json`: a report the claim-graph export reads. Outside the support promise until
   0.5.0 (see *Support from 0.4.0*).
 - Unknown signed fields are shown as unknown and unchecked, never dropped. Unknown
@@ -222,7 +232,8 @@ adds sits outside it, in the wrapper:
 **Docs**, rewritten for the 0.4.0 format before release, since the release fixes what they
 describe:
 - `docs/VERIFICATION.md`: every path (body paths inside the decoded `dsse.payload`;
-  `dsse.signatures[]` and `pubkey` for `signature.*`), the malformed rule, the new tests,
+  `dsse.signatures[]` and `pubkey` for `signature.*`; done ahead, as `body.*`), the
+  malformed rule (done ahead), the new tests,
   a *TrustedDeclared* list (signed properties that are shown but never tested) and an
   *Untrusted* section.
 - `README.md`: the manifest examples (DSSE envelope, file-only subjects, the claim
