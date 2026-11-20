@@ -436,8 +436,9 @@ def _check_entry(item: Any, artifacts_dir: str, repeated: set[str], field: str) 
 
 def _repeated_names(entries: list[Any]) -> set[str]:
     """The names more than one entry of one list has (content #4)."""
-    counts = Counter(e.get("name") for e in entries if isinstance(e, dict))
-    return {n for n, k in counts.items() if isinstance(n, str) and k > 1}
+    names = (e.get("name") for e in entries if isinstance(e, dict))
+    counts = Counter(n for n in names if isinstance(n, str))  # a junk name may be unhashable
+    return {n for n, k in counts.items() if k > 1}
 
 
 def verify_content(body: dict[str, Any], artifacts_dir: str | None) -> dict[str, Any]:
