@@ -4,12 +4,13 @@ Test organization (mirrors docs/VERIFICATION.md)
 ------------------------------------------------
 One file per catalog test, plus one per cross-cutting section of the doc::
 
-    test_verify_bdr.py               ## BDR
     test_verify_ceiling.py           ## ceiling
     test_verify_chain.py             ## chain
     test_verify_content.py           ## content
     test_verify_floor.py             ## floor
+    test_verify_format.py            ## format
     test_verify_keyconsist.py        ## keyconsist
+    test_verify_selfsig.py           ## selfsig
     test_verify_matching.py          ## Matching postregs to commitments
     test_verify_commitment_states.py ## Commitment states
     test_verify_run_rules.py         ## Conventions (Result, Code, Run rules)
@@ -28,8 +29,8 @@ Within a catalog-test file the tests appear in this order, and are named::
 every docstring starts with ``<TEST> #<N>:`` followed by the item's wording. A
 ``fail`` test builds the all-passing scenario, breaks exactly one item (as far as
 the items allow: where one item cannot be broken without another, the test says
-so), and asserts the whole code, so ``BDR=PASS`` also shows the rest still holds.
-Several documented failure modes of one item share a parametrized test.
+so), and asserts the whole code, so ``format=PASS selfsig=PASS`` also shows the rest
+still holds. Several documented failure modes of one item share a parametrized test.
 
 Tests are black-box: they build inputs, run ``verify_paths``, and assert what the doc
 defines (verdicts, the code, documented reasons). Invalid inputs are written as the
@@ -62,6 +63,7 @@ import pytest
 from asexec.verifier import verify_paths
 
 WITNESS_ID = "synthetic"
+REQUIRED = ("format", "selfsig")  # every run includes both (Run rules)
 _AUTO = object()
 _UNSET = object()
 
@@ -259,7 +261,7 @@ class Scenario:
 
     # --- running verify ------------------------------------------------------ #
     def verify(self, *tests: str, artifacts: bool = True, now: float | None = None) -> dict:
-        names = ["BDR", *[t for t in tests if t != "BDR"]]
+        names = [*REQUIRED, *[t for t in tests if t not in REQUIRED]]
         paths = self.write()
         return verify_paths(
             paths,

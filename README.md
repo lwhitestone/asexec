@@ -43,8 +43,9 @@ in the form of `asexec verify` providing a code regarding the checks applied.
 
 ### What `asexec` always proves
 
-Every `verify` run checks [`BDR`](./docs/VERIFICATION.md#bdr) and renders the state of each
-commitment (a pre-registration and its signer):
+Every `verify` run checks [`format`](./docs/VERIFICATION.md#format) and
+[`selfsig`](./docs/VERIFICATION.md#selfsig), and renders the state of each commitment (a
+pre-registration and its signer):
 
 - **Integrity and non-repudiation.** A manifest (pre-registration or post-registration) was
   not altered after signing, and was signed by the private key whose public key its `keyid`
@@ -137,9 +138,10 @@ asexec postreg --key lab.key --fulfills preregistration.json \
     --out postregistration.json
 
 # 4. Any verifier, anytime: verify the cycle and render the commitment state.
-#    --tests names exactly which checks to run; 'BDR' (sig + keyid) is required.
+#    --tests names exactly which checks to run; 'format' (the file can be read) and
+#    'selfsig' (sig + keyid) are required.
 asexec verify preregistration.json postregistration.json \
-    --tests BDR,content,chain,keyconsist --artifacts .
+    --tests format,selfsig,content,chain,keyconsist --artifacts .
 ```
 
 For a detailed look at parameters and options, see: `asexec --help`.
@@ -154,7 +156,7 @@ For a worked end-to-end run, with faults replayed against the verifier, see
 | `0` | Success. For `verify`, every requested test is `PASS`; for `identity match`, the key is bound to the domain. |
 | `1` | Error: the arguments are valid, but the command could not complete with the files or network they name, e.g. a missing or invalid key file, an unreadable `--subject` or `--target-file`, a key file it refuses to overwrite, a failed `identity match` fetch, or a failed `--floor`/`--ceiling` fetch without `--best-effort`. An `error: ...` line is printed; a few bad inputs still print a traceback instead ([#45](https://github.com/lwhitestone/asexec/issues/45)). |
 | `2` | `verify`: at least one requested test is `FAIL`. `identity match`: the key is not bound. |
-| `64` | Usage error: the arguments themselves are wrong, whatever the files hold. For example: an unknown command or option; a missing argument; two that exclude each other, such as `--target` and `--target-file`; a `--due` without an explicit offset; a `--tests` that names an unknown test, names none, or omits `BDR`; or for `identity match`, not exactly one of `--keyid`, `--pubkey` and `--key`. Usage is printed and nothing runs (`verify` prints no code). A few argument mistakes, such as an empty value, are not caught yet ([#45](https://github.com/lwhitestone/asexec/issues/45)). |
+| `64` | Usage error: the arguments themselves are wrong, whatever the files hold. For example: an unknown command or option; a missing argument; two that exclude each other, such as `--target` and `--target-file`; a `--due` without an explicit offset; a `--tests` that names an unknown test, names none, or omits `format` or `selfsig`; or for `identity match`, not exactly one of `--keyid`, `--pubkey` and `--key`. Usage is printed and nothing runs (`verify` prints no code). A few argument mistakes, such as an empty value, are not caught yet ([#45](https://github.com/lwhitestone/asexec/issues/45)). |
 
 For `verify`, malformed manifest input is a `FAIL`, never an error.
 
@@ -169,7 +171,7 @@ result with a short reason), then one canonical code, then `Checked at <time>` (
 moment commitment states were judged against), e.g.:
 
 ```
-asexec-verify/1 BDR=PASS chain=PASS content=PASS keyconsist=PASS
+asexec-verify/1 chain=PASS content=PASS format=PASS keyconsist=PASS selfsig=PASS
 Checked at 2026-12-31T23:59:59Z
 ```
 
@@ -181,14 +183,15 @@ Grammar (`asexec-verify/1` versions the code format): the literal prefix, then o
 single-space delimited. The same result set is byte-identical everywhere.
 
 - You declare your appetite. `--tests` is required and must include
-  [`BDR`](./docs/VERIFICATION.md#bdr); every other test is opt-in (see
+  [`format`](./docs/VERIFICATION.md#format) and
+  [`selfsig`](./docs/VERIFICATION.md#selfsig); every other test is opt-in (see
   [What `asexec` can prove](#what-asexec-can-prove-optional-fields-and-tests)).
 - Named, not scored, so it's forward-compatible. Because the code names which tests
   ran, adding a test in a later version can never change the meaning of an older code. A code
   means exactly one thing, permanently, from `0.4.0`; until then a test's documented meaning
   may still be corrected (see [Status](#status)).
 - A requested test with nothing to examine is *empty* and `FAIL`, never a silent omission
-  or a pass (e.g. `--tests BDR,ceiling` on manifests with no ceiling -> `ceiling=FAIL`).
+  or a pass (e.g. `--tests format,selfsig,ceiling` on manifests with no ceiling -> `ceiling=FAIL`).
 - The code is not a certificate. Real verification comes from the verifier running the tool
   against the files and getting the code.
 

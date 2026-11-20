@@ -206,13 +206,14 @@ def test_fulfills_non_manifest_file_is_a_clean_error(tmp_path, key):
 
 # --- verify exit codes ----------------------------------------------------- #
 def test_verify_exit_codes_and_malformed_file(tmp_path, key, prereg, capsys):
-    assert run("verify", prereg, "--tests", "BDR") == 0
-    assert "asexec-verify/1 BDR=PASS" in capsys.readouterr().out
+    assert run("verify", prereg, "--tests", "format,selfsig") == 0
+    assert "asexec-verify/1 format=PASS selfsig=PASS" in capsys.readouterr().out
     bad = tmp_path / "bad.json"
     bad.write_text("{nope")
-    assert run("verify", prereg, bad, "--tests", "BDR") == 2
+    assert run("verify", prereg, bad, "--tests", "format,selfsig") == 2
     out = capsys.readouterr().out
-    assert "asexec-verify/1 BDR=FAIL" in out and "malformed" in out
+    assert "asexec-verify/1 format=FAIL selfsig=PASS" in out
+    assert f"    {cli.NO} format: malformed: " in out  # the reason, under the file it is about
 
 
 def test_verify_renders_rejected_postreg_and_invalid_due(tmp_path, key, capsys):
@@ -222,7 +223,7 @@ def test_verify_renders_rejected_postreg_and_invalid_due(tmp_path, key, capsys):
     body["due"] = "someday"
     priv, pub = keys.load_signing_key(key)
     manifest.save(manifest.sign(body, priv, pub), str(out))
-    run("verify", out, "--tests", "BDR")
+    run("verify", out, "--tests", "format,selfsig")
     assert "INVALID-DUE" in capsys.readouterr().out
 
 
@@ -235,18 +236,42 @@ def test_verify_shows_a_present_due_as_it_is(tmp_path, key, capsys, due, shown):
     body["due"] = due
     priv, pub = keys.load_signing_key(key)
     manifest.save(manifest.sign(body, priv, pub), str(out))
-    run("verify", out, "--tests", "BDR")
+    run("verify", out, "--tests", "format,selfsig")
     text = capsys.readouterr().out
     assert f"    due          : {shown}\n" in text
     assert ("INVALID-DUE" in text) is (due is not None)
 
 
-@pytest.mark.parametrize("tests", ["chain", "BDR,nope", ","], ids=["no-BDR", "unknown", "none"])
+@pytest.mark.parametrize(
+    "tests",
+    ["chain", "format,chain", "selfsig", "format,selfsig,nope", ","],
+    ids=["no-required", "no-selfsig", "no-format", "unknown", "none"],
+)
 def test_verify_bad_tests_is_a_usage_error(prereg, tests, capsys):
     with pytest.raises(SystemExit) as e:
         run("verify", prereg, "--tests", tests)
     assert e.value.code == cli.EXIT_USAGE
     assert "asexec-verify/1" not in capsys.readouterr().out  # nothing ran
+
+
+@pytest.mark.parametrize(
+    "tests,missing",
+    [("chain", "'format', 'selfsig'"), ("format,chain", "'selfsig'"), ("selfsig", "'format'")],
+)
+def test_verify_tests_without_a_required_test_names_what_is_missing(prereg, tests, missing, capsys):
+    with pytest.raises(SystemExit) as e:
+        run("verify", prereg, "--tests", tests)
+    assert e.value.code == cli.EXIT_USAGE
+    assert f"missing required test(s) {missing}" in capsys.readouterr().err
+
+
+def test_verify_help_names_both_required_tests(capsys):
+    with pytest.raises(SystemExit) as e:
+        run("verify", "--help")
+    assert e.value.code == 0
+    text = " ".join(capsys.readouterr().out.split())  # argparse wraps the help
+    assert "MUST include 'format' and 'selfsig'" in text
+    assert "available: ceiling, chain, content, floor, format, keyconsist, selfsig" in text
 
 
 @pytest.mark.parametrize(
@@ -344,15 +369,15 @@ def _resign(path, key, mutate):
 
 def test_verify_prints_verified_floor(tmp_path, key, prereg, capsys):
     _resign(prereg, key, lambda body: body.update(anchor={"floor": FLOOR}))
-    assert run("verify", prereg, "--tests", "BDR,floor") == 0
+    assert run("verify", prereg, "--tests", "format,selfsig,floor") == 0
     out = capsys.readouterr().out
     assert "drand freshness floor round 1000 (created no earlier than 1692" in out
-    assert "BDR=PASS floor=PASS" in out
+    assert "floor=PASS format=PASS selfsig=PASS" in out
 
 
 def test_verify_prints_failed_floor_without_timestamp(tmp_path, key, prereg, capsys):
     _resign(prereg, key, lambda body: body.update(anchor={"floor": {**FLOOR, "round": 1001}}))
-    assert run("verify", prereg, "--tests", "BDR,floor") == 2
+    assert run("verify", prereg, "--tests", "format,selfsig,floor") == 2
     out = capsys.readouterr().out
     assert "drand freshness floor round 1001" in out
     assert "created no earlier than" not in out
@@ -369,7 +394,7 @@ def test_verify_prints_ceiling_and_trust_section(
     manifest.attach_ceiling(mani, ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response))
     manifest.save(mani, prereg)
 
-    assert run("verify", prereg, "--tests", "BDR,ceiling") == 0
+    assert run("verify", prereg, "--tests", "format,selfsig,ceiling") == 0
     out = capsys.readouterr().out
     assert "ceiling witness (created no later than" in out and "witness synthetic" in out
     assert "=== ceiling trust (what you are accepting) ===" in out
@@ -380,7 +405,7 @@ def test_verify_prints_invalid_ceiling_error(tmp_path, key, prereg, capsys):
     mani = manifest.load(prereg)
     manifest.attach_ceiling(mani, {"ceiling_type": "roughtime", "witness_id": "nobody"})
     manifest.save(mani, prereg)
-    run("verify", prereg, "--tests", "BDR,ceiling")
+    run("verify", prereg, "--tests", "format,selfsig,ceiling")
     out = capsys.readouterr().out
     assert cli.NO in out and "ceiling witness (" in out
     assert "ceiling trust" not in out
@@ -395,7 +420,7 @@ def test_verify_prints_content_mismatch(tmp_path, key, capsys):
                "--out", out) == 0  # fmt: skip
     (art / "a.txt").write_text("two")
     capsys.readouterr()
-    code = run("verify", out, "--tests", "BDR,content", "--artifacts", art)
+    code = run("verify", out, "--tests", "format,selfsig,content", "--artifacts", art)
     text = capsys.readouterr().out
     assert code == 2
     assert "content hashes mismatch" in text
@@ -409,20 +434,20 @@ def test_verify_prints_content_ok(tmp_path, key, capsys):
     out = tmp_path / "pre.json"
     run("prereg", "--key", key, "--target", "t", "--subject", art / "a.txt", "--out", out)
     capsys.readouterr()
-    assert run("verify", out, "--tests", "BDR,content", "--artifacts", art) == 0
+    assert run("verify", out, "--tests", "format,selfsig,content", "--artifacts", art) == 0
     assert "content hashes ok" in capsys.readouterr().out
 
 
 def test_verify_ends_with_code_then_time(prereg, capsys):
-    assert run("verify", prereg, "--tests", "BDR") == 0
+    assert run("verify", prereg, "--tests", "format,selfsig") == 0
     lines = capsys.readouterr().out.splitlines()
-    assert lines[-2] == "asexec-verify/1 BDR=PASS"
+    assert lines[-2] == "asexec-verify/1 format=PASS selfsig=PASS"
     assert re.fullmatch(r"Checked at \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", lines[-1])
 
 
 def test_verify_prints_each_commitments_signer(key, prereg, capsys):
     _, pub = keys.load_signing_key(key)
-    run("verify", prereg, "--tests", "BDR")
+    run("verify", prereg, "--tests", "format,selfsig")
     assert f"    signer       : {keys.keyid_for(pub)}\n" in capsys.readouterr().out
 
 
@@ -430,7 +455,7 @@ def test_verify_prints_notarization_only(tmp_path, key, prereg, capsys):
     post = tmp_path / "po.json"
     assert run("postreg", "--key", key, "--target", "t", "--fulfills", REF, "--out", post) == 0
     capsys.readouterr()
-    run("verify", post, "--tests", "BDR")
+    run("verify", post, "--tests", "format,selfsig")
     out = capsys.readouterr().out
     assert "=== notarization-only" in out
     assert f"(fulfills {REF})" in out
@@ -489,7 +514,7 @@ def test_identity_without_subcommand_is_usage_error():
 
 # --- entry points ------------------------------------------------------------ #
 def test_python_dash_m_entry_point_exits_with_main_code(monkeypatch, prereg):
-    monkeypatch.setattr(sys, "argv", ["asexec", "verify", prereg, "--tests", "BDR"])
+    monkeypatch.setattr(sys, "argv", ["asexec", "verify", prereg, "--tests", "format,selfsig"])
     with pytest.raises(SystemExit) as e:
         runpy.run_module("asexec", run_name="__main__")
     assert e.value.code == 0

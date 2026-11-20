@@ -22,7 +22,7 @@ asexec-PAE/v1 30 application/vnd.asexec.v1+json 31 {"phase":"prereg","target":"m
 The signature therefore covers the payload's type as well as its body, and the length
 fields keep the boundaries unambiguous even when a value contains spaces. PAE is used only
 to sign and verify a signature. `ref` hashes the body bytes without it, and the verify code
-does not contain it: `BDR` checks the signature, and the code reports only that result.
+does not contain it: `selfsig` checks the signature, and the code reports only that result.
 
 DSSE is the envelope built around PAE: `payloadType`, `payload` as base64 of the exact
 signed bytes, and a `signatures` list.

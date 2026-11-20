@@ -40,8 +40,9 @@ tests that examine it.
 in the README's [Exit status](../README.md#exit-status).
 
 **Run rules.**
-- `--tests` is required, must name only catalog tests, and must include `BDR`. Otherwise
-  the run is a usage error: it exits `64` and nothing is verified.
+- `--tests` is required, must name only catalog tests, and must include both
+  [`format`](#format) and [`selfsig`](#selfsig). Otherwise the run is a usage error: it
+  exits `64` and nothing is verified.
 - A test passes iff **all** of its *Passes when all* requirements hold for **every** manifest
   or commitment that has the *Examines* properties, and at least one such manifest or
   commitment exists.
@@ -59,8 +60,8 @@ in the README's [Exit status](../README.md#exit-status).
   `signature`, has a `payload` with no canonical bytes (a string in it, key or value, holds
   an unpaired surrogate escape such as `"\ud800"`, which has no UTF-8 encoding), or its
   `signature.pubkey` and `signature.sig` are not both hex. It fails
-  `BDR`, and only `BDR` examines it. It takes no part in any commitment: it is neither
-  counted nor rejected (see
+  [`format`](#format), and no other test examines it, `selfsig` included. It takes no part
+  in any commitment: it is neither counted nor rejected (see
   [Matching postregs to commitments](#matching-postregs-to-commitments)).
 
 ## Output
@@ -71,7 +72,7 @@ report's wording may change, except for the reasons this document lists.
 
 | Block | Printed | Shows |
 |---|---|---|
-| `=== manifests ===` | always | One line per file: `✓` if `BDR`'s signature and keyid conditions hold (else `✗`), the path, `payload.phase` and `signature.keyid`. Indented beneath: why a malformed file is malformed, and one line each for a floor, a ceiling and content hashes when the manifest has them. |
+| `=== manifests ===` | always | One line per file: `✓` if it passes `format` and meets `selfsig`'s conditions (else `✗`), the path, `payload.phase` and `signature.keyid`. Indented beneath: why a malformed file fails `format` (`format: malformed: …`), and one line each for a floor, a ceiling and content hashes when the manifest has them. |
 | `=== commitments ===` | always | One entry per commitment (a prereg's `ref` and signer): its [state](#commitment-states), `ref`, signer keyid, `due`, the number of counted postregs, a chain problem if any, and each rejected postreg with its reason. |
 | `=== notarization-only … ===` | if any | Each [notarization-only](#matching-postregs-to-commitments) postreg: one whose `payload.fulfills` matches no provided prereg. |
 | `=== tests ===` | always | One line per requested test: its result and a short reason. |
@@ -84,10 +85,10 @@ with no report. Commitment states never affect either: a run can show `ELAPSED-N
 and still exit `0`.
 
 **Example.** The three files from the [`chain` example](#chain), checked with
-`BDR`, `chain` and `keyconsist`. Hashes are shortened with `…`.
+`format`, `selfsig`, `chain` and `keyconsist`. Hashes are shortened with `…`.
 
 ```console
-$ asexec verify prereg.json postreg-1.json postreg-2.json --tests BDR,chain,keyconsist
+$ asexec verify prereg.json postreg-1.json postreg-2.json --tests format,selfsig,chain,keyconsist
 === manifests ===
 ✓ prereg.json  [prereg]  keyid=sha-256:7bc19c1d…
 ✓ postreg-1.json  [postreg]  keyid=sha-256:7bc19c1d…
@@ -100,11 +101,12 @@ $ asexec verify prereg.json postreg-1.json postreg-2.json --tests BDR,chain,keyc
     postregs     : 2
 
 === tests ===
-  ✓ BDR=PASS  (3/3 manifest(s) ok)
   ✓ chain=PASS  (1/1 chain(s) ok)
+  ✓ format=PASS  (3/3 manifest(s) ok)
   ✓ keyconsist=PASS  (1/1 commitment(s) ok)
+  ✓ selfsig=PASS  (3/3 manifest(s) ok)
 
-asexec-verify/1 BDR=PASS chain=PASS keyconsist=PASS
+asexec-verify/1 chain=PASS format=PASS keyconsist=PASS selfsig=PASS
 Checked at 2026-12-31T23:59:59Z
 ```
 
@@ -112,14 +114,17 @@ Checked at 2026-12-31T23:59:59Z
 
 | Test | Examines (\*) | Passes when all |
 |---|---|---|
-| [`BDR`](#bdr) | • `payload`<br>• `signature.pubkey`<br>• `signature.sig`<br>• `signature.keyid` | 1. file is well-formed JSON<br>2. `signature.sig` verifies over `payload`<br>3. `signature.keyid` derives from `signature.pubkey` |
 | [`ceiling`](#ceiling) | • `ceiling.ceiling_type`<br>• `ceiling.nonce`<br>• `ceiling.witness_id`<br>• `ceiling.pubkey`<br>• `ceiling.response`<br>• `payload` | 1. `ceiling.ceiling_type` is `roughtime`<br>2. `ceiling.nonce` equals `ref(payload)`<br>3. `ceiling.witness_id` has a pinned key<br>4. `ceiling.pubkey`, if present, equals the pinned key<br>5. `ceiling.response` verifies against the pinned key |
 | [`chain`](#chain) | • `payload.phase`<br>• `payload.fulfills`<br>• `payload.prev_hash`<br>• `signature.pubkey`<br>• `signature.sig`<br>• `signature.keyid` | 1. exactly one counted postreg has no `payload.prev_hash`<br>2. every other `payload.prev_hash` is the `ref` of a counted postreg<br>3. no `ref` is the `payload.prev_hash` of more than one counted postreg |
 | [`content`](#content) | • `payload.subject`<br>• `payload.subject[].name`<br>• `payload.subject[].digest`<br>• `payload.hash_alg`<br>• `--artifacts` | 1. `payload.subject` is a non-empty array of well-formed entries<br>2. `payload.hash_alg` is available<br>3. `name` resolves inside `--artifacts`<br>4. the artifact exists<br>5. the artifact is readable<br>6. recomputed digest equals `digest[hash_alg]` |
 | [`floor`](#floor) | • `payload.anchor.floor.floor_type`<br>• `payload.anchor.floor.chain_hash`<br>• `payload.anchor.floor.round`<br>• `payload.anchor.floor.signature`<br>• `payload.anchor.floor.randomness` | 1. `floor_type` is `drand`<br>2. `chain_hash` is pinned<br>3. `round` is an integer and `signature` is hex<br>4. `randomness`, if present, equals `sha256(signature)`<br>5. `signature` BLS-verifies for `round` under the pinned key |
+| [`format`](#format) | • the file<br>• `payload`<br>• `signature`<br>• `signature.pubkey`<br>• `signature.sig` | 1. file is a well-formed JSON envelope<br>2. `signature.pubkey` and `signature.sig` are hex |
 | [`keyconsist`](#keyconsist) | • `payload.phase`<br>• `payload.fulfills`<br>• `signature.pubkey`<br>• `signature.sig`<br>• `signature.keyid` | 1. every validly signed postreg naming the prereg's `ref` has the `signature.keyid` of a provided prereg with that `ref` |
+| [`selfsig`](#selfsig) | • `payload`<br>• `signature.pubkey`<br>• `signature.sig`<br>• `signature.keyid` | 1. `signature.sig` verifies over `payload` by `signature.pubkey`<br>2. `signature.keyid` derives from `signature.pubkey` |
 
 Condition numbers match each test's *Passes when all* list below; the table shortens them.
+`format` and `selfsig` are required in every run. `selfsig` examines only files that pass
+`format`, and so does every other test.
 
 (\*) per [Run rules](#conventions): if no manifest or commitment has these properties, the
 test is empty and judged `FAIL` (see each test's *When empty* line).
@@ -127,68 +132,6 @@ test is empty and judged `FAIL` (see each test's *When empty* line).
 ---
 
 ## Tests
-
-### `BDR`
-
-Bedrock. Mandatory in every run.
-
-**Examines (\*)**
-- `payload`
-- `signature.pubkey`
-- `signature.sig`
-- `signature.keyid`
-
-**Passes when all**
-1. The file is a JSON object, nested at most 64 deep, with no duplicate keys, containing
-   `payload` and `signature`, and `payload` has canonical bytes (no string in it, key or
-   value, holds an unpaired surrogate escape).
-2. `signature.pubkey` and `signature.sig` are hex and `signature.sig` is a valid ed25519
-   signature by `signature.pubkey` over the PAE signing input of the canonical bytes of
-   `payload`.
-3. `signature.keyid == "sha-256:" + sha256(bytes.fromhex(signature.pubkey)).hexdigest()`.
-
-**When empty:** if no manifest file is found (every path given is a directory with no
-`*.json` file in it), `BDR` has nothing to examine and is `FAIL`, with the reason
-`no manifests to verify`. A path that is not a directory is always examined, even if it
-does not exist (it is malformed), and so is a directory that cannot be listed.
-
-**Does not establish:** who signed (internal consistency only); that `payload` is a
-well-formed asexec body (any validly signed object `payload` passes, whatever it holds).
-
-**Example** (all requirements pass)
-
-```console
-$ asexec verify prereg.json --tests BDR
-```
-
-`prereg.json`:
-
-```jsonc
-{
-  "payload": {
-    "predicateType": "https://asexec.org/manifest/v1",
-    "phase": "prereg",
-    "target": "model m via provider p"
-  },
-  "signature": {
-    "pubkey": "0743f489…",
-    "sig": "89ccc62e…",
-    "keyid": "sha-256:7bc19c1d…"
-  }
-}
-```
-
-Output (from `=== tests ===` on), exit status `0`:
-
-```
-=== tests ===
-  ✓ BDR=PASS  (1/1 manifest(s) ok)
-
-asexec-verify/1 BDR=PASS
-Checked at 2026-12-31T23:59:59Z
-```
-
----
 
 ### `ceiling`
 
@@ -226,7 +169,7 @@ the other pinned servers.
 **Example** (all requirements pass)
 
 ```console
-$ asexec verify prereg.json --tests BDR,ceiling
+$ asexec verify prereg.json --tests format,selfsig,ceiling
 ```
 
 `prereg.json` (unexamined fields elided):
@@ -249,13 +192,14 @@ Output (from `=== tests ===` on), exit status `0`:
 
 ```
 === tests ===
-  ✓ BDR=PASS  (1/1 manifest(s) ok)
   ✓ ceiling=PASS  (1/1 ceiling(s) ok)
+  ✓ format=PASS  (1/1 manifest(s) ok)
+  ✓ selfsig=PASS  (1/1 manifest(s) ok)
 
 === ceiling trust (what you are accepting) ===
   - prereg.json: ceiling witnessed by int08h-Roughtime at … - you are trusting …
 
-asexec-verify/1 BDR=PASS ceiling=PASS
+asexec-verify/1 ceiling=PASS format=PASS selfsig=PASS
 Checked at 2026-12-31T23:59:59Z
 ```
 
@@ -294,7 +238,7 @@ detectable.
 **Example** (all requirements pass)
 
 ```console
-$ asexec verify prereg.json postreg-1.json postreg-2.json --tests BDR,chain
+$ asexec verify prereg.json postreg-1.json postreg-2.json --tests format,selfsig,chain
 ```
 
 The three files (unexamined fields elided; all three are signed by the same key):
@@ -317,10 +261,11 @@ Output (from `=== tests ===` on), exit status `0`:
 
 ```
 === tests ===
-  ✓ BDR=PASS  (3/3 manifest(s) ok)
   ✓ chain=PASS  (1/1 chain(s) ok)
+  ✓ format=PASS  (3/3 manifest(s) ok)
+  ✓ selfsig=PASS  (3/3 manifest(s) ok)
 
-asexec-verify/1 BDR=PASS chain=PASS
+asexec-verify/1 chain=PASS format=PASS selfsig=PASS
 Checked at 2026-12-31T23:59:59Z
 ```
 
@@ -366,7 +311,7 @@ is the output of the named harness and model.
 **Example** (all requirements pass)
 
 ```console
-$ asexec verify prereg.json --tests BDR,content --artifacts artifacts
+$ asexec verify prereg.json --tests format,selfsig,content --artifacts artifacts
 ```
 
 `artifacts/transcript.txt` contains `hello` and a newline. `prereg.json` (unexamined fields
@@ -392,10 +337,11 @@ Output (from `=== tests ===` on), exit status `0`:
 
 ```
 === tests ===
-  ✓ BDR=PASS  (1/1 manifest(s) ok)
   ✓ content=PASS  (1/1 subject(s) ok)
+  ✓ format=PASS  (1/1 manifest(s) ok)
+  ✓ selfsig=PASS  (1/1 manifest(s) ok)
 
-asexec-verify/1 BDR=PASS content=PASS
+asexec-verify/1 content=PASS format=PASS selfsig=PASS
 Checked at 2026-12-31T23:59:59Z
 ```
 
@@ -432,7 +378,7 @@ freshness (anti-precomputation), not backdating.
 **Example** (all requirements pass)
 
 ```console
-$ asexec verify prereg.json --tests BDR,floor
+$ asexec verify prereg.json --tests format,selfsig,floor
 ```
 
 `prereg.json` (unexamined fields elided):
@@ -459,11 +405,99 @@ Output (from `=== tests ===` on), exit status `0`:
 
 ```
 === tests ===
-  ✓ BDR=PASS  (1/1 manifest(s) ok)
   ✓ floor=PASS  (1/1 floor(s) ok)
+  ✓ format=PASS  (1/1 manifest(s) ok)
+  ✓ selfsig=PASS  (1/1 manifest(s) ok)
 
-asexec-verify/1 BDR=PASS floor=PASS
+asexec-verify/1 floor=PASS format=PASS selfsig=PASS
 Checked at 2026-12-31T23:59:59Z
+```
+
+---
+
+### `format`
+
+Whether the file can be read as a manifest at all. Required in every run.
+
+**Examines (\*)**
+- every manifest file found, as a whole
+- `payload`
+- `signature`
+- `signature.pubkey`
+- `signature.sig`
+
+**Passes when all**
+1. The file can be read, and is a JSON object, nested at most 64 deep, with no duplicate
+   keys, containing an object `payload` and an object `signature`, and `payload` has
+   canonical bytes (no string in it, key or value, holds an unpaired surrogate escape).
+2. `signature.pubkey` and `signature.sig` are hex.
+
+A file that fails `format` is malformed (see [Run rules](#conventions)), and no other test
+examines it.
+
+**When empty:** if no manifest file is found (every path given is a directory with no
+`*.json` file in it), `format` has nothing to examine and is `FAIL`, with the reason
+`no manifests to verify`. A path that is not a directory is always examined, even if it
+does not exist (it is malformed), and so is a directory that cannot be listed.
+
+**Does not establish:** that the signature is valid (that is [`selfsig`](#selfsig)); that
+`payload` is a well-formed asexec body (any object `payload` passes, whatever it holds);
+that `payloadType` names a format this release reads (this version does not read
+`payloadType`).
+
+**Example** (all requirements pass)
+
+```console
+$ asexec verify prereg.json --tests format,selfsig
+```
+
+`prereg.json`:
+
+```jsonc
+{
+  "payload": {
+    "predicateType": "https://asexec.org/manifest/v1",
+    "phase": "prereg",
+    "target": "model m via provider p"
+  },
+  "signature": {
+    "pubkey": "0743f489…",
+    "sig": "89ccc62e…",
+    "keyid": "sha-256:7bc19c1d…"
+  }
+}
+```
+
+Output (from `=== tests ===` on), exit status `0`:
+
+```
+=== tests ===
+  ✓ format=PASS  (1/1 manifest(s) ok)
+  ✓ selfsig=PASS  (1/1 manifest(s) ok)
+
+asexec-verify/1 format=PASS selfsig=PASS
+Checked at 2026-12-31T23:59:59Z
+```
+
+A malformed file beside it, here `truncated.json` (the first 120 bytes of `prereg.json`),
+fails `format` and is not examined by `selfsig`, which still passes for `prereg.json`. The
+reason is shown under the file. Exit status `2`:
+
+```console
+$ asexec verify prereg.json truncated.json --tests format,selfsig
+```
+
+```
+=== manifests ===
+✓ prereg.json  [prereg]  keyid=sha-256:7bc19c1d…
+✗ truncated.json  [None]  keyid=None
+    ✗ format: malformed: Unterminated string starting at: line 5 column 15 (char 109)
+…
+=== tests ===
+  ✗ format=FAIL  (1/2 manifest(s) failed)
+  ✓ selfsig=PASS  (1/1 manifest(s) ok)
+
+asexec-verify/1 format=FAIL selfsig=PASS
 ```
 
 ---
@@ -483,10 +517,10 @@ Whether a commitment's postregs were signed by its own key.
 `signed by a different key than the pre-registration`; see
 [Matching postregs to commitments](#matching-postregs-to-commitments))
 1. Every postreg whose `payload.fulfills` equals the commitment's `ref` and whose signature
-   is valid (the `BDR` signature and keyid conditions) has the `signature.keyid` of a
+   is valid (it meets the [`selfsig`](#selfsig) conditions) has the `signature.keyid` of a
    provided prereg with that `ref`.
 
-A postreg with an invalid signature is not judged here (it fails `BDR`), so a commitment
+A postreg with an invalid signature is not judged here (it fails `selfsig`), so a commitment
 whose only postregs have invalid signatures has no key to check and is not examined.
 
 **When empty:** if no validly signed postreg names a provided prereg, the test has nothing
@@ -496,7 +530,7 @@ provided prereg`.
 **Example** (all requirements pass)
 
 ```console
-$ asexec verify prereg.json postreg.json --tests BDR,keyconsist
+$ asexec verify prereg.json postreg.json --tests format,selfsig,keyconsist
 ```
 
 The two files (unexamined fields elided):
@@ -514,12 +548,66 @@ Output (from `=== tests ===` on), exit status `0`:
 
 ```
 === tests ===
-  ✓ BDR=PASS  (2/2 manifest(s) ok)
+  ✓ format=PASS  (2/2 manifest(s) ok)
   ✓ keyconsist=PASS  (1/1 commitment(s) ok)
+  ✓ selfsig=PASS  (2/2 manifest(s) ok)
 
-asexec-verify/1 BDR=PASS keyconsist=PASS
+asexec-verify/1 format=PASS keyconsist=PASS selfsig=PASS
 Checked at 2026-12-31T23:59:59Z
 ```
+
+---
+
+### `selfsig`
+
+Whether the file is unchanged since its own key signed it. Required in every run.
+
+`selfsig` is self-certifying: the file carries its own `signature.pubkey`, so a pass means
+only that whoever holds that key signed these bytes, and that they have not changed since.
+Nothing is pinned, and verify keeps no state between runs. Trust comes from the other
+layers: [`keyconsist`](#keyconsist) gives key continuity within one claim, and
+[`ceiling`](#ceiling) pins when the prereg was signed.
+
+**Examines (\*)**
+- `payload`
+- `signature.pubkey`
+- `signature.sig`
+- `signature.keyid`
+
+**Passes when all** (for each manifest that passes [`format`](#format))
+1. `signature.sig` is a valid ed25519 signature by `signature.pubkey` over the PAE signing
+   input of the canonical bytes of `payload`.
+2. `signature.keyid == "sha-256:" + sha256(bytes.fromhex(signature.pubkey)).hexdigest()`.
+
+**When empty:** if no manifest passes `format` (including when no manifest file is found),
+`selfsig` has nothing to examine and is `FAIL`, with the reason
+`no manifest passes format`.
+
+**Not examined:** a manifest that fails `format`.
+
+**Does not establish:** who signed (internal consistency only). A body changed and
+re-signed with another key, under that key's `keyid`, passes.
+
+**Example** (a body edited after signing). `tampered.json` is `postreg-1.json` from the
+[`chain` example](#chain) with its `payload.target` changed afterwards:
+
+```console
+$ asexec verify prereg.json tampered.json --tests format,selfsig
+```
+
+Output (from `=== tests ===` on), exit status `2`:
+
+```
+=== tests ===
+  ✓ format=PASS  (2/2 manifest(s) ok)
+  ✗ selfsig=FAIL  (1/2 manifest(s) failed)
+
+asexec-verify/1 format=PASS selfsig=FAIL
+Checked at 2026-12-31T23:59:59Z
+```
+
+With every requirement holding, `selfsig` prints `✓ selfsig=PASS`, as in the
+[`format` example](#format).
 
 ---
 
@@ -531,7 +619,7 @@ judged on its own.
 
 A postreg `P` **counts** toward the commitment of prereg `R` iff all hold:
 1. `P.payload.phase == "postreg"` and `P.payload.fulfills == ref(R)`.
-2. `P` meets the `BDR` signature and keyid conditions.
+2. `P` meets the [`selfsig`](#selfsig) conditions.
 3. `P.signature.keyid == R.signature.keyid`.
 
 A commitment is keyed by its signer, so a postreg counts toward at most one commitment: the
@@ -552,13 +640,13 @@ valid.
 
 **In summary**, by kind of file:
 
-| Postreg situation | `BDR` | Outcome | In the report |
-|---|---|---|---|
-| Malformed (see [Run rules](#conventions)) | `FAIL` | none: not treated as a postreg | not listed under any commitment |
-| Well-formed, fails the `BDR` signature or keyid condition, `fulfills` a provided prereg | `FAIL` | not counted: `invalid signature` | **rejected** |
-| Valid signature by a key that signed no provided prereg with that `ref`, `fulfills` a provided prereg | `PASS` | not counted: `signed by a different key than the pre-registration` | **rejected**; also fails `keyconsist` |
-| Valid signature by the key of a provided prereg with that `ref` | `PASS` | **counted** toward that prereg's commitment | listed as a counted postreg of that commitment only |
-| Well-formed, `fulfills` matches no provided prereg | `PASS` if the signature is valid, else `FAIL` | not counted: names no provided prereg | **notarization-only** |
+| Postreg situation | `format` | `selfsig` | Outcome | In the report |
+|---|---|---|---|---|
+| Malformed (see [Run rules](#conventions)) | `FAIL` | not examined | none: not treated as a postreg | not listed under any commitment |
+| Well-formed, fails a `selfsig` condition, `fulfills` a provided prereg | `PASS` | `FAIL` | not counted: `invalid signature` | **rejected** |
+| Valid signature by a key that signed no provided prereg with that `ref`, `fulfills` a provided prereg | `PASS` | `PASS` | not counted: `signed by a different key than the pre-registration` | **rejected**; also fails `keyconsist` |
+| Valid signature by the key of a provided prereg with that `ref` | `PASS` | `PASS` | **counted** toward that prereg's commitment | listed as a counted postreg of that commitment only |
+| Well-formed, `fulfills` matches no provided prereg | `PASS` | `PASS` if the signature is valid, else `FAIL` | not counted: names no provided prereg | **notarization-only** |
 
 **What affects a verdict.** Only the tests produce `PASS` or `FAIL`. *Counted* matters
 because `chain` examines counted postregs only. `keyconsist` fails a commitment only for a
@@ -566,16 +654,18 @@ postreg rejected under it as `signed by a different key than the pre-registratio
 counted postreg, one rejected for `invalid signature` and a notarization-only postreg never
 fail it, and a commitment whose postregs all have invalid signatures is not examined.
 *Rejected* and *notarization-only* are only groupings in the report and add no failure of
-their own. The failures in the table come from `BDR` (the first two rows, and the last row
-when the signature is invalid) and `keyconsist` (the third row).
+their own. The failures in the table come from `format` (the first row), `selfsig` (the
+second row, and the last row when the signature is invalid) and `keyconsist` (the third
+row).
 
 A manifest is identified by its `ref`. Copies of a postreg, with the same `ref` and
 `signature.keyid`, are listed once per outcome, however many are provided. Copies usually
 share an outcome, so they are counted, rejected or notarization-only once. A copy whose
-signature does not verify is judged on its own: it fails `BDR` and, if it names a provided
-prereg, is listed as rejected for `invalid signature` beside the valid copy's outcome (so a
-broken copy of a counted postreg shows the same `ref` as counted and as rejected). Copies of
-a prereg, with the same `ref` and `signature.keyid`, are one commitment.
+signature does not verify is judged on its own: it fails `selfsig` and, if it names a
+provided prereg, is listed as rejected for `invalid signature` beside the valid copy's
+outcome (so a broken copy of a counted postreg shows the same `ref` as counted and as
+rejected). Copies of a prereg, with the same `ref` and `signature.keyid`, are one
+commitment.
 
 ## Commitment states
 

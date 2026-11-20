@@ -73,7 +73,7 @@ def test_state__notarization_only__postreg_matching_no_provided_prereg(scenario)
 def test_state__is_not_part_of_the_code(scenario):
     """States are rendered only: an elapsed commitment does not change the code."""
     _only_prereg(scenario, "2000-01-01T00:00:00Z")
-    assert scenario.code() == "asexec-verify/1 BDR=PASS"
+    assert scenario.code() == "asexec-verify/1 format=PASS selfsig=PASS"
 
 
 def test_due__without_offset_is_read_as_utc_and_flagged(scenario, monkeypatch):

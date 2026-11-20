@@ -67,8 +67,10 @@ FORMATS = {
 ```
 
 - **Known `payloadType`:** verify under that entry's rules.
-- **Unknown `payloadType`:** `BDR=FAIL`, with a reason saying the format is newer than this
-  release and to upgrade. Never fall back to another entry.
+- **Unknown `payloadType`:** `format=FAIL`, with a reason saying the format is newer than
+  this release and to upgrade. Never fall back to another entry. `selfsig` does not examine
+  that file, so it still passes for the others: the code tells "upgrade" apart from
+  "damaged".
 - **New format:** add an entry. Existing entries are never edited.
 
 Signing always uses the newest entry. There is no option to write an older format.
@@ -96,7 +98,7 @@ byte-match a published `asexec-verify/1` code. So `verify` keeps every grammar s
 earlier meanings and are out of scope.
 
 ```bash
-asexec verify prereg.json --tests BDR --code-version 1
+asexec verify prereg.json --tests format,selfsig --code-version 1
 ```
 
 Without the flag it prints the newest grammar. Because a bump can also mean a test's documented
@@ -108,7 +110,7 @@ bump expensive, so it should stay rare; adding a test name still needs no bump.
 Accepting a version forever is wrong if its hash or signature algorithm is broken. A format can
 be marked as withdrawn, with a reason:
 
-- `BDR` fails for that format, and the report states which format was withdrawn and why.
+- `format` fails for that format, and the report states which format was withdrawn and why.
 - It never silently passes, and never fails without explaining why.
 - The entry stays in the table, so the verifier can still identify the format.
 
@@ -124,7 +126,7 @@ it needs a release note.
 - **Frozen manifests:** keep at least one for each format, and never edit or regenerate them.
   Every release must verify all of them. [`test_constants.py`](../tests/test_constants.py) is
   where these live today.
-- **Tampering:** changing `payloadType` to another known format must fail `BDR`.
+- **Tampering:** changing `payloadType` to another known format must fail `selfsig`.
 - **Unknown format:** an unrecognized `payloadType` fails with the upgrade reason.
 - **Old grammars:** each supported `--code-version` matches a frozen expected code.
 - **Withdrawal:** a withdrawn format fails with its reason.

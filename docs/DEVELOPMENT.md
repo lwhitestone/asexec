@@ -62,7 +62,7 @@ lint ----------+
   `test` and the release smoke both read it. To add a Python version, change it here only.
 - `lint` - `ruff check` and `ruff format --check`.
 - `test` - pytest on each Python version, then a CLI smoke from the source tree
-  (`--version`, `keygen`, `prereg`, `verify --tests BDR`).
+  (`--version`, `keygen`, `prereg`, `verify --tests format,selfsig`).
 - `build` - `uv build`, uploaded as the `dist` artifact.
 
 All actions are pinned by full commit SHA with a version comment, and the workflow has

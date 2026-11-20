@@ -9,8 +9,8 @@ import pytest
 from asexec import hashing
 from asexec.verifier import verify_paths
 
-PASS = "asexec-verify/1 BDR=PASS content=PASS"
-FAIL = "asexec-verify/1 BDR=PASS content=FAIL"
+PASS = "asexec-verify/1 content=PASS format=PASS selfsig=PASS"
+FAIL = "asexec-verify/1 content=FAIL format=PASS selfsig=PASS"
 EMPTY = "requested but no content could be checked (need --artifacts and a manifest with a subject)"
 
 
@@ -172,7 +172,7 @@ def test_content__fail__empty_no_artifacts_provided(scenario):
 
 def test_content__fail__empty_artifacts_given_as_empty_string(scenario):
     """content (*): ``--artifacts ""`` is read as not given, so nothing is examined."""
-    report = verify_paths(scenario.write(), ["BDR", "content"], artifacts_dir="")
+    report = verify_paths(scenario.write(), ["content", "format", "selfsig"], artifacts_dir="")
     assert report["code"] == FAIL
     assert report["results"]["content"]["applicable"] == 0
     assert report["results"]["content"]["reason"] == EMPTY
@@ -202,5 +202,5 @@ def test_content__fail__empty_malformed_manifest_not_examined(scenario):
     )
     report = scenario.verify("content")
     assert report["results"]["content"]["applicable"] == 0
-    assert report["code"] == "asexec-verify/1 BDR=FAIL content=FAIL"
+    assert report["code"] == "asexec-verify/1 content=FAIL format=FAIL selfsig=PASS"
     assert report["results"]["content"]["reason"] == EMPTY

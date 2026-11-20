@@ -2,7 +2,7 @@
 Naming: see conftest.py.
 
 A postreg counts toward a prereg iff #1 (phase postreg, fulfills == ref(prereg)),
-#2 (BDR signature and keyid conditions) and #3 (same keyid as the prereg) hold. One that
+#2 (the selfsig conditions) and #3 (same keyid as the prereg) hold. One that
 names the prereg but counts toward no commitment with its ref is *rejected* and listed
 with its reason. Observed through the report: ``commitments[].counted_postregs`` /
 ``rejected_postregs`` / ``state`` and ``notarization_only``.
@@ -78,7 +78,7 @@ def test_matching__rejected_postreg_never_counts_toward_chain(scenario):
     """Matching (rejected): a rejected postreg is invisible to chain, even as a 2nd root."""
     scenario.add_postreg("intruder", transcript="transcript1.txt")  # a second root, other key
     scenario.sign_with("intruder", keys.generate())
-    assert scenario.code("chain") == "asexec-verify/1 BDR=PASS chain=PASS"
+    assert scenario.code("chain") == "asexec-verify/1 chain=PASS format=PASS selfsig=PASS"
 
 
 # --- copies: a manifest is identified by its ref ------------------------------------ #
@@ -88,14 +88,14 @@ def test_matching__copies_of_a_postreg_are_one_postreg(scenario):
     """Copies (same ref and keyid) count once, so they make no second root for chain."""
     scenario.add_raw("copy", scenario.read("postreg0"))
     report = scenario.verify("chain", "keyconsist")
-    assert report["code"] == "asexec-verify/1 BDR=PASS chain=PASS keyconsist=PASS"
+    assert report["code"] == "asexec-verify/1 chain=PASS format=PASS keyconsist=PASS selfsig=PASS"
     assert len(_commitment(report)["counted_postregs"]) == 3
 
 
 def test_matching__copies_of_a_prereg_are_one_commitment(scenario):
     scenario.add_raw("copy", scenario.read("prereg"))
     report = scenario.verify("chain")
-    assert report["code"] == "asexec-verify/1 BDR=PASS chain=PASS"
+    assert report["code"] == "asexec-verify/1 chain=PASS format=PASS selfsig=PASS"
     assert len(_commitment(report)["counted_postregs"]) == 3
 
 
@@ -113,7 +113,7 @@ def test_matching__broken_copy_of_a_counted_postreg_is_also_rejected(scenario):
     copy["signature"]["sig"] = ("00" if sig[:2] != "00" else "11") + sig[2:]
     scenario.add_raw("copy", json.dumps(copy))
     report = scenario.verify()
-    assert report["code"] == "asexec-verify/1 BDR=FAIL"
+    assert report["code"] == "asexec-verify/1 format=PASS selfsig=FAIL"
     commitment = _commitment(report)
     assert len(commitment["counted_postregs"]) == 3
     (rejected,) = commitment["rejected_postregs"]
@@ -163,7 +163,7 @@ def test_matching__same_body_by_two_keys_is_two_commitments(scenario):
     """Each signer's commitment counts only its own postregs; neither rejects the other's."""
     other = _second_signer(scenario)
     report = scenario.verify("chain", "keyconsist")
-    assert report["code"] == "asexec-verify/1 BDR=PASS chain=PASS keyconsist=PASS"
+    assert report["code"] == "asexec-verify/1 chain=PASS format=PASS keyconsist=PASS selfsig=PASS"
     (ref_a, key_a, *_), (ref_b, key_b, *_) = _summary(report)
     assert ref_a == ref_b
     by_key = {c["keyid"]: c for c in report["commitments"]}
@@ -175,8 +175,12 @@ def test_matching__same_body_by_two_keys_is_two_commitments(scenario):
 def test_matching__commitments_do_not_depend_on_file_order(scenario):
     _second_signer(scenario)
     paths = scenario.write()
-    forwards = verify_paths(paths, ["BDR", "chain", "keyconsist"], str(scenario.artifacts))
-    backwards = verify_paths(paths[::-1], ["BDR", "chain", "keyconsist"], str(scenario.artifacts))
+    forwards = verify_paths(
+        paths, ["chain", "format", "keyconsist", "selfsig"], str(scenario.artifacts)
+    )
+    backwards = verify_paths(
+        paths[::-1], ["chain", "format", "keyconsist", "selfsig"], str(scenario.artifacts)
+    )
     assert forwards["code"] == backwards["code"]
     assert _summary(forwards) == _summary(backwards)
 
@@ -185,7 +189,7 @@ def test_matching__postreg_by_neither_signer_is_rejected_under_both(scenario):
     _second_signer(scenario)
     scenario.sign_with("postreg2", keys.generate())
     report = scenario.verify("keyconsist")
-    assert report["code"] == "asexec-verify/1 BDR=PASS keyconsist=FAIL"
+    assert report["code"] == "asexec-verify/1 format=PASS keyconsist=FAIL selfsig=PASS"
     for commitment in report["commitments"]:
         (rejected,) = commitment["rejected_postregs"]
         assert rejected["reason"] == "signed by a different key than the pre-registration"

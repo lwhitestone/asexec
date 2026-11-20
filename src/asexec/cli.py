@@ -255,11 +255,11 @@ def cmd_verify(args) -> int:
 
     print("=== manifests ===")
     for m in report["manifests"]:
-        sig = m["signature"]
-        s = OK if (sig.get("signature_ok") and sig.get("keyid_ok")) else NO
+        ss = m["selfsig"]
+        s = OK if (ss["signature_ok"] and ss["keyid_ok"]) else NO  # passes format and selfsig
         print(f"{s} {m['path']}  [{m.get('phase')}]  keyid={m.get('keyid')}")
-        for err in sig.get("errors", []):
-            print(f"    {NO} {err}")
+        for err in m["format"]["errors"]:
+            print(f"    {NO} format: {err}")
         fl = m["floor"]
         if fl["status"] != "absent":
             fs = OK if fl["status"] == "verified" else NO
@@ -394,7 +394,7 @@ class _Parser(argparse.ArgumentParser):
 
 # Argument types: each validates a value at parse time, so a bad one is a usage error.
 def _tests_arg(spec: str) -> list[str]:
-    """``--tests``: known test names, including ``BDR``."""
+    """``--tests``: known test names, including every one in ``verifier.REQUIRED_TESTS``."""
     try:
         return verifier.parse_tests(spec)
     except VerificationError as e:
@@ -544,7 +544,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--tests",
         required=True,
         type=_tests_arg,
-        help="comma-separated tests to run (MUST include 'BDR'). "
+        help="comma-separated tests to run (MUST include "
+        f"{' and '.join(repr(t) for t in sorted(verifier.REQUIRED_TESTS))}). "
         f"available: {', '.join(verifier.TEST_CATALOG)}",
     )
     vy.add_argument("--artifacts", help="directory of original artifacts, to check content hashes")

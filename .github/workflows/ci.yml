@@ -70,7 +70,7 @@ jobs:
           uv run asexec keygen --out /tmp/ci.key
           uv run asexec prereg --key /tmp/ci.key --subject src --due 2099-01-01T00:00:00Z \
             --target "model m via provider p" --out /tmp/pre.json
-          uv run asexec verify /tmp/pre.json --tests BDR
+          uv run asexec verify /tmp/pre.json --tests format,selfsig
 
   build:
     needs: test

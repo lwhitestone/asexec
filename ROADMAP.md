@@ -148,7 +148,7 @@ manifest, even if that manifest happens to carry it; there, it stays an unknown 
 - Body field `schema_id` (formerly `schema_version`) is removed: `predicateType` already
   says the body is an asexec manifest, and a third format identifier that no test checks
   could disagree with the other two. (Done ahead of 0.4.0.)
-- `dsse.payloadType` selects the format version, and unknown values fail `BDR`
+- `dsse.payloadType` selects the format version, and unknown values fail `format`
   ([`docs/MULTIVERSION.md`](docs/MULTIVERSION.md)).
 - `hash_alg` moves into each subject entry. A body-level `hash_alg` is no longer read, and is
   shown as unknown and unchecked, like any unknown field.
@@ -187,8 +187,8 @@ adds sits outside it, in the wrapper:
 - `ceiling` cannot be inside the body (its nonce is the body's own hash). In the wrapper
   it can still be attached after signing; it is bound by `nonce == ref` and authenticated
   by the witness's own signature.
-- `pubkey` needs no signature: `BDR` requires `signatures[0].keyid` to derive from it, so
-  a substituted key fails. With `signer`, `--trusted-keys` additionally decides which
+- `pubkey` needs no signature: `selfsig` requires `signatures[0].keyid` to derive from it,
+  so a substituted key fails. With `signer`, `--trusted-keys` additionally decides which
   keys are accepted.
 - Any other top-level key is treated like `untrusted`: shown under that heading, never
   read by a test.
@@ -199,6 +199,10 @@ adds sits outside it, in the wrapper:
 
 **Verify**
 
+- `BDR` is split into two required tests: `format` (the file can be read as a manifest)
+  and `selfsig` (the file is unchanged since its own key signed it). (Done ahead of 0.4.0.)
+  With the unknown-`payloadType` failure above in `format`, version skew reads as
+  `format=FAIL`, not as a bad signature.
 - `signer`: `--signer` / `--trusted-keys <file>`.
 - `timely`: postreg ceiling ≤ prereg `due`.
 - New commitment state `no-due`, separate from `open`. This changes what `open` means, but
@@ -364,13 +368,13 @@ the tests that read it; *TrustedDeclared* (signed and shown, never tested); or *
 
 | Property | Description | Stage | Path | Required | Default | Tier | Lands | Real use | Level |
 |---|---|---|---|---|---|---|---|---|---|
-| `dsse` | The standard DSSE envelope: the signed body and its signatures | all | envelope | required | none | TrustedTested: `BDR` | 0.4.0 | M1 | all |
-| `payloadType` | Selects the format version; covered by the signature | all | `dsse.payloadType` | required | none | TrustedTested: `BDR` | 0.4.0 | M1 | all |
-| `payload` | Strict base64 of the exact signed body bytes, which decode to a JSON object | all | `dsse.payload` | required | none | TrustedTested: `BDR` | 0.4.0 | M1 | all |
-| `signatures` | Signatures over the body; `BDR` passes only with exactly one valid entry | all | `dsse.signatures[]` | required | none | TrustedTested: `BDR` | 0.4.0 | M1 | all |
-| `keyid` | `sha-256:` plus the hash of the signer's public key | all | `dsse.signatures[].keyid` | optional | none | TrustedTested: `BDR`, `chain`, `keyconsist`, `signer` | 0.4.0 | M1 | all |
-| `sig` | ed25519 signature over the PAE of the body bytes | all | `dsse.signatures[].sig` | optional | none | TrustedTested: `BDR` | 0.4.0 | M1 | all |
-| `pubkey` | The signer's public key, unsigned; `BDR` requires `keyid` to derive from it | all | envelope | optional | none | TrustedTested: `BDR`, `signer` | 0.4.0 | M1 | all |
+| `dsse` | The standard DSSE envelope: the signed body and its signatures | all | envelope | required | none | TrustedTested: `format`, `selfsig` | 0.4.0 | M1 | all |
+| `payloadType` | Selects the format version; covered by the signature | all | `dsse.payloadType` | required | none | TrustedTested: `format`, `selfsig` | 0.4.0 | M1 | all |
+| `payload` | Strict base64 of the exact signed body bytes, which decode to a JSON object | all | `dsse.payload` | required | none | TrustedTested: `format`, `selfsig` | 0.4.0 | M1 | all |
+| `signatures` | Signatures over the body; `selfsig` passes only with exactly one valid entry | all | `dsse.signatures[]` | required | none | TrustedTested: `format`, `selfsig` | 0.4.0 | M1 | all |
+| `keyid` | `sha-256:` plus the hash of the signer's public key | all | `dsse.signatures[].keyid` | optional | none | TrustedTested: `selfsig`, `chain`, `keyconsist`, `signer` | 0.4.0 | M1 | all |
+| `sig` | ed25519 signature over the PAE of the body bytes | all | `dsse.signatures[].sig` | optional | none | TrustedTested: `selfsig` | 0.4.0 | M1 | all |
+| `pubkey` | The signer's public key, unsigned; `selfsig` requires `keyid` to derive from it | all | envelope | optional | none | TrustedTested: `selfsig`, `signer` | 0.4.0 | M1 | all |
 | `hash_alg` | The algorithm of this entry's digest | all | `subject[].hash_alg` | optional | none | TrustedTested: `content` | 0.4.0 | M1 | all |
 | `untrusted` | Metadata that nothing checks: unsigned, never tested, never part of `ref` | all | envelope | optional | none | Untrusted | 0.4.0 | M1 | all |
 | `asexec_version` | The asexec release that wrote the manifest, for diagnostics only | all | `untrusted.asexec_version` | optional | none | Untrusted | 0.4.0 | M1 | all |
@@ -499,8 +503,8 @@ Kept here so they are not re-litigated:
   `PASS`/`FAIL`, sorted alphabetically — never a percentage or tier — so a
   code is self-describing and forward-compatible. It is a summary of a
   computation, not a certificate: real verification is reproducing it.
-- **Explicit test appetite.** `--tests` is required and must include `BDR`. A
-  requested test that applies nowhere is `FAIL`, never a silent omission.
+- **Explicit test appetite.** `--tests` is required and must include `format` and
+  `selfsig`. A requested test that applies nowhere is `FAIL`, never a silent omission.
 - **Only verifiable claims earn a test.** A self-declaration (e.g. the removed
   `has_run_already` field) is *TrustedDeclared*: listed as such in
   `docs/VERIFICATION.md` and shown as unchecked in the report, so sitting beside tested

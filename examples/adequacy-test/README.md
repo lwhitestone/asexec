@@ -34,8 +34,8 @@ would likely have found a real attempt.
    `flags.json`.
 3. **Deliver**: one chained postreg per item, with `item_id` and `status` in `notes`. The
    A1 postreg reveals the plants and salts (`plants.reveal.json`) with the flags.
-4. **Verify**, offline: `asexec verify --tests BDR,chain,content,keyconsist`, plus the
-   reader's own check that the revealed plants match the commitment.
+4. **Verify**, offline: `asexec verify --tests format,selfsig,chain,content,keyconsist`,
+   plus the reader's own check that the revealed plants match the commitment.
 
 It then replays three faults.
 
