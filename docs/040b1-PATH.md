@@ -1597,7 +1597,8 @@ above). Neither blocks b1.
 6. → judgement call (a) above is marked as needing the human's confirmation, and (d) is
    recorded below as an FYI.
 
-`scripts/check.sh`: clean, 478 passed (477 + the new matching test). CI: see the PR.
+`scripts/check.sh`: clean, 478 passed (477 + the new matching test). CI on `9b73d55` (run
+44735722972): lint, python-matrix, test (3.12, 3.13, 3.14) and build pass.
 
 **Observations added in review round 1 (out of scope):**
 - **For the human gate: unauthenticated `signature.keyid` strings are printed raw.** The
