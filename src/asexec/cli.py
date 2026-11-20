@@ -246,8 +246,53 @@ def _built(build: Callable[..., dict], *args, **kwargs) -> dict:
         ) from None
 
 
+# A drand round as its HTTP API returns one (``GET /<chain hash>/public/<round>``): what a run
+# saves when it fetches the round it starts with, to sign as its floor later.
+_ROUND_FIELDS = ("round", "randomness", "signature")
+
+
+def _round_shape(value) -> dict:
+    """``--floor-round``: a round of the chain ``--floor`` fetches from, as drand's HTTP API
+    returns it, that meets every floor condition (``drand.verified_floor``: the pinned chain,
+    BLS, randomness). The ``anchor.floor`` record to sign; ``ValueError`` if it is not one."""
+    if not isinstance(value, dict):
+        raise ValueError(
+            "--floor-round must be a JSON object, as drand's HTTP API returns a round: "
+            f'{{"round": ..., "randomness": ..., "signature": ...}}: {value!r}'
+        )
+    unknown = sorted(set(value) - set(_ROUND_FIELDS))
+    if unknown:
+        raise ValueError(
+            f"--floor-round: unknown field(s) {', '.join(map(repr, unknown))}; a round holds "
+            "'round', 'randomness' and 'signature', as drand's HTTP API returns it (the chain "
+            "is the one --floor fetches from)"
+        )
+    missing = [f for f in _ROUND_FIELDS if f not in value]
+    if missing:
+        raise ValueError(f"--floor-round: missing {', '.join(map(repr, missing))}")
+    if type(value["round"]) is not int:
+        raise ValueError(f"--floor-round: 'round' must be an integer: {value['round']!r}")
+    for field in ("randomness", "signature"):
+        if not (isinstance(value[field], str) and _LOWER_HEX.fullmatch(value[field])):
+            raise ValueError(
+                f"--floor-round: {field!r} must be lowercase hex, as drand writes it: "
+                f"{value[field]!r}"
+            )
+    try:
+        return drand.verified_floor(value)
+    except ValueError as e:
+        raise ValueError(f"--floor-round: {e}") from None
+
+
+_LOWER_HEX = re.compile(r"(?:[0-9a-f]{2})+")
+
+
 def _get_floor(args) -> dict | None:
-    """Fetch a drand freshness floor (anchor.floor) at sign time, or None."""
+    """The drand freshness floor (anchor.floor) to sign: a round fetched earlier
+    (--floor-round / --floor-round-file, verified here, offline), the latest round fetched now
+    (--floor, network), or None."""
+    if args.floor_round is not None or args.floor_round_file is not None:
+        return _shaped_arg_or_file(args, "floor_round", _round_shape)
     if not args.floor:
         return None
     try:
@@ -471,6 +516,9 @@ def cmd_verify(args) -> int:
                     what = "" if e["field"] == "subject" else f"{e['field']} "  # plan, evidence
                     _show(f"        {NO} {what}{e['name']}: {e.get('reason', 'digest mismatch')}")
 
+    _show_fields(report["manifests"], "untrusted", UNTRUSTED_HEADING)
+    _show_fields(report["manifests"], "unknown", UNKNOWN_HEADING)
+
     _show("\n=== commitments ===")
     if not report["commitments"] and report["rejected_preregs"]:
         _show("  (no commitments: no pre-registration provided is validly signed)")
@@ -497,6 +545,8 @@ def cmd_verify(args) -> int:
             for t in c["timeliness"]:
                 if t["status"] != "on-time":
                     _show(f"    {NO} postreg {t['ref']} {_NOT_ON_TIME[t['status']](t)}")
+        if "order" in report["tests"]:  # each counted postreg not shown after the prereg
+            _show_order(c["order"])
         _show_items(c["complete"])
         for r in c["rejected_postregs"]:
             _show(f"    {NO} postreg {r['ref']} does NOT count toward fulfillment: {r['reason']}")
@@ -528,6 +578,49 @@ def cmd_verify(args) -> int:
     _show(f"\n{report['code']}")
     _show(f"Checked at {report['checked_at']}")
     return EXIT_OK if report["ok"] else EXIT_FAIL
+
+
+UNTRUSTED_HEADING = "=== untrusted (unsigned, and read by no test: nothing here was checked) ==="
+UNKNOWN_HEADING = (
+    "=== unknown fields (signed, but this format does not define them: nothing here was "
+    "checked) ==="
+)
+# A key shown as ``.key`` in a path; any other is shown as JSON, ``["a b"]``.
+_PLAIN_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _json_text(value) -> str:
+    """``value`` as one line of ASCII JSON: a newline, a control character or any non-ASCII
+    character in it is escaped, so it cannot forge a line of the report."""
+    return json.dumps(value, ensure_ascii=True)
+
+
+def _path_text(path: list) -> str:
+    """A path of keys and indexes as the doc writes it (``body.subject[0].name``), each key that
+    is not plain shown as JSON (``body["a\\nb"]``)."""
+    text = ""
+    for part in path:
+        if isinstance(part, int):
+            text += f"[{part}]"
+        elif _PLAIN_KEY.fullmatch(part):
+            text += f".{part}" if text else part
+        else:
+            text += f"[{_json_text(part)}]"
+    return text
+
+
+def _show_fields(manifests: list, kind: str, heading: str) -> None:
+    """Under ``heading``, if any file has them: each file's ``untrusted`` or ``unknown``
+    entries (``verifier._untrusted``, ``_unknown_fields``), each path and value as JSON. These
+    are the file's least checked text, so none is printed raw."""
+    shown = [m for m in manifests if m[kind]]
+    if not shown:
+        return
+    _show(f"\n{heading}")
+    for m in shown:
+        _show(f"  {m['path']}")
+        for entry in m[kind]:
+            _show(f"    {_path_text(entry['path'])} = {_json_text(entry['value'])}")
 
 
 def _show_items(cp: dict) -> None:
@@ -565,6 +658,37 @@ _NOT_ON_TIME: dict[str, Callable[[dict], str]] = {
 }
 
 
+def _show_order(od: dict) -> None:
+    """A commitment's ``order`` marks: a prereg whose ceiling gives no time, then each counted
+    postreg not shown after the prereg, and why."""
+    if not od["examined"]:
+        return
+    why = _PREREG_NOT_BEFORE.get(od["reason"])
+    if why:
+        _show(f"    {NO} the pre-registration is not shown before its postregs: {why}")
+    for p in od["postregs"]:
+        if p["status"] in _NOT_AFTER:
+            _show(f"    {NO} postreg {p['ref']} {_NOT_AFTER[p['status']](p, od)}")
+
+
+_PREREG_NOT_BEFORE = {
+    verifier.REASON_ORDER_NO_CEILING: "it has no ceiling",
+    verifier.REASON_ORDER_INVALID_CEILING: "its ceiling does not verify",
+}
+# Why a counted postreg is not shown after its prereg (verifier._order), as the report says it.
+_NOT_AFTER: dict[str, Callable[[dict, dict], str]] = {
+    "not-after": lambda p, od: (
+        "is not shown after the pre-registration: its floor (no earlier than "
+        f"{verifier._utc_floor(p['no_earlier_than_us'])}) is not after the pre-registration's "
+        f"ceiling (no later than {verifier._utc_ceil(od['ceiling']['no_later_than_us'])})"
+    ),
+    "no-floor": lambda p, od: "is not shown after the pre-registration: it has no floor",
+    "invalid-floor": lambda p, od: (
+        "is not shown after the pre-registration: its floor does not verify"
+    ),
+}
+
+
 def cmd_identity(args) -> int:
     """Standalone emit/match function pair for tying a known public identity via
     domain to a public key, no certificate authority (CA) needed. ``emit`` a json file
@@ -599,11 +723,25 @@ def cmd_identity(args) -> int:
 # --------------------------------------------------------------------------- #
 def _add_anchor_flags(p):
     """Time-anchor parsing helper, shared by prereg and postreg."""
-    p.add_argument(
+    floor = p.add_mutually_exclusive_group()  # one floor: fetched now, or given
+    floor.add_argument(
         "--floor",
         action="store_true",
-        help="attach a drand freshness floor (proves created no earlier than T; network). "
-        "Fails if the fetch fails, unless --best-effort",
+        help="attach a drand freshness floor, the latest round (proves created no earlier "
+        "than T; network). Fails if the fetch fails, unless --best-effort",
+    )
+    floor.add_argument(
+        "--floor-round",
+        type=_nonempty_arg,
+        help="attach as the floor a drand round fetched earlier, for example when a run "
+        'started, as drand\'s HTTP API returns it: JSON {"round": ..., "randomness": ..., '
+        '"signature": ...} of the chain --floor fetches from. Verified at signing (offline); '
+        "a round that does not verify is refused",
+    )
+    floor.add_argument(
+        "--floor-round-file",
+        type=_nonempty_arg,
+        help="the --floor-round JSON, from a file (a saved drand API response)",
     )
     p.add_argument(
         "--ceiling",

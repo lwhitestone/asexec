@@ -53,6 +53,10 @@ Tests (the catalog - only verifiable claims, no self-declarations)
   - ``keyconsist`` : each validly signed postreg that names a commitment's ref
                      has the key of a commitment with that ref. Applies to the
                      commitments ``verify_paths`` marks ``key_checked``.
+  - ``order``      : the prereg's ceiling (MIDP + RADI of a verified response)
+                     is strictly before the floor of each counted postreg (its
+                     drand round's time on the pinned chain). Applies to
+                     commitments with a counted postreg.
   - ``selfsig``    : the file is unchanged since its own key signed it: exactly
                      one signature, its sig base64 of 64 bytes and the file's
                      pubkey hex, the
@@ -68,6 +72,10 @@ Only a file that passes ``format`` is examined by any other test, and every test
 under the rules of the format its dsse.payloadType names (``FORMATS``), never another's. The
 body bytes are read exactly as stored: nothing is re-serialized, so ``ref`` and the
 signature are of the bytes the file holds.
+
+No test reads the file's unsigned ``untrusted`` section, a key outside the body that the
+format does not define, or a body field it does not define. The report shows them, for each
+file that passes ``format``, so that nothing unchecked is dropped or passes for checked.
 
 A requested test is ``PASS`` iff it holds everywhere it applies AND it applies
 somewhere; a requested test that applies **nowhere** is ``FAIL``
@@ -119,7 +127,9 @@ from .constants import FORMATS, VERIFY_CODE_VERSION
 from .errors import ManifestError, VerificationError
 from .fields import is_normal_name
 from .models import (
+    BODY_FIELDS,
     STATUSES,
+    WRAPPER_FIELDS,
     CeilingInput,
     DueInput,
     EnvelopeInput,
@@ -142,6 +152,7 @@ TEST_CATALOG: tuple[str, ...] = (
     "floor",
     "format",
     "keyconsist",
+    "order",
     "selfsig",
     "timely",
 )
@@ -517,6 +528,8 @@ def verify_paths(
             else {**_SELFSIG_NOT_EXAMINED}
         )
         floor = verify_floor(body) if clean else {"status": "absent"}
+        if floor.get("status") == "verified":
+            floor["no_earlier_than_us"] = _no_earlier_than(floor)
         ceiling = verify_ceiling(mani, fmt["ref"], servers) if clean else {"status": "absent"}
         content = verify_content(body, artifacts_dir) if clean else {"status": "skipped"}
         if ceiling.get("status") == "verified":
@@ -538,23 +551,34 @@ def verify_paths(
             "floor": floor,
             "ceiling": ceiling,
             "content": content,
+            # Shown, never read by a test (VERIFICATION.md, Untrusted): the unsigned untrusted
+            # section and any key outside the body this format does not define; and any body
+            # field it does not define. Only a file that passes format has either.
+            "untrusted": _untrusted(mani) if clean else [],
+            "unknown": _unknown_fields(body, BODY_FIELDS, ["body"]) if clean else [],
         }
         manifests_report.append(rec)
         if not clean:
             continue  # fails format: no other test examines it, so it joins no commitment
         links = LinkInput.model_validate({k: body[k] for k in LinkInput.model_fields if k in body})
-        if links.phase == "prereg" and _selfsig_ok(rec):
-            preregs[(rec["ref"], rec["keyid"])] = {
-                "ref": rec["ref"],
-                "keyid": rec["keyid"],
-                "due": body.get("due"),
-                "counted_postregs": [],
-                "rejected_postregs": [],
-                "different_key": False,  # set by the matching loop; see key_checked below
-                "_ceilings": {},  # counted postreg ref -> the ceiling of each counted copy
-                "_claims": {},  # counted postreg ref -> its body's item_id and status
-                "_items": _lookup(body, "items"),  # (present, value): what complete reads
-            }
+        if links.phase == "prereg" and _selfsig_ok(rec):  # copies (one ref, one body) are one
+            pr = preregs.setdefault(
+                (rec["ref"], rec["keyid"]),
+                {
+                    "ref": rec["ref"],
+                    "keyid": rec["keyid"],
+                    "due": body.get("due"),
+                    "counted_postregs": [],
+                    "rejected_postregs": [],
+                    "different_key": False,  # set by the matching loop; see key_checked below
+                    "_own_ceilings": [],  # the ceiling of each copy of this commitment's prereg
+                    "_ceilings": {},  # counted postreg ref -> the ceiling of each counted copy
+                    "_floors": {},  # counted postreg ref -> its floor (one ref, one body)
+                    "_claims": {},  # counted postreg ref -> its body's item_id and status
+                    "_items": _lookup(body, "items"),  # (present, value): what complete reads
+                },
+            )
+            pr["_own_ceilings"].append(rec["ceiling"])
         elif links.phase == "prereg":  # copies (same ref, and keyid as JSON) are listed once
             rejected_preregs.setdefault(
                 (rec["ref"], _json_value(rec["keyid"])),
@@ -598,6 +622,7 @@ def verify_paths(
                 pr = preregs[(links.fulfills, rec["keyid"])]
                 _add_once(pr["counted_postregs"], entry)
                 pr["_ceilings"].setdefault(rec["ref"], []).append(rec["ceiling"])
+                pr["_floors"][rec["ref"]] = rec["floor"]
                 pr["_claims"][rec["ref"]] = claim  # one ref, one body: copies agree
                 continue
             else:
@@ -618,6 +643,7 @@ def verify_paths(
     commitments = []
     for pr in preregs.values():
         ceilings, claims, items = pr.pop("_ceilings"), pr.pop("_claims"), pr.pop("_items")
+        own_ceilings, floors = pr.pop("_own_ceilings"), pr.pop("_floors")
         due_present, due_ts, due_naive, due_us = _parse_due(pr.get("due"))
         state = _commitment_state(pr, now, due_present, due_ts)
         chain_ok, chain_note = _check_chain(pr["counted_postregs"])
@@ -640,6 +666,7 @@ def verify_paths(
                 "timeliness": timeliness,
                 "timely": _timely(pr, due_present, due_ts, timeliness),
                 "complete": _complete(pr, items, claims, due_present, due_ts, timeliness),
+                "order": _order(pr, own_ceilings, floors),
                 "chain_ok": chain_ok,
                 "chain_note": chain_note,
                 # keyconsist's scope, defined here only: a commitment is key-checked iff it
@@ -669,6 +696,39 @@ def verify_paths(
     }
 
 
+def _unknown_fields(value: Any, fields: dict[str, Any], path: list) -> list[dict[str, Any]]:
+    """Each ``{path, value}`` under ``value`` that ``fields`` (``models.BODY_FIELDS`` or
+    ``WRAPPER_FIELDS``) does not define, in the order it holds them: a key of an object the
+    format defines, or of an object in an array of them, that is not one of its fields. A
+    null is absent (Run rules), so it is not listed, and a field of the wrong shape has no
+    fields to list. Display only: no verdict reads it. Never raises."""
+    if not isinstance(value, dict):
+        return []
+    found: list[dict[str, Any]] = []
+    for key, inner in value.items():
+        if inner is None:
+            continue
+        if key not in fields:
+            found.append({"path": [*path, key], "value": inner})
+            continue
+        kind, sub = fields[key] or (None, None)
+        if kind == "object":
+            found += _unknown_fields(inner, sub, [*path, key])
+        elif kind == "array" and isinstance(inner, list):
+            for i, entry in enumerate(inner):
+                found += _unknown_fields(entry, sub, [*path, key, i])
+    return found
+
+
+def _untrusted(mani: dict[str, Any]) -> list[dict[str, Any]]:
+    """What the report shows under *untrusted* for a file that passes format: its
+    ``untrusted`` section, as it is, then each key outside the body this format does not
+    define. Unsigned, and read by no test."""
+    present, value = _lookup(mani, "untrusted")
+    section = [{"path": ["untrusted"], "value": value}] if present else []
+    return section + _unknown_fields(mani, WRAPPER_FIELDS, [])
+
+
 def _no_later_than(ceiling: dict[str, Any]) -> int:
     """The time a verified ceiling shows its manifest existed by, in microseconds since the
     epoch: the later end of the interval the witness signed, ``MIDP + RADI``, as the signed
@@ -678,21 +738,88 @@ def _no_later_than(ceiling: dict[str, Any]) -> int:
     return ceiling["midpoint_us"] + ceiling["radius_us"]
 
 
+def _no_earlier_than(floor: dict[str, Any]) -> int:
+    """The time a verified floor shows its manifest was made no earlier than, in microseconds
+    since the epoch: its drand round's time on the pinned chain, genesis plus (round - 1)
+    periods (``drand.time_of_round``, in whole seconds), never a time the file states."""
+    return floor["created_no_earlier_than"] * 1_000_000
+
+
+def _ceiling_time(ceilings: list[dict[str, Any]]) -> tuple[str, int | None]:
+    """The time the ceilings of one body (its copies' ceilings) show it existed by: the earliest
+    ``no_later_than_us`` of those that meet the ceiling conditions (``verified``). Else
+    ``invalid`` if one is present and fails them (anyone can write a ceiling, so it is no time
+    at all), else ``absent``. Shared by timely, complete and order."""
+    times = [_no_later_than(c) for c in ceilings if c.get("status") == "verified"]
+    if times:
+        return "verified", min(times)
+    if any(c.get("status") != "absent" for c in ceilings):
+        return "invalid", None
+    return "absent", None
+
+
 def _on_time(ceilings: list[dict[str, Any]], due_us: int) -> dict[str, Any]:
     """One counted postreg against a parseable ``due`` in microseconds (timely #2-#4, and
     complete's deadline part): its ceilings are those of every counted copy of it (one ref).
 
     ``on-time`` if a ceiling meets the ceiling conditions and its time is at or before due;
-    else ``late`` if one does; else ``invalid-ceiling`` if it has a ceiling that fails them
-    (anyone can write a ceiling, so it is no time at all); else ``no-ceiling``. The earliest
-    verified time, in microseconds, is reported as ``no_later_than_us``."""
-    times = [_no_later_than(c) for c in ceilings if c.get("status") == "verified"]
-    if times:
-        earliest = min(times)
-        return {"status": "on-time" if earliest <= due_us else "late", "no_later_than_us": earliest}
-    if any(c.get("status") != "absent" for c in ceilings):
-        return {"status": "invalid-ceiling", "no_later_than_us": None}
-    return {"status": "no-ceiling", "no_later_than_us": None}
+    else ``late`` if one does; else ``invalid-ceiling`` if it has a ceiling that fails them;
+    else ``no-ceiling``. The earliest verified time, in microseconds, is reported as
+    ``no_later_than_us``."""
+    status, time_us = _ceiling_time(ceilings)
+    if status == "verified":
+        return {"status": "on-time" if time_us <= due_us else "late", "no_later_than_us": time_us}
+    kind = "invalid-ceiling" if status == "invalid" else "no-ceiling"
+    return {"status": kind, "no_later_than_us": None}
+
+
+# Why a commitment fails order, as the report shows it (docs/VERIFICATION.md).
+REASON_ORDER_NO_CEILING = "the pre-registration has no ceiling"
+REASON_ORDER_INVALID_CEILING = "the pre-registration's ceiling does not verify"
+REASON_ORDER_NOT_AFTER = "a counted postreg is not shown after the pre-registration"
+
+
+def _order(
+    pr: dict[str, Any], own_ceilings: list[dict[str, Any]], floors: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    """order for one commitment: examined iff it has a counted postreg. Passes iff the prereg
+    has a ceiling (#1) that meets the ceiling conditions (#2), and each counted postreg has a
+    floor (#3) that meets the floor conditions (#4) and whose time is strictly after the
+    ceiling's (#5), both in microseconds. The prereg's time is the earliest of its copies'
+    verified ceilings (``_ceiling_time``, as for timely); a postreg's is its floor's round
+    time. Each counted postreg is ``after``, ``not-after``, ``no-floor``, ``invalid-floor``,
+    or ``not-compared`` when its floor verifies but the prereg has no time to compare with."""
+    if not pr["counted_postregs"]:
+        return {"examined": False, "ok": False, "reason": None, "ceiling": None, "postregs": []}
+    ceiling_status, ceiling_us = _ceiling_time(own_ceilings)
+    postregs = []
+    for c in pr["counted_postregs"]:
+        floor = floors[c["ref"]]
+        floor_us = floor.get("no_earlier_than_us") if floor["status"] == "verified" else None
+        if floor["status"] == "absent":
+            status = "no-floor"
+        elif floor_us is None:
+            status = "invalid-floor"  # it fails a floor condition: no time at all
+        elif ceiling_us is None:
+            status = "not-compared"
+        else:
+            status = "after" if ceiling_us < floor_us else "not-after"
+        postregs.append({"ref": c["ref"], "status": status, "no_earlier_than_us": floor_us})
+    if ceiling_status == "absent":  # order #1
+        reason = REASON_ORDER_NO_CEILING
+    elif ceiling_status == "invalid":  # order #2
+        reason = REASON_ORDER_INVALID_CEILING
+    elif any(p["status"] != "after" for p in postregs):  # order #3-#5
+        reason = REASON_ORDER_NOT_AFTER
+    else:
+        reason = None
+    return {
+        "examined": True,
+        "ok": reason is None,
+        "reason": reason,
+        "ceiling": {"status": ceiling_status, "no_later_than_us": ceiling_us},
+        "postregs": postregs,
+    }
 
 
 # Why a commitment fails timely, as the report shows it (docs/VERIFICATION.md).
@@ -816,6 +943,17 @@ def _utc_ceil(epoch_us: int) -> str:
         return f"{seconds} (epoch seconds)"
 
 
+def _utc_floor(epoch_us: int) -> str:
+    """``epoch_us`` (microseconds) as ISO-8601 UTC, rounded down to the second: a "no earlier
+    than" time is never shown later than it is. A time with no ISO-8601 form is shown as epoch
+    seconds."""
+    seconds = epoch_us // 1_000_000
+    try:
+        return _utc_timestamp(seconds)
+    except (ValueError, OverflowError, OSError):
+        return f"{seconds} (epoch seconds)"
+
+
 def _json_value(value: Any) -> str:
     """``value`` as JSON text: two values are the same JSON value iff these are equal (in
     Python, ``1``, ``1.0`` and ``true`` are all equal, and ``NaN`` is not equal to itself)."""
@@ -907,6 +1045,12 @@ def _evaluate(tests, manifests, commitments, artifacts_dir) -> dict[str, dict[st
         units = [c["timely"]["ok"] for c in commitments if c["timely"]["examined"]]
         res["timely"] = _tally(
             units, "requested but no commitment with a due has a counted postreg", "commitment(s)"
+        )
+
+    if "order" in tests:
+        units = [c["order"]["ok"] for c in commitments if c["order"]["examined"]]
+        res["order"] = _tally(
+            units, "requested but no commitment has a counted postreg", "commitment(s)"
         )
 
     if "keyconsist" in tests:

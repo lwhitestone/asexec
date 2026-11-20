@@ -5,11 +5,12 @@ import base64
 import pytest
 from pydantic import ValidationError
 
+import asexec
 from asexec import MANIFEST_PREDICATE_TYPE, drand, keys, manifest
 from asexec.canonical import canonical_bytes, signing_input
 from asexec.constants import MANIFEST_PAYLOAD_TYPE
 from asexec.errors import ManifestError
-from asexec.models import Ceiling, Dsse, Manifest, Signature
+from asexec.models import BODY_FIELDS, WRAPPER_FIELDS, Ceiling, Dsse, Manifest, Signature
 
 
 def _target():
@@ -50,12 +51,14 @@ def test_ref_is_signature_independent():
 
 
 def test_sign_writes_a_dsse_envelope_in_the_wrapper():
-    """The file is {dsse: {payloadType, payload, signatures: [{keyid, sig}]}, pubkey}, and
-    dsse.payload is the base64 of the body's canonical serialization."""
+    """The file is {dsse: {payloadType, payload, signatures: [{keyid, sig}]}, pubkey,
+    untrusted: {asexec_version}}, and dsse.payload is the base64 of the body's canonical
+    serialization."""
     priv, pub = keys.generate()
     body = manifest.build_prereg(_target(), due=DUE, subject=_subj())
     signed = manifest.sign(body, priv, pub)
-    assert list(signed) == ["dsse", "pubkey"]
+    assert list(signed) == ["dsse", "pubkey", "untrusted"]
+    assert signed["untrusted"] == {"asexec_version": asexec.__version__}
     assert list(signed["dsse"]) == ["payloadType", "payload", "signatures"]
     assert signed["dsse"]["payloadType"] == MANIFEST_PAYLOAD_TYPE
     assert signed["dsse"]["payload"] == base64.b64encode(canonical_bytes(body)).decode()
@@ -333,3 +336,60 @@ def test_writer_refuses_an_empty_entry_list(field):
     """content #1 fails an empty subject or evidence list, so the writer never writes one."""
     with pytest.raises(ValidationError):
         manifest.build_postreg(_target(), fulfills="sha-256:00", **{field: []})
+
+
+# What this format defines, as verify reads it to list unknown fields (VERIFICATION.md,
+# Untrusted): each field, and for an object or an array of objects the format defines, its
+# fields. A free-form value (target, declaration, notes, identity, repro_recipe, a digest) has
+# no fields: what it holds is its value.
+_ENTRY = {"name": None, "hash_alg": None, "digest": None}
+KNOWN_BODY = {
+    "predicateType": None,
+    "phase": None,
+    "target": None,
+    "due": None,
+    "declaration": None,
+    "subject": ("array", _ENTRY),
+    "fulfills": None,
+    "prev_hash": None,
+    "plan": ("object", {**_ENTRY, "media_type": None, "label": None}),
+    "items": ("array", {"id": None, "kind": None}),
+    "item_id": None,
+    "status": None,
+    "evidence": ("array", {**_ENTRY, "media_type": None, "uri": None}),
+    "anchor": (
+        "object",
+        {
+            "floor": (
+                "object",
+                {"floor_type": None, "chain_hash": None, "round": None, "signature": None,
+                 "randomness": None},
+            )
+        },
+    ),
+    "identity": None,
+    "provenance": None,
+    "repro_recipe": None,
+    "notes": None,
+}  # fmt: skip
+KNOWN_WRAPPER = {
+    "dsse": (
+        "object",
+        {"payloadType": None, "payload": None,
+         "signatures": ("array", {"keyid": None, "sig": None})},
+    ),
+    "pubkey": None,
+    "untrusted": None,  # shown whole: nothing in it is a field of the format
+    "ceiling": (
+        "object",
+        {"ceiling_type": None, "nonce": None, "witness_id": None, "pubkey": None,
+         "response": None, "midpoint": None, "radius": None},
+    ),
+}  # fmt: skip
+
+
+def test_known_fields_are_what_the_writer_models_define():
+    """The fields verify treats as known are those the writer models can write, derived from
+    them, so a field added to a writer model is known to verify in the same change."""
+    assert BODY_FIELDS == KNOWN_BODY
+    assert WRAPPER_FIELDS == KNOWN_WRAPPER

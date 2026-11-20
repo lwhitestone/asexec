@@ -89,7 +89,8 @@ test:
   signed pre-registration with that body.
 - **Created no earlier than** (`anchor.floor`; [`floor`](./docs/VERIFICATION.md#floor)). A
   manifest was created after a public moment: a [drand](https://drand.love/) beacon round it
-  embeds.
+  embeds. `--floor` fetches the latest round when signing; `--floor-round` signs with a round
+  fetched earlier, such as the one a run fetched when it started.
 - **Created no later than** (`ceiling`; [`ceiling`](./docs/VERIFICATION.md#ceiling)). A
   manifest existed by time T: a
   [Roughtime](https://datatracker.ietf.org/doc/draft-ietf-ntp-roughtime/) server signed its
@@ -99,6 +100,14 @@ test:
   pre-registration's `due`: its ceiling verifies, and the latest time the witness allows
   (`midpoint + radius`) is at or before `due`. A post-registration without a valid ceiling
   is not shown on time. A pre-registration with no `due` is not examined.
+- **Pre-registered before the post-registration was made** (a `ceiling` on the
+  pre-registration, an `anchor.floor` on each post-registration;
+  [`order`](./docs/VERIFICATION.md#order)). The pre-registration's ceiling (the latest time
+  the witness allows) is before each counted post-registration's floor round, so the
+  pre-registration existed before the post-registration was made. *It bounds the run only as
+  tightly as the run's use of that round: a round the run fetched when it started and used
+  (as its seed, say) lets a re-execution check it; a round it merely records, or one
+  `--floor` fetched at signing, proves nothing about when the run started.*
 
 ### What `asexec` cannot prove
 
@@ -161,6 +170,24 @@ asexec verify preregistration.json postregistration.json \
     --tests format,selfsig,content,chain,keyconsist --artifacts .
 ```
 
+To show the run came after the pre-registration ([`order`](./docs/VERIFICATION.md#order)),
+pre-register with `--ceiling`, and have the run fetch a drand round when it starts, use it
+(as its seed, say), and save the response; then sign its post-registration with that round:
+
+```bash
+# when the run starts: the latest round of the quicknet chain, which --floor uses too
+curl -s https://api.drand.sh/52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971/public/latest > round.json
+#   -> {"round": 31036100, "randomness": "c3d4e5f6…", "signature": "8d2f1c3a…"}
+
+asexec postreg --key lab.key --fulfills preregistration.json \
+    --floor-round-file round.json --out postregistration.json
+```
+
+`--floor-round` takes the same JSON inline. The round must be exactly what drand's HTTP API
+returns for a round (`round`, `randomness`, `signature`, of the chain `--floor` uses); it is
+verified at signing, offline, and a round that does not verify is refused. It excludes
+`--floor`.
+
 For a detailed look at parameters and options, see: `asexec --help`.
 
 For a worked end-to-end run, with faults replayed against the verifier, see
@@ -171,9 +198,9 @@ For a worked end-to-end run, with faults replayed against the verifier, see
 | Status | Meaning |
 |---|---|
 | `0` | Success. For `verify`, every requested test is `PASS`; for `identity match`, the key is bound to the domain. |
-| `1` | Error: the arguments are valid, but the command could not complete with the files or network they name, e.g. a missing or invalid key file, an unreadable `--subject` or `--target-file`, a key file it refuses to overwrite, a failed `identity match` fetch, or a failed `--floor`/`--ceiling` fetch without `--best-effort`. An `error: ...` line is printed; a few bad inputs still print a traceback instead ([#45](https://github.com/lwhitestone/asexec/issues/45)). |
+| `1` | Error: the arguments are valid, but the command could not complete with the files or network they name, e.g. a missing or invalid key file, an unreadable `--subject` or `--target-file`, a key file it refuses to overwrite, a `--floor-round-file` that does not hold a round that verifies, a failed `identity match` fetch, or a failed `--floor`/`--ceiling` fetch without `--best-effort`. An `error: ...` line is printed; a few bad inputs still print a traceback instead ([#45](https://github.com/lwhitestone/asexec/issues/45)). |
 | `2` | `verify`: at least one requested test is `FAIL`. `identity match`: the key is not bound. |
-| `64` | Usage error: the arguments themselves are wrong, whatever the files hold. For example: an unknown command or option; a missing argument; two that exclude each other, such as `--target` and `--target-file`; a `--due` without an explicit offset; a `--tests` that names an unknown test, names none, or omits `format` or `selfsig`; an inline `--plan`, `--items` or `--evidence` value that is not JSON (or repeats a key) or not of its shape, or a `--status` other than `reported`, `excluded` or `blocked`; or for `identity match`, not exactly one of `--keyid`, `--pubkey` and `--key`. Usage is printed and nothing runs (`verify` prints no code). A few argument mistakes, such as an empty value, are not caught yet ([#45](https://github.com/lwhitestone/asexec/issues/45)). |
+| `64` | Usage error: the arguments themselves are wrong, whatever the files hold. For example: an unknown command or option; a missing argument; two that exclude each other, such as `--target` and `--target-file`, or `--floor` and `--floor-round`; a `--due` without an explicit offset; a `--tests` that names an unknown test, names none, or omits `format` or `selfsig`; an inline `--plan`, `--items` or `--evidence` value that is not JSON (or repeats a key) or not of its shape, or a `--status` other than `reported`, `excluded` or `blocked`; an inline `--floor-round` that is not JSON (or repeats a key), not of a drand round's shape, or a round that does not verify (`--best-effort` does not sign without it); or for `identity match`, not exactly one of `--keyid`, `--pubkey` and `--key`. Usage is printed and nothing runs (`verify` prints no code). A few argument mistakes, such as an empty value, are not caught yet ([#45](https://github.com/lwhitestone/asexec/issues/45)). |
 
 For `verify`, malformed manifest input is a `FAIL`, never an error.
 
@@ -182,8 +209,10 @@ For `verify`, malformed manifest input is a `FAIL`, never an error.
 What each test examines, its exact pass criteria, and what it does not establish are
 specified in the [verification catalog](./docs/VERIFICATION.md).
 
-`verify` runs the tests you name and prints a report for people to read (each manifest,
-each commitment with its state, any rejected pre-registrations, any notarization-only
+`verify` runs the tests you name and prints a report for people to read (each manifest; what
+nothing checked, under its own headings: each file's unsigned `untrusted` section and any
+key outside the body the format does not define, and any body field it does not define; each
+commitment with its state, any rejected pre-registrations, any notarization-only
 post-registrations, and each test's result with a short reason), then one canonical code,
 then `Checked at <time>` (UTC, the moment commitment states were judged against), e.g.:
 
@@ -250,6 +279,9 @@ and `sig`). Fields marked `always` are always written by `asexec prereg` or
     "midpoint": 1785911400.0,
     "radius": 1.0,
     "response": "0400000040…"
+  },
+  "untrusted": {                                        // always written; unsigned, never tested
+    "asexec_version": "0.4.0"                           // always: the release that wrote it
   }
 }
 ```
@@ -297,8 +329,9 @@ The body (`dsse.payload` decoded):
     "payload": "eyJhbmNob3IiOnsiZmxvb3IiOnsiY2hh…",     // base64 of the body bytes, below
     "signatures": [ { "keyid": "sha-256:8f3e0a91…", "sig": "XA9+IVq1…" } ]
   },
-  "pubkey": "d75a9801…"
+  "pubkey": "d75a9801…",
   // "ceiling": same shape as in the prereg
+  "untrusted": { "asexec_version": "0.4.0" }            // always written; unsigned, never tested
 }
 ```
 
@@ -327,7 +360,7 @@ The body (`dsse.payload` decoded):
     "floor": {                                          // drand (--floor): not before
       "floor_type": "drand",
       "chain_hash": "52db9ba7…",
-      "round": 21543210,
+      "round": 31036100,
       "signature": "8d2f1c3a…",
       "randomness": "c3d4e5f6…"
     }
@@ -356,6 +389,11 @@ postreg carries its prereg's `target`, `due` and `declaration`, links back with 
 `pubkey` sit outside the signed body: the ceiling's nonce is the body's own hash, and
 `selfsig` requires the signature's `keyid` to derive from `pubkey`, so a substituted key
 fails. The floor sits inside the body, because a value fixed before signing can be signed.
+`untrusted` is the one section of the file nothing checks: unsigned, read by no test and
+never part of `ref`, so anyone can edit it after signing. (The ceiling's own `midpoint` and
+`radius` only restate its signed response, and are not read either.) `verify` shows it, and any field the
+format does not define, under headings saying nothing in them was checked (see
+[Untrusted](./docs/VERIFICATION.md#untrusted)).
 
 ## Keys
 
@@ -412,7 +450,8 @@ everything needed to perform a verification is baked-in to the prereg/postreg ma
 There are a few opt-in registration paths that use a network connection:
 
 - `prereg/postreg --floor`: Fetches a distributed randomness beacon round from `api.drand.sh`
-  (or a fallback) at sign-time.
+  (or a fallback) at sign-time. `--floor-round` / `--floor-round-file` take a round fetched
+  earlier instead, and verify it offline.
 - `prereg/postreg --ceiling`: Makes a UDP socket call (with server-list fallbacks) to a
   Roughtime server at sign-time.
 

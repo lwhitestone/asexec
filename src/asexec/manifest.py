@@ -9,6 +9,7 @@ A manifest file is an asexec wrapper around a standard DSSE envelope::
         "signatures": [{"keyid": "sha-256:...", "sig": "<base64 of the signature>"}]
       },
       "pubkey": "<hex>",
+      "untrusted": {"asexec_version": "..."},  (unsigned, read by no test)
       "ceiling": { ... }                       (optional, unsigned)
     }
 
@@ -143,7 +144,8 @@ def ref(body_bytes: bytes, payload_type: str = MANIFEST_PAYLOAD_TYPE) -> str:
 
 
 def sign(body: dict[str, Any], private_key: bytes, public_key: bytes) -> dict[str, Any]:
-    """Serialize ``body`` to its body bytes and sign them: the file, as a dict."""
+    """Serialize ``body`` to its body bytes and sign them: the file, as a dict, with the
+    unsigned ``untrusted.asexec_version`` of this release beside them."""
     _check_bedrock(body)
     body_bytes = canonical_bytes(body)
     sig = keys.sign(private_key, signing_input(body_bytes))

@@ -10,6 +10,7 @@ import json
 import manifest_data as d
 import pytest
 
+import asexec
 from asexec import manifest
 from asexec.verifier import verify_paths
 
@@ -46,7 +47,8 @@ POSTREG_TO_IT = d.with_field(d.POSTREG, "fulfills", d.ref(PREREG_WITH_FLOOR))
 )
 def test_guard__writer_builds_the_raw_body_and_envelope(raw):
     assert _built(raw) == raw
-    assert manifest.sign(_built(raw), *d.TEST_KEY) == d.sign(raw)
+    written = manifest.sign(_built(raw), *d.TEST_KEY)
+    assert written == {**d.sign(raw), "untrusted": {"asexec_version": asexec.__version__}}
 
 
 def test_guard__writer_output_and_raw_data_verify_alike(tmp_path):

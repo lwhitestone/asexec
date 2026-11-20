@@ -142,9 +142,9 @@ manifest, even if that manifest happens to carry it; there, it stays an unknown 
   bytes and never re-canonicalizes. `ref` = digest of the payload bytes. (Done ahead of
   0.4.0.)
 - The file is an asexec wrapper around that standard envelope: `dsse`, plus the unsigned
-  `ceiling`, `pubkey` and `untrusted` (see *Wrapper* below). (Done ahead of 0.4.0, except
-  `untrusted`.)
-- `untrusted`: a section for metadata nothing checks, starting with `asexec_version`.
+  `ceiling`, `pubkey` and `untrusted` (see *Wrapper* below). (Done ahead of 0.4.0.)
+- `untrusted`: a section for metadata nothing checks, starting with `asexec_version`. (Done
+  ahead of 0.4.0.)
 - `payloadType` is `application/vnd.asexec.v1+json` (betas write their own; see
   *Versioning*), and `predicateType` is `https://asexec.org/manifest/v1`, on a domain the
   project controls. A later format N is `vN` in both. (Done ahead of 0.4.0.)
@@ -154,9 +154,8 @@ manifest, even if that manifest happens to carry it; there, it stays an unknown 
 - `dsse.payloadType` selects the format version, and unknown values fail `format`
   ([`docs/MULTIVERSION.md`](docs/MULTIVERSION.md)). (Done ahead of 0.4.0.)
 - `hash_alg` moves into each subject entry. A body-level `hash_alg` is no longer read, and is
-  shown as unknown and unchecked, like any unknown field. (Done ahead of 0.4.0, except the
-  showing, which is the unknown-field display below. An entry without its own `hash_alg`
-  fails `content`: no format supplies a default.)
+  shown as unknown and unchecked, like any unknown field. (Done ahead of 0.4.0. An entry
+  without its own `hash_alg` fails `content`: no format supplies a default.)
 - Subjects are an explicit list of files, each hashed exactly as listed, because directory
   hash v1 is ambiguous and skips what it can't encode.
   - An entry's `name` is the relative path as given (normalized, `/`-separated), not its
@@ -189,7 +188,7 @@ How the 0.4.0 envelope is built, compared with 0.3.x, is in
   wins, so two verifiers could read different fields from the same signed bytes. The
   decoded body is held to the same JSON rules as the file, nesting limit included.
 
-(All three done ahead of 0.4.0; `untrusted` is not built yet.)
+(All three done ahead of 0.4.0.)
 
 **Wrapper.** DSSE defines only `payloadType`, `payload` and `signatures`, so what asexec
 adds sits outside it, in the wrapper:
@@ -227,7 +226,9 @@ adds sits outside it, in the wrapper:
 - New commitment state `no-due`, separate from `open`. This changes what `open` means, but
   the code grammar stays `asexec-verify/1`, because the bump rule starts at `0.4.0`. (Done
   ahead of 0.4.0.)
-- `complete` and `order` (see *New properties*). (`complete` done ahead of 0.4.0.)
+- `complete` and `order` (see *New properties*). (Both done ahead of 0.4.0. `order`'s times
+  are the prereg ceiling's `MIDP + RADI` and the floor round's time on the pinned chain,
+  compared in microseconds, "precedes" is strict, and a missing or failing anchor fails.)
 - Malformed means only what stops `verify` reading a manifest: not valid JSON, nested too
   deep, a duplicate key, or a missing frame (`dsse` with `payloadType`, a `payload` that
   decodes to a JSON object, and a `signatures` list). Everything else is judged by tests.
@@ -237,7 +238,10 @@ adds sits outside it, in the wrapper:
 - Unknown signed fields are shown as unknown and unchecked, never dropped. Unknown
   top-level keys are shown with `untrusted`.
 - `untrusted` is printed under its own heading saying nothing in it was checked. No test
-  reads it, and it never affects `ref` or the verify code.
+  reads it, and it never affects `ref` or the verify code. (Both done ahead of 0.4.0. An
+  unknown key nested in an object the format defines is shown too, in the body or out of
+  it, and the file's JSON rules still hold inside `untrusted`: a duplicate key there makes
+  the file malformed.)
 
 **Docs**, rewritten for the 0.4.0 format before release, since the release fixes what they
 describe:
@@ -290,7 +294,9 @@ not here. Where it hooks in waits on the study's choice of runner.
 
 Each run fetches a drand round when it starts and uses it (for example as its seed), and
 its postreg carries that round as its floor. Today `--floor` fetches the latest round at
-signing, so signing needs a way to pass in a round fetched earlier. `order` bounds a run
+signing, so signing needs a way to pass in a round fetched earlier (done ahead of 0.4.0:
+`--floor-round` / `--floor-round-file` take the round as drand's HTTP API returns it, and
+verify it at signing). `order` bounds a run
 only as tightly as the run's use of that round: a round the run merely records proves
 nothing about when the run started. Using it as a seed lets a re-execution check it.
 
@@ -312,7 +318,7 @@ What a 0.4.x release may carry:
 - New test names, including tests that move a *TrustedDeclared* property to
   *TrustedTested*.
 - CLI options and output text, `--json` (outside the promise until 0.5.0), the Python
-  API, and docs. For example, passing in a drand round fetched earlier.
+  API, and docs.
 - Pinned trust roots: added, or withdrawn with a release note.
 - Dependencies and supported Python versions.
 

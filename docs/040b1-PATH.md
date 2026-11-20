@@ -194,7 +194,7 @@ breaks any vector that hardcodes it. The options:
 - [x] 5. #44 (D2), then #42 and #43 (on feature/0321)
 - [x] 6. #32: DSSE envelope (on feature/0321)
 - [x] 7. #33 → #36 → #46 → #37 (on feature/0321)
-- [ ] 8. #34 and #38
+- [x] 8. #34 and #38 (on feature/0321)
 - [ ] 9. #45 (after #38)
 - [ ] 10. #39 → #40
 
@@ -2866,3 +2866,475 @@ lint, build, test on 3.12, 3.13 and 3.14 pass.
 The adequacy example, as it stands, has a `due` and no ceilings, so once it is ported to the
 claim record, `complete` would fail every run, the baseline included. The release-gate port
 needs `--ceiling` on each postreg, or no `--due`.
+
+### Checkpoint 8: #34, #38
+
+Written issue by issue as each landed. Baseline: `feature/0321-checkpoint8` at `bd82d93`,
+`scripts/check.sh` clean, **882 passed**.
+
+#### #34: the untrusted section
+
+**Landed:** `5b97649`. Signing writes `untrusted.asexec_version` (`asexec.__version__`) in the
+wrapper (`models.Untrusted`, a writer model only, and `Manifest.untrusted`), so a file is
+`{dsse, pubkey, untrusted}` plus a ceiling if one is attached. For each file that passes
+`format`, the report record gains `untrusted` (the section, then each key outside the body
+the format does not define) and `unknown` (each body field the format does not define), each
+a list of `{path, value}`, the path a list of keys and indexes from the file's root. The CLI
+prints them under two headings after the manifests block, `=== untrusted (unsigned, and read
+by no test: nothing here was checked) ===` and `=== unknown fields (signed, but this format
+does not define them: nothing here was checked) ===`, each only if a file has entries. No test
+reads either. Docs: `docs/VERIFICATION.md` (*Property paths*, two *Output* rows, the *Output*
+and version-skew examples, a new *Untrusted* section with an example), `README.md` (the
+verification output list, both envelope examples, the paragraph after them),
+`docs/FORMAT.md` (banner), `ROADMAP.md` (done-ahead marks), the `manifest.py`, `models.py`
+and `verifier.py` docstrings.
+
+**Settled (judgement calls):**
+- **Which fields are known: what the writer models can write**, `models.BODY_FIELDS` and
+  `WRAPPER_FIELDS`, derived from `ManifestBody` and `Manifest`/`Ceiling` by walking their
+  fields (`known_fields`), so a field added to a writer model is known in the same change. The
+  input models alone would not do: they define only what tests read, so `target`,
+  `declaration`, `notes` and every other *TrustedDeclared* field would read as unknown. The
+  derived tables are pinned as literals in
+  `tests/test_manifest.py::test_known_fields_are_what_the_writer_models_define`.
+- **Unknown keys nested in a known object are listed too**, in the body (an extra key in a
+  subject, plan or evidence entry, an item, `anchor` or `anchor.floor`) and outside it
+  (inside `dsse`, a signature entry or `ceiling`). An extra `anchor.floor.time` is exactly
+  what a reader could take for checked. **Not** inside a free-form value (`target`,
+  `declaration`, `notes`, `identity`, `repro_recipe`, a `digest` object): what it holds is its
+  value. **Not** inside a known field of the wrong shape (a string `subject`): the tests judge
+  that field. Outside the body, ROADMAP named only top-level keys; nested wrapper keys are
+  listed the same way for consistency (`dsse.signatures[0].alg`, as 0.3.x wrote, is one).
+- **A null is absent** (Run rules), so an unknown key whose value is `null`, and an
+  `untrusted` of `null`, are not listed.
+- **Only files that pass `format`** are shown: no other file is read past `format`. A file of
+  an unknown format is not shown, though its `untrusted.asexec_version` would say which release
+  wrote it (observation below).
+- **`untrusted` and the file's JSON rules.** `untrusted` may hold any value, of any type and
+  size, without changing a verdict. But it is part of the file, so the file's JSON rules hold
+  inside it: a duplicate key in `untrusted` makes the whole file malformed, as a duplicate key
+  anywhere does, and so does nesting that takes the file past 64 deep. That is `format`'s rule
+  about reading the file at all (a parser could otherwise read a different file), not a
+  reading of `untrusted`, and the *Untrusted* section says so. Pinned by
+  `test_untrusted__is_held_to_the_file_json_rules` and
+  `test_untrusted__deeper_than_the_file_limit_makes_the_file_malformed`.
+- **Display:** the blocks sit between the manifests block and the commitments block, so every
+  doc example shown "from `=== commitments ===` on" stays complete. Within a file,
+  `untrusted` comes first, then the unknown keys in file order; body fields in body order.
+  Each value is `json.dumps(value, ensure_ascii=True)` and each path is the doc's notation
+  with any non-plain key as JSON (`body["a\nb"]`, `["k\n…"]`), so no newline, control or
+  non-ASCII character reaches the report from either. Values are printed whole, not truncated.
+- The doc examples show `"asexec_version": "0.4.0"`, as the doc describes 0.4.0 (as it does
+  for the `v1` type). A source checkout writes `__version__`, `0.3.20` today.
+
+**Evidence:**
+- Red first: with only the tests changed, **53 failed, 808 passed, 1 collection error**
+  (`tests/test_manifest.py`: `cannot import name 'BODY_FIELDS'`). The failures:
+  `KeyError: 'untrusted'` / `'unknown'` (the new verify tests), the writer's file without
+  `untrusted` (the 5 builder-guard cases, the CLI signing test), the missing CLI blocks, and
+  10 where my test compared refs after a signed body edit (a test bug: an edited body is a new
+  body; those now compare the code, every result and every state). With the code in place,
+  one existing test failed:
+  `tests/test_cli.py::test_verify_marks_each_file_by_format_and_selfsig` took everything
+  before `=== commitments ===` as the manifests block, which now includes the untrusted
+  block; it now takes the manifests block up to its blank line.
+- `scripts/check.sh` after: clean, **933 passed** (882 before).
+- Tests (`tests/verify/test_verify_untrusted.py`, new, 45 cases; the fixture puts a ceiling on
+  every manifest, a plan and items on the prereg, an item and evidence on a postreg):
+  - `test_untrusted__shown_for_each_file_and_read_by_no_test` (every catalog test: the code,
+    every result, every commitment and rejected pre-registration identical with and without
+    it); `test_untrusted__any_value_changes_no_verdict` (12: a string, a number, `false`, a
+    list, `{}`, `NaN`, a non-string `asexec_version`, a 1 MB string, a 100,000-element list,
+    10,000 keys, nested to the file's limit, a lone surrogate with NUL and a bidi override);
+    `test_untrusted__null_is_absent`; `test_untrusted__is_not_part_of_ref` (every ref, and
+    `ceiling` and `chain`, unchanged); `test_untrusted__is_held_to_the_file_json_rules` (a
+    duplicate key: `malformed: duplicate JSON key 'a'`, the file joins nothing);
+    `test_untrusted__deeper_than_the_file_limit_makes_the_file_malformed`;
+    `test_untrusted__not_shown_for_a_file_that_fails_format`.
+  - `test_untrusted__unknown_keys_outside_the_body_are_shown_with_it` (top level, a top-level
+    `payloadType`, `dsse.extra`, `dsse.signatures[0].alg`, `ceiling.extra`, a key holding a
+    newline; each with every verdict unchanged),
+    `test_untrusted__the_section_comes_first_then_the_keys_in_file_order`,
+    `test_untrusted__known_keys_are_not_listed` (a ceiling's unsigned `midpoint`/`radius`
+    included).
+  - `test_unknown__signed_fields_this_format_does_not_define_are_shown` (10: top level,
+    body-level `hash_alg`, `schema_id`, in a subject entry, `anchor`, a verified floor, the
+    plan, an item, an evidence entry, a key holding a newline; the code, results and states
+    unchanged), `test_unknown__every_field_the_format_defines_is_known` (a body with every
+    field, the free-form ones holding nested objects, and a digest with two algorithms:
+    nothing listed), `test_unknown__a_known_field_of_the_wrong_shape_has_no_fields_to_list`
+    (5), `test_unknown__a_null_field_is_absent`, `test_unknown__fields_are_listed_in_body_order`,
+    `test_unknown__shown_for_postregs_and_rejected_preregs_alike`.
+  - Writer: `tests/test_manifest.py::test_sign_writes_a_dsse_envelope_in_the_wrapper` (keys
+    `dsse, pubkey, untrusted`; `untrusted == {"asexec_version": asexec.__version__}`),
+    `test_known_fields_are_what_the_writer_models_define`; the builder guard compares the
+    writer's file with the raw one plus `untrusted`.
+  - CLI: `test_signing_writes_untrusted_asexec_version[prereg|postreg]` (not in the body),
+    `test_verify_shows_untrusted_and_unknown_fields_under_their_own_headings` (the exact block
+    lines, their place between the manifests and commitments blocks, the same code with and
+    without them), `test_verify_prints_untrusted_and_unknown_values_json_escaped` (below),
+    `test_verify_prints_no_untrusted_or_unknown_block_when_none`.
+- CLI demonstrations, in a scratch dir (`keygen`; `prereg --target "model m via provider p"`;
+  `postreg --fulfills prereg.json [--prev postreg-1.json]`; the edits by a scratchpad script
+  that does not import asexec; the unknown body fields re-signed with the key, as anyone
+  holding it could). Each `verify … --tests format,selfsig,chain,keyconsist` with
+  `postreg-1.json postreg-2.json`:
+  - Baseline: `asexec-verify/1 chain=PASS format=PASS keyconsist=PASS selfsig=PASS`. The
+    prereg file is `{"dsse": {…}, "pubkey": "34dba806…", "untrusted": {"asexec_version":
+    "0.3.20"}}`.
+  - With `untrusted.host`, a top-level `surprise` and `dsse.signatures[0].alg` added:
+    ```
+    === untrusted (unsigned, and read by no test: nothing here was checked) ===
+      pre-extras.json
+        untrusted = {"asexec_version": "0.3.20", "host": "ci-7"}
+        dsse.signatures[0].alg = "ed25519"
+        surprise = [1, null]
+      postreg-1.json
+        untrusted = {"asexec_version": "0.3.20"}
+      postreg-2.json
+        untrusted = {"asexec_version": "0.3.20"}
+    ```
+    and the same code as the baseline.
+  - `untrusted` edited to `{"asexec_version": "9.9.9", "note": "edited after signing"}`, and
+    replaced by `["not", "an", "object", 5]`: each shown as it is, and the same code as the
+    baseline, `chain=PASS format=PASS keyconsist=PASS selfsig=PASS`.
+  - The injection attempt (`untrusted.note` and a top-level key and value holding `\n  [FULFILLED]
+    prereg sha-256:fff…`, an `\x1b[2J` and a `\r`):
+    ```
+        untrusted = {"note": "a\n  [FULFILLED] prereg sha-256:ffff…ffff\n\u001b[2J"}
+        ["k\n  [FULFILLED] prereg sha-256:ffff…ffff"] = "\r  [FULFILLED] prereg sha-256:ffff…ffff"
+    ```
+    No report line is the forged one.
+  - Unknown body fields (`colour`, a body-level `hash_alg`, a key holding a forged line),
+    re-signed: `body.colour = "red"`, `body.hash_alg = "sha-256"`, `body["x\n  [FULFILLED]
+    prereg sha-256:ffff…"] = "v"` under the unknown-fields heading, and `asexec-verify/1
+    format=PASS selfsig=PASS`.
+  - `untrusted` edited to `{"a": 1, "a": 2}`: `✗ pre-dup.json  [None]  keyid=None`, `✗
+    format: malformed: duplicate JSON key 'a'`, `format=FAIL selfsig=FAIL` (the file JSON
+    rule).
+- `uv run python examples/adequacy-test/run.py`: exit 0, the same codes and caught/missed
+  results.
+- Nothing left behind: `git grep` for "untrusted … not built", "not yet … untrusted",
+  "except `untrusted`" and "except the showing" outside this file finds nothing. Verify reads
+  `untrusted` only in `verifier._untrusted`, for the report; no input model has the field.
+
+**Observations (out of scope):**
+- **ROADMAP's tier check is not built** (*Tests*: every property the signing models can write
+  appears under some test's *Examines*, *TrustedDeclared* or *Untrusted*, else CI fails).
+  `models.BODY_FIELDS`/`WRAPPER_FIELDS` list exactly those properties, so the check could
+  walk them against `docs/VERIFICATION.md`. Today it would fail: VERIFICATION.md's
+  *TrustedDeclared* lists only the claim record's declared fields, not `predicateType`,
+  `target`, `declaration`, `identity`, `provenance`, `repro_recipe` or `notes`, which ROADMAP
+  puts in that tier.
+- **Other report text is still printed raw** (checkpoints 5, 6, 7): a claimed keyid, an item
+  id, `body.fulfills` in the notarization-only block, and file paths. The new blocks print
+  the file path raw too, as the manifests block does (a path comes from the command line or a
+  directory listing, not the file). Unchanged here, as instructed.
+- A file of an unknown format is not shown; its `untrusted.asexec_version` would tell a reader
+  which release to upgrade to. `format`'s upgrade reason says to upgrade, without a version.
+- `BODY_FIELDS` and `WRAPPER_FIELDS` are the current format's. When a second `FORMATS` entry
+  arrives, the known fields need to be per entry (`docs/MULTIVERSION.md`).
+- `untrusted` holding an integer of more than 4,300 digits makes the file malformed, by
+  default, as anywhere in the file (checkpoint 6's `PYTHONINTMAXSTRDIGITS` observation).
+- `manifest.sign` still signs a hand-built body with an extra field (checkpoint 1's
+  observation); verify now shows such a field as unknown.
+
+#### #38: `order`, and signing with a given floor round
+
+**Landed:** `fcd09a2`. `order` is in `TEST_CATALOG` (between `keyconsist` and `selfsig`).
+`verify_paths` now keeps, per commitment, the ceiling of each copy of its prereg (a prereg
+copy no longer overwrites the record of the one before: `setdefault`, the same body) and the
+floor of each counted postreg, and `verifier._order` gives each commitment an `order` record
+(`examined`, `ok`, `reason`, `ceiling`: `{status, no_later_than_us}`, and per counted postreg
+`{ref, status, no_earlier_than_us}`, status `after`, `not-after`, `no-floor`, `invalid-floor`
+or `not-compared`). A verified floor record gains `no_earlier_than_us`
+(`verifier._no_earlier_than`). **`verifier._ceiling_time` is now the one ceiling-time helper**:
+`_on_time` (timely, complete) and `_order` both call it. `drand.verified_floor` builds and
+verifies a floor from a saved round. CLI: `--floor-round` / `--floor-round-file` in a
+mutually exclusive group with `--floor` on `prereg` and `postreg`; with `order` requested, the
+commitments block marks a prereg whose ceiling gives no time and each counted postreg not
+shown after it. Docs: `docs/VERIFICATION.md` (an `order` section with two examples, the summary
+row, the *Output* row, `floor`'s *Does not establish*, *Commitment states*, *Not in this
+version*), `README.md` (*What asexec can prove*: the floor bullet and a new ordering bullet;
+*Usage*: saving a round and `--floor-round-file`; *Exit status* 64 and 1; *Network*),
+`ROADMAP.md` (done-ahead marks; the 0.4.x example of "passing in a drand round fetched
+earlier" removed, since it is done), the verifier docstring.
+
+**`order`'s items** (for each commitment with at least one counted postreg):
+1. the prereg has a `ceiling` (`the pre-registration has no ceiling`);
+2. that ceiling meets the `ceiling` conditions #1-#5 (`the pre-registration's ceiling does not
+   verify`);
+3. each counted postreg has a `body.anchor.floor`;
+4. that floor meets the `floor` conditions #1-#5;
+5. the ceiling's time Tc is strictly before the floor's time Tf (#3-#5: `a counted postreg is
+   not shown after the pre-registration`).
+
+**Settled (judgement calls):**
+- **The prereg's time** is its ceiling's upper bound, `MIDP + RADI` of the verified response
+  (integer microseconds), as for `timely`; never the file's unsigned `midpoint`/`radius`.
+  With several copies of the commitment's prereg, the earliest verified one counts (a copy
+  without a ceiling, or with a later one, does not undo it), the same any-copy rule `timely`
+  has for postregs. Only copies that are the commitment (meet `selfsig` with its keyid) are
+  read; a rejected copy's ceiling is not, though it binds the same body.
+- **The postreg's time** is its round's time on the pinned chain, `genesis_time + (round - 1)
+  × period` (`drand.time_of_round`; quicknet: `1692803367`, 3 s), times 10⁶. Both chain
+  parameters (and the key and the chain hash) are now pinned as literals in
+  `tests/test_drand.py::test_pinned_chains_are_quicknet_with_its_genesis_and_period`. A
+  floor's copies share it (it is in the body).
+- **"Precedes" is strict** (`Tc < Tf`): a ceiling time equal to the round's time, to the
+  microsecond, does not precede it. This is the conservative reading; Tf is whole seconds, so
+  equality needs a witness time on the second.
+- **A missing or failing anchor fails**, as D5a has it for `timely`: anyone can write either,
+  so one that fails its own test's conditions is no time at all. With the prereg's ceiling
+  missing or failing, the commitment fails on #1/#2 and each counted postreg with a verified
+  floor is `not-compared` (no mark); postregs without a valid floor are still marked.
+- **Commitments only:** a rejected pre-registration is never examined (D2), and a postreg
+  that does not count is not read. Empty: `requested but no commitment has a counted
+  postreg`.
+- **A postreg not shown after its prereg still counts**, the commitment stays `fulfilled` and
+  `order=FAIL` carries the verdict (D5b's reasoning: states say whether it was reported).
+- **Report marks only with `order` requested**, as for `timely`.
+- **`--floor-round`'s shape is drand's HTTP API response for a round**, exactly `round`
+  (an integer), `randomness` and `signature` (lowercase hex, as drand writes them), of the
+  chain `--floor` fetches from (`drand.DEFAULT_CHAIN`, quicknet). So a run can save `GET
+  /<chain hash>/public/latest` when it starts and sign with it unchanged. Not the
+  `anchor.floor` object asexec writes: one shape, the one a run has in hand. Any other key is
+  refused (`previous_signature`, which chained beacons return, and `chain_hash`: the chain is
+  not the caller's to choose), and so is a missing one, rather than silently dropped or
+  filled in.
+- **Verified at signing through verify's own floor conditions**: `drand.verified_floor`
+  builds the record with the strict writer model `Floor` (so `"1000"` and `true` are not
+  rounds) and runs `drand.verify_floor(FloorInput…)`, the function the `floor` test uses: the
+  pinned chain, `randomness == sha256(signature)`, BLS.
+- **Exit statuses (checkpoint 7's split):** the round depends on the argument and the pinned
+  constants alone, so an inline value that is not JSON, repeats a key, is not of the shape,
+  or **does not verify** is a usage error (64: the argument is wrong whatever the files hold).
+  The same from `--floor-round-file` is the file's content, exit 1, and so is a missing file.
+  `--floor` with either, or both, is argparse's mutual exclusion (64). An empty value is a
+  usage error (`must not be empty`), so `--floor-round ""` never signs without a floor.
+  `--best-effort` covers fetch failures only, so it does not sign without an unverifiable
+  round.
+- Error text reads `argument --floor-round: --floor-round: …` inline, the same doubling
+  `--plan`'s inline errors have (the shape's message names the flag for the file case).
+
+**Evidence:**
+- Red first: with only the tests changed, **116 failed, 904 passed**: `KeyError: 'order'` (68:
+  every `test_verify_order.py` test, the never-raises cases that now request `order`, the
+  untrusted tests whose test list is the catalog), `SystemExit: 64` and argparse usage text
+  where `--floor-round` was an unknown option (the CLI tests), `drand has no attribute
+  'verified_floor'` (8), the `--help` catalog list, and doc coverage (`('order', 1)` to `5`
+  had no doc item). With the code, 2 failed (doc coverage) until the section was written, plus
+  two test mistakes fixed on the way: a copy test that re-pinned the only witness (it now pins
+  a second one), and the file variant of the not-JSON case (`must contain valid JSON`, as
+  `--plan-file`'s).
+- `scripts/check.sh`: clean, **1020 passed** (933 after #34). The suite takes about 67 s
+  (32 s before this checkpoint): each verified floor costs about 0.9 s of BLS math, and
+  `order` needs one per counted postreg (observation below).
+- Tests (`tests/verify/test_verify_order.py`, new, 27 cases; the prereg's witness re-pinned to
+  sign MIDP ten seconds before round 1000, one counted postreg with round 1000's floor):
+  `test_order__pass__all` (the whole record: `ceiling` `{verified, 1692806355000000}`, the
+  postreg `after` at `1692806364000000`), `__pass__all_each_counted_postreg_of_a_chain`,
+  `__fail__1_prereg_has_a_ceiling` (a ceiling on the postreg does not stand in),
+  `__fail__2_prereg_ceiling_meets_the_ceiling_conditions` (6: unpinned witness, another
+  manifest's genuine ceiling, a genuine response for another nonce, not roughtime, an
+  unpinned `ceiling.pubkey`, junk), `__pass__2_any_copy_of_the_prereg_with_a_verified_ceiling_shows_it`
+  (an early copy, a bare copy and the original with a later witness: the earliest counts),
+  `__fail__3_counted_postreg_has_a_floor`, `__fail__4_floor_meets_the_floor_conditions` (7:
+  **forged later round** 5,000,000 and earlier round 999 with round 1000's signature, wrong
+  randomness, an unpinned chain, not drand, a non-hex signature, a string round),
+  **`__fail__5_a_floor_before_the_prereg_ceiling`** (the default witness, 2023-11-14: `not-after`,
+  still `fulfilled`), `__fail__5_precedes_is_strict` (Tc = Tf),
+  `__pass__5_one_microsecond_before_the_floor`,
+  `__fail__5_the_unsigned_midpoint_and_radius_are_not_read`,
+  `__pass__all_a_postreg_that_does_not_count_is_not_examined`,
+  `__pass__all_a_commitment_without_counted_postregs_is_not_examined`,
+  `__fail__empty_no_commitment_has_a_counted_postreg`,
+  `__fail__empty_a_rejected_preregistration_is_not_examined`,
+  `__fail__empty_a_malformed_postreg_is_not_examined`.
+  - Never raises (`tests/verify/test_verify_run_rules.py`):
+    `test_never_raises__junk_floor_on_a_counted_postreg` (8: a round past 8 bytes, negative,
+    zero, a bool; a non-string signature, a list randomness, chain hash, floor type),
+    `test_never_raises__junk_ceiling_on_a_prereg` (5), and `order` added to
+    `test_never_raises__validly_signed_junk_in_a_body_field` (41 cases) and
+    `test_never_raises__witness_time_past_year_9999` (now with a prereg ceiling).
+  - drand (`tests/test_drand.py`): `test_pinned_chains_are_quicknet_with_its_genesis_and_period`,
+    `test_verified_floor_of_a_saved_round_is_the_floor_fetch_floor_writes`,
+    `test_verified_floor_refuses_a_round_that_does_not_verify` (7).
+  - CLI (`tests/test_cli.py`): `test_floor_round_signs_with_a_round_fetched_earlier` (prereg
+    and postreg × inline and file; `drand.fetch_floor` and `fetch_round` patched to fail, so
+    nothing is fetched; the written floor is round 1000's record, and verify gives
+    `floor=PASS`), `test_floor_round_argument_errors_are_usage_errors` (13, with
+    `--best-effort`: exit 64, nothing written), `test_floor_round_file_content_errors_exit_EXIT_ERROR`
+    (13, exit 1), `test_floor_round_file_not_found_exits_EXIT_ERROR`,
+    `test_floor_round_excludes_floor` (3), `test_verify_marks_each_counted_postreg_not_shown_after_its_prereg`
+    (ordered, floor before the prereg's ceiling, no prereg ceiling, no floor; no mark without
+    `order`), and the pinned catalog in `test_verify_help_names_both_required_tests`.
+- CLI demonstrations, in a scratch dir. `round.json` is round 1000 as drand's HTTP API returns
+  it. A scratchpad wrapper (`tools/witness_cli.py`) runs `asexec` in-process with a pinned
+  synthetic Roughtime witness at a chosen MIDP (RADI 1 s), fixed keys, standing in for the
+  network for `--ceiling`; nothing else changes.
+  - **order PASS:** `prereg --target "model m via provider p" --ceiling` with the witness at
+    MIDP 1692806340 (2023-08-23T15:59:00Z); `postreg --fulfills prereg.json
+    --floor-round-file round.json`; `verify … --tests format,selfsig,ceiling,floor,order`:
+    `[FULFILLED] prereg sha-256:b17107d0…`, no mark, `✓ order=PASS (1/1 commitment(s) ok)`,
+    trust line `… so no later than 2023-08-23T15:59:01Z …`, `asexec-verify/1 ceiling=PASS
+    floor=PASS format=PASS order=PASS selfsig=PASS`.
+  - **order FAIL, the run's floor before the prereg's ceiling:** the prereg (with `--due
+    2099-01-01T00:00:00Z`) witnessed at MIDP 1700000000 (2023-11-14): `[FULFILLED] prereg
+    sha-256:b74ae2db…`, `✗ postreg sha-256:cf9877b8… is not shown after the pre-registration:
+    its floor (no earlier than 2023-08-23T15:59:24Z) is not after the pre-registration's
+    ceiling (no later than 2023-11-14T22:13:21Z)`, `asexec-verify/1 ceiling=PASS floor=PASS
+    format=PASS order=FAIL selfsig=PASS`. Both anchors verify on their own; only their order
+    fails.
+  - **Missing anchors:** a prereg without `--ceiling`: `✗ the pre-registration is not shown
+    before its postregs: it has no ceiling`, `format=PASS order=FAIL selfsig=PASS`. A postreg
+    without a floor: `✗ postreg sha-256:69412c3f… is not shown after the pre-registration: it
+    has no floor`, `order=FAIL`.
+  - **Forged floor:** the PASS postreg's body re-signed with its floor's round set to 5,000,000
+    (round 1000's signature kept), as anyone holding the key could: `✗ drand freshness floor
+    round 5000000` under the file, `✗ postreg sha-256:1ede25e2… is not shown after the
+    pre-registration: its floor does not verify`, `asexec-verify/1 floor=FAIL format=PASS
+    order=FAIL selfsig=PASS`.
+  - **Signing with a saved round:** `postreg --fulfills prereg.json --floor-round '{"round":
+    1000, "randomness": "fe290bec…", "signature": "b44679b9…"}'` → exit 0, and the body's
+    `anchor` is `{"floor": {"chain_hash": "52db9ba7…", "floor_type": "drand", "randomness":
+    "fe290bec…", "round": 1000, "signature": "b44679b9…"}}`.
+  - **Refusing a bad one:** the same with `"round": 1001` → `asexec postreg: error: argument
+    --floor-round: --floor-round: round 1001 does not verify against the pinned quicknet chain
+    (its BLS signature for that round, or randomness = sha256(signature))`, exit 64, nothing
+    written; with `--best-effort`, the same, exit 64. From `--floor-round-file` → `error:
+    --floor-round: round 1001 does not verify …`, exit 1. With a `previous_signature` key →
+    `… unknown field(s) 'previous_signature'; a round holds 'round', 'randomness' and
+    'signature', as drand's HTTP API returns it …`, exit 64. `--floor --floor-round …` →
+    `argument --floor-round: not allowed with argument --floor`, exit 64.
+  - The `docs/VERIFICATION.md` `order` examples use these refs (`b74ae2db…`, `cf9877b8…`, which
+    depend on the bodies only) with the doc's key, and the witness and its time elided.
+- `uv run python examples/adequacy-test/run.py`: exit 0, the same codes and caught/missed
+  results (it requests no `order`).
+- Nothing left behind: `git grep` for "`order` are planned", "signing needs a way" (now
+  marked done) and "passing in a drand round" outside this file finds only the ROADMAP betas
+  sentence, which now says it is done ahead.
+
+**Observations (out of scope):**
+- **Suite time doubled** (32 s → 67 s), from BLS math: each verified floor costs about 0.9 s,
+  and `order`'s tests, like `floor`'s, need a verified floor per counted postreg. A memo of
+  `drand.verify_round` (a pure function of its arguments and the pinned chain) would cut it;
+  not added, as it is a change to the crypto path for test speed alone.
+- `examples/adequacy-test/run.py:315` still labels the late-plants fault "missed: needs
+  `order` and a lab-side time bound". `order` alone does not catch it (the plants are
+  committed by the lab, after its run: ROADMAP's 0.6.0 `plantorder`), so the label is still
+  right; the release-gate port may want to say so.
+- The manifests block's floor line prints `created no earlier than <epoch seconds>` and the
+  ceiling line `created no later than <epoch seconds> ±…`, while the new marks print ISO times
+  (checkpoint 7 noted the same for the ceiling line).
+- A ceiling on a **rejected** copy of a prereg binds the same body bytes, so it is evidence
+  of when the body existed; `order` does not read it (only copies that are the commitment).
+  The conservative reading, consistent with D2; recorded in case the human gate wants it.
+- `--floor-round` accepts any verified round, however old: signing does not check that the
+  round is after the prereg's ceiling (it may have no ceiling yet, or not be given), so a
+  postreg can be signed that `order` will fail. `order` reports it.
+- One more pinned chain (a drand network rotation) would make `--floor-round`'s chain a
+  question: today it is the default chain only, as `--floor`'s is.
+
+#### Checkpoint 8 summary
+
+**Landed** (branch `feature/0321-checkpoint8`, each issue's change with its notes commit):
+- #34, `5b97649` (notes `7cce766`): the `untrusted` section (signing writes
+  `untrusted.asexec_version`), and the report shows it, any unknown key outside the body, and
+  any unknown body field, under headings saying nothing in them was checked, as escaped JSON.
+- #38, `fcd09a2` (notes: the commit that follows): `order`, and signing with a drand round
+  fetched earlier (`--floor-round` / `--floor-round-file`).
+
+**pytest counts:** 882 (baseline `bd82d93`) → 933 (#34) → 1020 (#38), `scripts/check.sh`
+clean after each, run in full and its exit status checked before every commit.
+`examples/adequacy-test/run.py` exits 0 after each.
+
+**Release-note entries** (for #40, in the `tests/test_constants.py` header format):
+
+```
+Identifier: the manifest file layout (no constant): {dsse, pubkey[, ceiling]} -> {dsse, pubkey, untrusted: {asexec_version}[, ceiling]}
+Impact: NEW_OUTPUT
+Affected: nothing published (untrusted is unsigned and read by no test; a file without it verifies as before); tools that compare the whole file
+Action: none
+
+Identifier: the verify report (no constant): new blocks "=== untrusted … ===" and "=== unknown fields … ===", and order's marks
+Impact: NEW_OUTPUT
+Affected: the report only (never part of the code); scripts that parse the report's blocks
+Action: none
+```
+
+**Judgement calls needing the human's eye** (each detailed in its issue's notes above):
+- #34: known fields are what the writer models can write (not the input models); unknown keys
+  nested in known objects are listed, in the body and out of it; the file's JSON rules hold
+  inside `untrusted` (a duplicate key there makes the file malformed); only files that pass
+  `format` are shown.
+- #38: "precedes" is strict; the prereg's time is the earliest verified ceiling of its
+  commitment copies; `--floor-round`'s shape is exactly drand's HTTP API response for a round
+  of the default chain, unknown keys refused; an inline round that does not verify is a usage
+  error (64).
+
+**CI:** PR #57 at `1fddc55` (run 44827998188): lint, python-matrix, test (3.12, 3.13, 3.14,
+each with the CLI smoke) and build pass.
+
+**Review round 1** (findings on PR #57; the reviewer checked the drand constants against
+api.drand.sh (genesis 1692803367, period 3, round 1000 at 1692806364), reproduced both `order`
+examples, and attacked `order` and `--floor-round` without getting through):
+1. should-fix (#34): *Untrusted* said "no value of it makes a file malformed", but an
+   `untrusted.big` of 5,001 digits set after signing gives `format: malformed: Exceeds the limit
+   (4300 digits)…` → the section now says it may hold "any value the file's JSON rules accept",
+   and names an integer of more than 4,300 digits beside the duplicate key and the depth limit,
+   as anywhere in the file. Test:
+   `test_untrusted__an_integer_past_the_digit_limit_makes_the_file_malformed` (it passed
+   before the fix: the behaviour was right, the doc wrong). Commit `576cbd9`. Under
+   `PYTHONINTMAXSTRDIGITS=0` that test would fail, as checkpoint 6's observation predicts.
+2. should-fix (#34): VERIFICATION.md and README called `untrusted` "the one part of the file
+   that nothing checks", but `ceiling.midpoint` and `ceiling.radius` are unsigned and read by
+   nothing too (`test_order__fail__5_the_unsigned_midpoint_and_radius_are_not_read` and
+   timely's twin rely on it; for a verified ceiling the report shows the signed `MIDP`/`RADI`)
+   → both now say "the one section of the file nothing checks", and name the ceiling's
+   midpoint and radius as restating the signed response and not read either. They are not
+   listed in the untrusted block. Commit `576cbd9`.
+   **Design option for the human gate:** `ceiling.midpoint`/`radius` could move out of the
+   ceiling (into `untrusted`, or be dropped, since the response carries them), or verify could
+   show them as unchecked, or require them to equal the signed values. Today the writer
+   writes them, the manifests block prints them for a verified ceiling (`created no later than
+   <midpoint> ±<radius>s`, which equal the signed values only if nobody edited them), and no
+   test reads them.
+3. should-fix (#38): nothing pinned that the prereg's time comes only from copies that are the
+   commitment; a verifier collecting ceilings by `ref` alone passed every test → two tests, each
+   giving the commitment its own ceiling a minute after the floor (from a second pinned
+   witness) beside a genuine ceiling for the same body nine seconds before it:
+   - `test_order__fail__2_a_rejected_copy_s_ceiling_is_not_the_prereg_s`: the early ceiling on
+     a copy claiming another key's keyid (a rejected pre-registration): `ceiling=PASS
+     format=PASS order=FAIL selfsig=FAIL`, the commitment's time `FLOOR_US + 61 s`, its postreg
+     `not-after`.
+   - `test_order__fail__2_another_signer_s_ceiling_is_not_the_prereg_s`: the same body signed
+     by a second key with the early ceiling, and a postreg of that key with round 1000's floor:
+     two commitments; the first `not-after` on its own late ceiling, the second `after` and
+     `ok` on its own early one; `order` `1/2 commitment(s) failed`.
+
+   The mutant (in a copy of `verifier.py`: every format-passing prereg's ceiling collected by
+   `ref`, and `_order` given that list): both new tests failed and the other 27 `order` tests
+   passed. Restored, all 29 pass. Commit `6ada68d`.
+4. nit: README's example postreg floor round 21543210 (2025-09-09) was before the prereg's
+   ceiling midpoint 1785911400 (2026-08-05), so the pair would fail `order`, and the Usage
+   snippet reused it → both now show round 31036100 (time 1785911664, after the ceiling's
+   1785911401). The prereg's own floor round 21102400 stays (before its own ceiling, as a
+   prereg's floor is). Commit `6ada68d`.
+5. nit: the second `order` example showed `due: 2099-01-01T00:00:00Z` and ref `b74ae2db…`
+   without saying the prereg was signed with `--due` → it now says so ("so another body, with
+   another `ref`"). Commit `6ada68d`.
+6. notes only, **for #45 (checkpoint 9):** the shared JSON helpers' messages, each confirmed
+   here on the CLI:
+   - an inline `--floor-round` holding a 5,001-digit integer gives `argument --floor-round:
+     Exceeds the limit (4300 digits) …`, without `_strict_json`'s `not valid JSON:` prefix (the
+     `ValueError` is not a `JSONDecodeError`); exit 64 all the same;
+   - the same from `--floor-round-file` gives `error: big.json: Exceeds the limit …`, through
+     `_shaped_arg_or_file`'s duplicate-key branch, so it reads like that path's message, not
+     `must contain valid JSON`;
+   - a `--floor-round-file` that is not UTF-8 prints a `UnicodeDecodeError` traceback (exit 1)
+     instead of `error: …`: `cli.main` catches `AsexecError` and `OSError` only. The same holds
+     for `--plan-file`, `--items-file` and `--evidence-file`, which share the loader.
+
+`scripts/check.sh` (in full, exit status checked, before each commit): clean, 1021 passed at
+`576cbd9` (checked with the #38 changes stashed) and 1023 at `6ada68d`.

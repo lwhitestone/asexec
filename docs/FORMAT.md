@@ -1,8 +1,8 @@
 # The 0.4.0 envelope
 
 > [!NOTE]
-> This describes the format planned for `0.4.0`. Its DSSE envelope is built; the
-> `untrusted` section is not yet. It is AI-assisted, so treat it with due skepticism. The
+> This describes the format planned for `0.4.0`. Its DSSE envelope and the `untrusted`
+> section are built. It is AI-assisted, so treat it with due skepticism. The
 > rules that follow from it are in
 > [`ROADMAP.md`](../ROADMAP.md#040--m1-the-first-supported-format).
 
