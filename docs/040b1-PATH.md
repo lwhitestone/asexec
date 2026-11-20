@@ -2107,3 +2107,19 @@ CLI-made file verified unchanged, and caught 17 mutants):
   - Suggested fix for later: a fixed rule checked before `json.loads`, beside the nesting
     check, such as "a number of more than N digits is malformed". It would make the limit
     asexec's own rather than the interpreter's. Not fixed here.
+
+**Merged** (orchestrator): PR #55 merged into `feature/0321` as `ac5c6b8`, a merge commit,
+with no review findings left open. The #32 change is `b0abfdb` plus `f639dd4` (`sig` in
+base64). The review fixes are `be12c3c`, `2d28e91` and `81fb889`. The review agent checked
+DSSE conformance without asexec code, with a hand-built PAE verified by PyNaCl and with
+securesystemslib's `dsse.Envelope.verify`: all five CLI-made files verified unchanged. A
+hand-built spec-conformant envelope passes `format` and `selfsig`. It also tried about 27
+tricky base64 spellings, 38 hand-signed body cases and 29 frame cases, and ran every order
+of a 6-file mix (720 orders) with identical reports. Each of 18 plausible wrong versions is
+caught by a test, the last one after the review fix. With the b1 release-commit edit applied:
+633 passed, 5 skipped with the D6b reason, roundtrip passing. Post-merge on `feature/0321` at
+`ac5c6b8`: `scripts/check.sh` clean, 640 passed; `examples/adequacy-test/run.py` exit 0. CI on
+the last PR push (`aad9918`, run 44773957313): lint, build, test on 3.12, 3.13 and 3.14 pass.
+**Open for the human gate:** the orchestrator's choice of a base64 `sig`, to keep ROADMAP's
+standard-envelope promise; the four documented ways asexec is stricter than DSSE; and the
+verify result that depends on `PYTHONINTMAXSTRDIGITS` (see the observations above).
