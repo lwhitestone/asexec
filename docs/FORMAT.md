@@ -54,7 +54,7 @@ ref        = sha-256(body bytes)
 ```jsonc
 // today (0.3.x)
 {
-  "payloadType": "application/vnd.asexec.v1+json",
+  "payloadType": "application/vnd.asexec+json",
   "payload": { "phase": "prereg", … },           // a JSON object
   "signature": { "alg": "ed25519", "keyid": "…", "pubkey": "…", "sig": "…" },
   "ceiling": { … }                               // optional, unsigned

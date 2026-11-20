@@ -207,18 +207,18 @@ the rest are the practitioner's call.
 ```jsonc
 {
   "payloadType": "application/vnd.asexec.v1+json",
-  "payload": {                                       // required: the signed body
-    "predicateType": "https://asexec.org/manifest/v1", // always
-    "phase": "prereg",                               // always: prereg | postreg
-    "target": "claude-opus-4-8 via the anthropic API", // always: text or JSON
-    "due": "2099-01-01T00:00:00Z",                   // deadline; none = stays open
+  "payload": {                                          // required: the signed body
+    "predicateType": "https://asexec.org/manifest/v1",  // always
+    "phase": "prereg",                                  // always: prereg | postreg
+    "target": "claude-opus-4-8 via the anthropic API",  // always: text or JSON
+    "due": "2099-01-01T00:00:00Z",                      // deadline; none = stays open
     "declaration": "all runs of this harness against this model, in full", // text or JSON
-    "subject": [                                     // artifacts, hashed
+    "subject": [                                        // artifacts, hashed
       { "name": "harness/", "digest": { "sha-256": "2c26b46b…" } }
     ],
-    "hash_alg": "sha-256",                           // always with subject
+    "hash_alg": "sha-256",                              // always with subject
     "anchor": {
-      "floor": {                                     // drand (--floor): not before
+      "floor": {                                        // drand (--floor): not before
         "floor_type": "drand",
         "chain_hash": "52db9ba7…",
         "round": 21102400,
@@ -226,20 +226,20 @@ the rest are the practitioner's call.
         "randomness": "1f0c9d2e…"
       }
     },
-    "identity": ["lab.example"],                     // free-form list
-    "notes": "hypothesis: refusal rate under 2%"     // text or JSON
+    "identity": ["lab.example"],                        // free-form list
+    "notes": "hypothesis: refusal rate under 2%"        // text or JSON
   },
-  "signature": {                                     // required
+  "signature": {                                        // required
     "alg": "ed25519",
-    "keyid": "sha-256:8f3e0a91…",                    // always: sha-256 of pubkey
-    "pubkey": "d75a9801…",                           // required: hex
-    "sig": "3a91c0de…"                               // required: hex
+    "keyid": "sha-256:8f3e0a91…",                       // always: sha-256 of pubkey
+    "pubkey": "d75a9801…",                              // required: hex
+    "sig": "3a91c0de…"                                  // required: hex
   },
-  "ceiling": {                                       // Roughtime (--ceiling): not after
+  "ceiling": {                                          // Roughtime (--ceiling): not after
     "ceiling_type": "roughtime",
     "witness_id": "int08h-Roughtime",
     "pubkey": "016e6e02…",
-    "nonce": "4be1c1f8…",                            // = ref(payload)
+    "nonce": "4be1c1f8…",                               // = ref(payload)
     "midpoint": 1785911400.0,
     "radius": 1.0,
     "response": "0400000040…"
@@ -252,21 +252,21 @@ the rest are the practitioner's call.
 ```jsonc
 {
   "payloadType": "application/vnd.asexec.v1+json",
-  "payload": {                                       // required: the signed body
-    "predicateType": "https://asexec.org/manifest/v1", // always
-    "phase": "postreg",                              // always: prereg | postreg
-    "target": "claude-opus-4-8 via the anthropic API", // always: text or JSON
-    "due": "2099-01-01T00:00:00Z",                   // deadline; none = stays open
+  "payload": {                                          // required: the signed body
+    "predicateType": "https://asexec.org/manifest/v1",  // always
+    "phase": "postreg",                                 // always: prereg | postreg
+    "target": "claude-opus-4-8 via the anthropic API",  // always: text or JSON
+    "due": "2099-01-01T00:00:00Z",                      // deadline; none = stays open
     "declaration": "all runs of this harness against this model, in full", // text or JSON
-    "subject": [                                     // artifacts, hashed
+    "subject": [                                        // artifacts, hashed
       { "name": "transcript.txt", "digest": { "sha-256": "9f86d081…" } },
       { "name": "harness/", "digest": { "sha-256": "2c26b46b…" } }
     ],
-    "hash_alg": "sha-256",                           // always with subject
-    "fulfills": "sha-256:4be1c1f8…",                 // always in a postreg
-    "prev_hash": "sha-256:07ad3b2e…",                // previous postreg
+    "hash_alg": "sha-256",                              // always with subject
+    "fulfills": "sha-256:4be1c1f8…",                    // always in a postreg
+    "prev_hash": "sha-256:07ad3b2e…",                   // previous postreg
     "anchor": {
-      "floor": {                                     // drand (--floor): not before
+      "floor": {                                        // drand (--floor): not before
         "floor_type": "drand",
         "chain_hash": "52db9ba7…",
         "round": 21543210,
@@ -274,8 +274,8 @@ the rest are the practitioner's call.
         "randomness": "c3d4e5f6…"
       }
     },
-    "identity": ["lab.example"],                     // free-form list
-    "provenance": "reproducible",                    // asserted | reproducible
+    "identity": ["lab.example"],                        // free-form list
+    "provenance": "reproducible",                       // asserted | reproducible
     "repro_recipe": { "seed": 42, "decode": "greedy", "runtime": "vllm 0.9" },
     "notes": "free-form text or JSON"
   }
