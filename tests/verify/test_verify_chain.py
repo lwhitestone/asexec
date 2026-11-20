@@ -109,3 +109,15 @@ def test_chain__fail__empty_only_rejected_postregs(scenario):
     assert report["code"] == FAIL
     assert report["results"]["chain"]["applicable"] == 0
     assert report["results"]["chain"]["reason"] == EMPTY
+
+
+def test_chain__fail__empty_prereg_fails_selfsig(scenario):
+    """chain (*): a prereg that fails selfsig is no commitment, so its chain of validly
+    signed postregs, which is linear, has nothing to be counted toward and is not
+    examined."""
+    scenario.tamper("prereg", lambda envelope: envelope["signature"].update(sig="00" * 64))
+    report = scenario.verify("chain")
+    assert report["commitments"] == []
+    assert report["code"] == "asexec-verify/1 chain=FAIL format=PASS selfsig=FAIL"
+    assert report["results"]["chain"]["applicable"] == 0
+    assert report["results"]["chain"]["reason"] == EMPTY

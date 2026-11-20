@@ -7,14 +7,15 @@ from asexec import keys
 
 PASS = "asexec-verify/1 format=PASS keyconsist=PASS selfsig=PASS"
 FAIL = "asexec-verify/1 format=PASS keyconsist=FAIL selfsig=PASS"
-EMPTY = "requested but no validly signed postreg names a provided prereg"
+EMPTY = "requested but no validly signed postreg names a commitment"
 
 
 def test_keyconsist__pass__all(scenario):
     """keyconsist #1: every valid postreg referencing the prereg has the prereg's keyid."""
     report = scenario.verify("keyconsist")
     assert report["code"] == PASS
-    assert report["commitments"][0]["key_consistent"] is True
+    assert report["results"]["keyconsist"]["reason"] == "1/1 commitment(s) ok"
+    assert report["commitments"][0]["rejected_postregs"] == []
 
 
 def test_keyconsist__pass__1_invalid_signature_is_not_judged_here(scenario):
@@ -26,7 +27,7 @@ def test_keyconsist__pass__1_invalid_signature_is_not_judged_here(scenario):
 
 
 def test_keyconsist__pass__1_postreg_by_another_signer_of_the_same_ref(scenario):
-    """keyconsist #1: a postreg by the signer of another provided prereg with the same ref
+    """keyconsist #1: a postreg by the signer of another commitment with the same ref
     belongs to that signer's commitment, so it is no failure of this one."""
     other = keys.generate()
     scenario.add_prereg("prereg_b")
@@ -42,7 +43,9 @@ def test_keyconsist__fail__1_valid_postreg_has_prereg_keyid(scenario):
     scenario.sign_with("postreg1", keys.generate())
     report = scenario.verify("keyconsist")
     assert report["code"] == FAIL
-    assert report["commitments"][0]["key_consistent"] is False
+    assert report["results"]["keyconsist"]["reason"] == "1/1 commitment(s) failed"
+    (rejected,) = report["commitments"][0]["rejected_postregs"]
+    assert rejected["reason"] == "signed by a different key than the pre-registration"
 
 
 def test_keyconsist__fail__1_valid_postreg_has_prereg_keyid__all_rejected(scenario):
@@ -76,5 +79,27 @@ def test_keyconsist__fail__empty_no_postreg_references_a_prereg(scenario):
         scenario.drop(name)
     report = scenario.verify("keyconsist")
     assert report["code"] == FAIL
+    assert report["results"]["keyconsist"]["applicable"] == 0
+    assert report["results"]["keyconsist"]["reason"] == EMPTY
+
+
+def test_keyconsist__fail__empty_prereg_fails_selfsig(scenario):
+    """keyconsist (*): a prereg that fails selfsig is no commitment, so the validly signed
+    postregs naming it, by its own key, name no commitment and nothing is key-checked."""
+    scenario.tamper("prereg", lambda envelope: envelope["signature"].update(sig="00" * 64))
+    report = scenario.verify("keyconsist")
+    assert report["commitments"] == []
+    assert report["code"] == "asexec-verify/1 format=PASS keyconsist=FAIL selfsig=FAIL"
+    assert report["results"]["keyconsist"]["applicable"] == 0
+    assert report["results"]["keyconsist"]["reason"] == EMPTY
+
+
+def test_keyconsist__fail__empty_postreg_by_another_key_naming_a_rejected_prereg(scenario):
+    """keyconsist (*): a postreg by another key naming a prereg that fails selfsig is not
+    compared with that prereg's keyid, which nothing authenticated: it is no failure here,
+    and nothing is key-checked."""
+    scenario.tamper("prereg", lambda envelope: envelope["signature"].update(sig="00" * 64))
+    scenario.sign_with("postreg2", keys.generate())
+    report = scenario.verify("keyconsist")
     assert report["results"]["keyconsist"]["applicable"] == 0
     assert report["results"]["keyconsist"]["reason"] == EMPTY

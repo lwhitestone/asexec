@@ -191,7 +191,7 @@ breaks any vector that hardcodes it. The options:
 - [x] 2. #26: split `BDR` into `format` and `selfsig` (D3) (on feature/0321)
 - [x] 3. #31: `FORMATS` table; an unknown format fails `format` (on feature/0321)
 - [x] 4. #30: beta release support (after #31, because it rewrites the `FORMATS` key) (on feature/0321)
-- [ ] 5. #44 (D2), then #42 and #43
+- [x] 5. #44 (D2), then #42 and #43 (on feature/0321)
 - [ ] 6. #32: DSSE envelope
 - [ ] 7. #33 → #36 → #46 → #37
 - [ ] 8. #34 and #38
@@ -1348,3 +1348,273 @@ CI on the last PR push (`7c3b0b4`, run 44729179505): lint, build, test on 3.12, 
 3.14 pass. **Open for the human gate:** after 0.4.0 there's no workable path to a 0.5.0
 beta, nor to a patch release while a new format is in development (see the observations
 above). Neither blocks b1.
+
+### Checkpoint 5: #44, #42, #43
+
+**Landed** (branch `feature/0321-checkpoint5`):
+- #44 (D2), `60c5ffa`: a prereg that passes `format` but fails a `selfsig` condition is no
+  commitment. `verify_paths` keeps commitments for preregs that meet the `selfsig`
+  conditions only, and lists the others in a new `rejected_preregs` list, each with the
+  reason `invalid signature` and the postregs rejected under it. A postreg that counts toward
+  no commitment of its ref is listed under each rejected pre-registration of that ref with
+  the new reason `the pre-registration's signature is invalid`. The report prints a
+  `=== rejected pre-registrations ===` block. `keyconsist`'s empty reason is now `requested
+  but no validly signed postreg names a commitment`. The `TypeError` on a non-string
+  `signature.keyid` (checkpoint 2's carry-forward) is gone. `docs/VERIFICATION.md` (the
+  three terms, matching condition 4, a prereg table, the postreg table, *Output*, `chain`'s
+  and `keyconsist`'s conditions and empty cases, `selfsig`, *Commitment states*, an
+  example), `README.md` (*What `asexec` always proves*, key consistency, *Verification
+  output*) and the verifier docstring are updated.
+- #42, `9dafde1`: postregs are matched by direct lookup. The commitments are indexed by
+  `(ref, keyid)` (valid preregs only) and by `ref`, and the rejected pre-registrations by
+  `ref`. `_get_postreg_rejection_reason` is folded into the loop. Report and verdicts
+  unchanged (differential below); `tests/verify/test_verify_matching.py` is not touched by
+  the commit.
+- #43, `b4bfad1`: the matching loop sets the commitment's `different_key` flag when it
+  rejects a postreg there as signed by a different key. `key_checked` (`counted_postregs` or
+  the flag) is keyconsist's scope and `not different_key` its verdict, defined once where the
+  commitment record is built, beside the flag. `key_consistent` is removed from the report
+  dict, and `_evaluate`'s comment and the module docstring no longer restate the rule. No
+  verdict reads a reason string. Report text and verdicts unchanged (differential below).
+
+**How matching reads now** (`docs/VERIFICATION.md`, *Matching postregs to commitments*):
+- **Provided prereg** (passes `format`) → **commitment** (also meets the `selfsig`
+  conditions; keyed by `ref` and `signature.keyid`) → **rejected pre-registration** (passes
+  `format`, fails `selfsig`). Matching gains condition 4: `R` meets the `selfsig` conditions.
+  Conditions 1-3 keep their numbers, so D2's "matching condition 2" still reads right.
+- A postreg that names a provided prereg and counts toward no commitment of that ref is
+  rejected under each commitment of the ref (`invalid signature` or `signed by a different
+  key than the pre-registration`) and under each rejected pre-registration of the ref (`the
+  pre-registration's signature is invalid`). A postreg naming only rejected preregs is not
+  notarization-only. "Notarization-only" still means "names no provided prereg".
+
+**Evidence:**
+- `scripts/check.sh`: ruff check and format check clean. pytest **455 passed before**
+  (`e60cd1c`), **477 after #44**, 477 after #42, 477 after #43. The 22 new tests:
+  `test_verify_matching.py` +11, `test_verify_run_rules.py` +6, `test_verify_keyconsist.py`
+  +2, `test_verify_chain.py` +1, `tests/test_cli.py` +2.
+- Red first (#44, the `tests/verify` tests only, against `e60cd1c`'s verifier): 20 failed,
+  260 passed. The failures were `TypeError: unhashable type: 'dict'` and `'list'` (the keyid
+  inputs as a prereg), `KeyError: 'rejected_preregs'` (6), codes with `chain=PASS` or
+  `keyconsist=PASS` where `FAIL` was expected (3), 6 where the broken prereg was still a
+  commitment (a commitment or postregs under it where none were expected, the number keyid
+  among them; `applicable` 1 for 0; two commitments for one), the old keyconsist empty
+  reason (2),
+  and the doc-coverage test (`('matching', 4)` has no doc item). With `verifier.py` changed,
+  only the doc-coverage test and one case with a bug of its own failed (the
+  `keyid-does-not-derive` case generated a new keyid on every write; the test now uses one
+  fixed `OTHER_KEYID`). The CLI tests, written next, failed on the missing block until
+  `cli.py` printed it, and the doc-coverage test passed once `VERIFICATION.md` had #4.
+- Tests that pin each requirement (#44):
+  - The tampered prereg plus valid postregs by the same key (#44's own case):
+    `test_matching__fail__4_prereg_meets_selfsig_conditions[signature-does-not-verify|keyid-does-not-derive]`:
+    `chain=FAIL format=PASS keyconsist=FAIL selfsig=FAIL`, no commitment, no
+    notarization-only, one rejected pre-registration (its `ref`, claimed keyid, `invalid
+    signature`), and all three postregs under it with the prereg's reason; `chain` and
+    `keyconsist` applicable 0.
+  - (a) `test_matching__postreg_counted_by_a_commitment_is_not_rejected_under_a_rejected_copy[same-keyid|other-keyid]`:
+    the commitment stays `fulfilled` with 3 counted, the broken copy is listed as rejected
+    with no postregs, `chain=PASS keyconsist=PASS selfsig=FAIL`.
+    `test_matching__forged_copy_claiming_a_key_does_not_make_that_key_a_signer`: a copy
+    relabelled with key B's `pubkey` and `keyid` is rejected; B's valid postreg is rejected
+    under the real commitment as a different key (`keyconsist=FAIL`) and listed under the
+    copy with the prereg's reason. `test_matching__postreg_rejected_under_a_commitment_is_also_rejected_under_a_copy`.
+  - (b) `test_matching__postreg_naming_only_rejected_preregs_is_rejected_under_each`: two
+    rejected copies with different keyids, each listing all three postregs (one of them
+    itself tampered) with the prereg's reason; not notarization-only.
+  - (c) `test_matching__copies_of_a_rejected_prereg_are_listed_once` (three copies, two ways
+    broken, one entry with 3 postregs); `test_matching__rejected_preregs_do_not_depend_on_file_order`.
+  - (d) `test_keyconsist__fail__empty_prereg_fails_selfsig`,
+    `test_keyconsist__fail__empty_postreg_by_another_key_naming_a_rejected_prereg` (the new
+    reason, applicable 0), `test_chain__fail__empty_prereg_fails_selfsig`; the `EMPTY`
+    constant in `test_verify_keyconsist.py` pins the changed reason for every empty case.
+  - `test_matching__prereg_with_body_changed_after_signing_is_rejected_and_named_by_none`
+    and `test_matching__valid_prereg_has_no_rejected_preregs`.
+  - The carry-forward crash: `test_never_raises__keyid_not_a_string[prereg|postreg0 ×
+    object|list|number]`: `format=PASS selfsig=FAIL`, never raises; as a prereg it is a
+    rejected pre-registration with that keyid, as a postreg it is rejected for `invalid
+    signature`.
+  - Report: `tests/test_cli.py::test_verify_lists_rejected_preregistrations` (the exact
+    block: `✗ prereg <ref> is NOT a commitment: invalid signature`, `keyid        : <keyid>`,
+    the postreg line with the prereg's reason; the commitments line; no notarization-only
+    block) and `test_verify_prints_no_rejected_preregistrations_block_when_none`.
+- **#42 and #43 change nothing visible (the differential).** A pytest plugin and a corpus
+  script (session scratchpad, not in the repo) load the other version's `verifier.py` inside
+  the `asexec` package, so both versions share every other module, the files, `now`, the
+  pinned servers and monkeypatches. Each `verify_paths` call (the CLI's included) runs on
+  both. The two report dicts are compared in full, and each is rendered through
+  `cli.cmd_verify` (with `verify_paths` stubbed to return it) and the text and exit status
+  compared. For #43 the comparison maps each commitment's key fields to what they mean
+  (key-checked, consistent), since `key_consistent` is replaced by `different_key`; every
+  other field is compared as is.
+  - #42 (`60c5ffa` vs `9dafde1`), the suite: 305 calls over 295 tests, 34 distinct codes,
+    **0 differences**. The suite is the same at both commits.
+  - #43 (`9dafde1` vs `b4bfad1`): the new suite, 305 calls, **0 differences**; the old suite
+    (a worktree at `9dafde1`, its own package checked by path), each call also run by the
+    new verifier: 305 calls, **0 differences**.
+  - The corpus: 218 files from 12 bodies (two preregs with and without an elapsed or
+    unparseable `due`, a 3-link chain and a fork, cross-ref, unknown-ref and junk-link
+    postregs) × 13 variants (keys A/B/C, broken sig, another key's keyid, a forged B
+    pubkey+keyid, keyid as object/list/number/missing, body tampered, `v2` format, bad hex),
+    plus a truncated file, a missing path and byte copies. 6,494 runs: every file alone,
+    1,500 seeded random subsets and their reverses, 14 hand-built sets and their reverses
+    and the directory, each with every catalog test and with `chain,format,keyconsist,selfsig`.
+    26 distinct codes; runs with a rejected pre-registration 4,664, with a postreg under one
+    3,522, with a different-key rejection 1,204, with an invalid-signature rejection 2,010,
+    with two commitments of one ref 194, with notarization-only 5,370, with a counted postreg
+    870, all `PASS` 6. **0 differences** for #42 and for #43. Nothing raised in either
+    version.
+  - The harness catches real changes: with the reason order swapped in a copy of the #44
+    verifier, the suite gave 6 differences and the corpus 1,870; with
+    `key_checked` reduced to the flag alone in a copy of the #43 verifier, the suite gave 200
+    and the corpus 418. The corpus compared against itself: 0.
+  - Timing, 3,000 preregs and 3,000 postregs (one each per ref): 1.68 s before #42, 1.28 s
+    after. Signature checks dominate; the matching itself was the 0.4 s difference.
+- CLI demonstrations, in a scratch dir (`keygen` twice; `prereg --target "model m via
+  provider p"`; `postreg --fulfills prereg.json [--prev postreg-1.json]`; `postreg-other.json`
+  by the second key; `prereg-badsig.json` with one byte of `signature.sig` changed;
+  `prereg-forged.json` with the second key's `pubkey` and `keyid`; `prereg-keyid-object.json`
+  with `"keyid": {"a": 1}`). Each with `--tests format,selfsig,chain,keyconsist`:
+  - `prereg-badsig.json postreg-1.json postreg-2.json`: `(no commitments: no
+    pre-registration provided is validly signed)`, then `=== rejected pre-registrations ===`,
+    `✗ prereg sha-256:b17107d0… is NOT a commitment: invalid signature`, `keyid        :
+    sha-256:3b317472…`, and both postregs `does NOT count toward fulfillment: the
+    pre-registration's signature is invalid`; `chain=FAIL (requested but no commitment has
+    counted postregs to chain-check)`, `keyconsist=FAIL (requested but no validly signed
+    postreg names a commitment)`, `asexec-verify/1 chain=FAIL format=PASS keyconsist=FAIL
+    selfsig=FAIL`, exit 2. On `e60cd1c`: `[FULFILLED]` with 2 postregs, `chain=PASS
+    format=PASS keyconsist=PASS selfsig=FAIL`.
+  - `prereg.json prereg-forged.json postreg-1.json postreg-2.json postreg-other.json`: one
+    `[FULFILLED]` commitment (signer `sha-256:3b317472…`, 2 postregs) with `postreg-other`
+    rejected as `signed by a different key than the pre-registration`; the forged copy listed
+    as rejected (keyid `sha-256:ce694ad4…`) with `postreg-other` under it;
+    `asexec-verify/1 chain=PASS format=PASS keyconsist=FAIL selfsig=FAIL`, exit 2. On
+    `e60cd1c` the forged copy was a second `[FULFILLED]` commitment, signer
+    `sha-256:ce694ad4…`, and the code was `chain=PASS format=PASS keyconsist=PASS
+    selfsig=FAIL`: the key that never signed passed `keyconsist`.
+  - `prereg-keyid-object.json postreg-1.json`: `✗ prereg-keyid-object.json  [prereg]
+    keyid={'a': 1}`, the rejected block with `keyid        : {'a': 1}`, `chain=FAIL
+    format=PASS keyconsist=FAIL selfsig=FAIL`, exit 2. On `e60cd1c`: `TypeError: cannot use
+    'tuple' as a dict key (unhashable type: 'dict')`.
+- `uv run python examples/adequacy-test/run.py`: exit 0 after each commit.
+- Nothing left behind: `git grep -n -e _get_postreg_rejection_reason -e key_consistent -e
+  other_key -e "names a provided prereg" -e "a provided pre-registration with that"` outside
+  this file finds only `other_keyid` test variables and the new matching sentence ("A postreg
+  that names a provided prereg (condition 1) …"), which is meant.
+- CI on PR #54 at `a3c58bb` (run 44732983336): lint, python-matrix, test (3.12, 3.13, 3.14)
+  and build pass.
+
+**Observations (out of scope):**
+- For #46 and #37 (checkpoint 7): `timely` and `complete` should read commitments only, so
+  a rejected pre-registration's `due` and items are not examined. D5a's "if no prereg has a
+  `due`, `timely` is empty" should say "no commitment".
+- For #32 (checkpoint 6): "exactly one signature" becomes a `selfsig` condition, so a prereg
+  with two signatures will be a rejected pre-registration, and a missing `pubkey` or `sig`
+  (checkpoint 2's note) too. #32's matching tests should cover one such prereg.
+- A prereg whose body changed after signing has a new `ref`, so the postregs that name the
+  signed body are notarization-only, and its rejected entry lists none of them
+  (`test_matching__prereg_with_body_changed_after_signing_is_rejected_and_named_by_none`).
+  This follows from refs being of the body as given. A hint in the report ("a rejected
+  pre-registration with no postregs may have been edited after signing") would help a
+  reader, but isn't specified.
+- The rejected reason is `invalid signature` for both `selfsig` conditions, as for postregs.
+  A distinct reason for a keyid that does not derive would match checkpoint 2's observation
+  that the manifests block's `✗` has no reason line.
+- `src/asexec/cli.py` shows a non-string keyid as its Python repr (`{'a': 1}`), in the
+  manifests block as before and now in the rejected block. Display only.
+- The `=== commitments ===` block's empty line now has two texts: the old `(no
+  pre-registrations among the provided manifests)` when no prereg passes `selfsig` and none
+  is rejected (that is, none passes `format`), and `(no commitments: no pre-registration
+  provided is validly signed)` when some are rejected. The old text is wrong-ish for a run
+  whose only prereg failed `format`, as before this checkpoint.
+
+**Judgement calls / new paradigms:**
+- **(a) A postreg that counts toward a commitment is not listed under the ref's rejected
+  pre-registrations**, whatever keyid the broken copy claims. **Needs the human's
+  confirmation:** this narrows D2's literal text ("a postreg naming it is listed as rejected
+  under it"); review round 1 judged it safe and order-independent. This is the existing rule ("a
+  postreg that counts toward one commitment of a `ref` is not rejected under the others")
+  carried to rejected copies. Listing it would show one postreg as counted and as rejected
+  for the same ref, and would let anyone add rejection lines to a valid commitment's postregs
+  by supplying a broken copy.
+- **Under a rejected pre-registration, the reason is always `the pre-registration's signature
+  is invalid`** (condition 4), even when the postreg's own signature is also invalid, and
+  the postreg's keyid is never compared with the prereg's. D2 gives that reason, and the
+  claimed keyid is exactly what must not decide anything. The postreg's own failure still
+  shows as `✗` and in `selfsig`, and as `invalid signature` under any commitment of the ref.
+  Such a rejection never fails `keyconsist`.
+- **(b) A postreg naming only rejected pre-registrations** is rejected under each of them and
+  is not notarization-only (D2: it names a provided prereg). With no commitment, `chain` and
+  `keyconsist` are empty for it.
+- **(c) Rejected copies are deduplicated by `(ref, keyid)`** (the keyid compared as JSON
+  text since review round 1, as a keyid may be unhashable), however each copy is broken; their single reason is the same. A
+  valid prereg and a broken copy with the same `(ref, keyid)` are a commitment plus a
+  rejected pre-registration, never merged, as a broken copy of a postreg is judged on its own.
+- **(d) `keyconsist`'s empty reason changes** from `… names a provided prereg` to `requested
+  but no validly signed postreg names a commitment`, since a valid postreg naming a rejected
+  pre-registration does name a provided prereg. Its condition now says "of a commitment with
+  that `ref`", and its scope (counted, or rejected as a different key) can only ever include
+  commitments. `chain`'s empty reason already said "commitment" and is unchanged; a sentence
+  says a rejected pre-registration is never chain-checked.
+- **Condition 4, not a renumbering.** The prereg condition is matching #4 so 1-3, the tests
+  named after them and D2's reference to "condition 2" stay valid.
+- **The rejected prereg's own reason is `REASON_INVALID_SIGNATURE`**, the postregs' constant,
+  for both `selfsig` conditions. The postreg reason under it is a new constant,
+  `REASON_PREREG_INVALID_SIGNATURE`.
+- **Report shape.** `rejected_preregs` is a new top-level list (`ref`, `keyid`, `reason`,
+  `rejected_postregs`). The CLI block prints `is NOT a commitment: <reason>` (parallel to the
+  postreg lines' `does NOT count toward fulfillment: <reason>`) and `keyid` rather than
+  `signer`, since nothing authenticated it. The `due` is not shown, since it has no state.
+- **#43 keeps `key_checked`, drops `key_consistent`**, and adds the flag `different_key` to
+  the commitment dict. The scope rule is written once, as a comment on `key_checked` where
+  the commitment record is built, and the flag's initialiser points to it. The module
+  docstring now says `keyconsist` "applies to the commitments `verify_paths` marks
+  `key_checked`". The two keyconsist tests that read `key_consistent` now check the
+  documented result reason and the rejected postreg's reason, black-box.
+- No new dependency, system or paradigm.
+
+**Review round 1** (findings on PR #54):
+1. should-fix: `docs/VERIFICATION.md:704` said a rejected pre-registration "fails `selfsig`,
+   which is its only failure", but in the doc's own example the run also gives `chain=FAIL
+   keyconsist=FAIL` (both empty) → it now says that of the tests it fails only `selfsig`,
+   and that with no commitment `chain` and `keyconsist` may be empty and `FAIL`, as in the
+   example (whose code already shows `chain=FAIL format=PASS keyconsist=FAIL
+   selfsig=FAIL`). The *What affects a verdict* paragraph says the same. Commit `390a5b3`.
+2. nit: rejected pre-registrations were deduplicated with Python equality
+   (`verifier.py:463`), so keyids `1`, `1.0` and `true` merged into one entry whose printed
+   keyid depended on file order → they are keyed by `(ref, json.dumps(keyid,
+   sort_keys=True))` (`_json_value`). Test first:
+   `test_matching__rejected_preregs_with_json_distinct_keyids_are_not_merged` (three copies
+   claiming `1`, `1.0` and `true`; both file orders give the same three entries, each with
+   its own keyid). It failed on `f81ce35` (one merged entry, a different keyid per order)
+   and passes now. The adversarial corpus, `f81ce35` vs `6a6e947`: 6,494 runs, 0
+   differences (its only number keyid is `7`). Commit `6a6e947`.
+3. nit: the `key_checked` comment said keyconsist's "scope and verdict, defined here only",
+   but the verdict is computed in `_evaluate` → it defines the scope there and names the
+   verdict, `not different_key`. Commit `f81ce35`.
+4. nit: `README.md:173` was not rewrapped → rewrapped. Commit `390a5b3`.
+5. out of scope → observation below (for the human gate).
+6. → judgement call (a) above is marked as needing the human's confirmation, and (d) is
+   recorded below as an FYI.
+
+`scripts/check.sh`: clean, 478 passed (477 + the new matching test). CI on `9b73d55` (run
+44735722972): lint, python-matrix, test (3.12, 3.13, 3.14) and build pass.
+
+**Observations added in review round 1 (out of scope):**
+- **For the human gate: unauthenticated `signature.keyid` strings are printed raw.** The
+  new rejected block (`src/asexec/cli.py:321`) prints a rejected pre-registration's keyid,
+  and the manifests block's `keyid=` line already printed every file's. A keyid holding
+  newlines can therefore forge report lines: the reviewer printed a fake `[FULFILLED]`
+  commitment this way. The code line and the exit status are unaffected. Suggested later
+  fix: one display escape (for example `json.dumps` or `repr`) for every unauthenticated
+  value the report prints. Not fixed here.
+- Postreg entries (counted, rejected under a commitment or a rejected pre-registration, and
+  notarization-only) are still deduplicated by `_add_once`, with Python equality, so two
+  copies of a postreg whose keyids are `1` and `true` are listed once, under the first
+  file's keyid. This predates the checkpoint (it holds for commitments and notarization-only
+  on `e60cd1c`); such postregs always fail `selfsig`, so no verdict depends on it. The same
+  `_json_value` key would fix it.
+- **FYI for the human gate (judgement call (d)):** `keyconsist`'s empty reason changed
+  from `requested but no validly signed postreg names a provided prereg` to `requested but
+  no validly signed postreg names a commitment`. It is a reason the doc lists, so scripts
+  that matched the old text would need the new one.

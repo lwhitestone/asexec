@@ -532,6 +532,40 @@ def test_verify_prints_notarization_only(tmp_path, key, prereg, capsys):
     assert "(no pre-registrations among the provided manifests)" in out
 
 
+def test_verify_lists_rejected_preregistrations(tmp_path, key, prereg, capsys):
+    """A prereg that fails selfsig is no commitment: it is listed under its own heading with
+    its reason and keyid, and the postreg naming it is listed beneath it as rejected."""
+    post = tmp_path / "post.json"
+    assert run("postreg", "--key", key, "--fulfills", prereg, "--out", post) == 0
+    mani = json.loads(open(prereg).read())
+    mani["signature"]["sig"] = "00" * 64
+    open(prereg, "w").write(json.dumps(mani))
+    capsys.readouterr()
+    assert run("verify", prereg, post, "--tests", "format,selfsig,chain,keyconsist") == 2
+    out = capsys.readouterr().out
+    pre_ref = manifest.ref(mani["payload"])
+    post_ref = manifest.ref(json.loads(post.read_text())["payload"])
+    commitments = out.split("=== commitments ===\n")[1].split("\n\n")[0]
+    assert commitments == "  (no commitments: no pre-registration provided is validly signed)"
+    block = out.split("=== rejected pre-registrations ===\n")[1].split("\n\n")[0]
+    assert block.splitlines() == [
+        f"  {cli.NO} prereg {pre_ref} is NOT a commitment: invalid signature",
+        f"    keyid        : {mani['signature']['keyid']}",
+        f"    {cli.NO} postreg {post_ref} does NOT count toward fulfillment: "
+        "the pre-registration's signature is invalid",
+    ]
+    assert "=== notarization-only" not in out
+    assert "asexec-verify/1 chain=FAIL format=PASS keyconsist=FAIL selfsig=FAIL" in out
+
+
+def test_verify_prints_no_rejected_preregistrations_block_when_none(tmp_path, key, prereg, capsys):
+    post = tmp_path / "post.json"
+    assert run("postreg", "--key", key, "--fulfills", prereg, "--out", post) == 0
+    capsys.readouterr()
+    assert run("verify", prereg, post, "--tests", "format,selfsig") == 0
+    assert "rejected pre-registrations" not in capsys.readouterr().out
+
+
 # --- identity ---------------------------------------------------------------- #
 def test_identity_emit_writes_wellknown(tmp_path, key, capsys):
     out = tmp_path / "asexec.json"
