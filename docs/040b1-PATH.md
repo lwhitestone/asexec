@@ -2706,3 +2706,100 @@ Rehearsed locally (`content=PASS format=PASS selfsig=PASS`); `actionlint` clean.
 .github scripts` finds no other directory subject.
 CI on PR #56 at `ea3afa2` (run 44793807989): lint, python-matrix, test (3.12, 3.13, 3.14,
 each with the new CLI smoke) and build pass. `scripts/check.sh` locally: clean, 842 passed.
+
+**Review round 1** (findings on PR #56; the reviewer found the forged-ceiling attacks,
+D5a/D5b, about 30 junk `complete` cases, the #33 refusals and a differential of base-CLI
+manifests all correct):
+1. **OPEN FOR THE HUMAN GATE (decision, no behaviour change).** From 0.4.0, changing any of
+   these changes a test's documented meaning, so it needs a code-grammar bump
+   (`asexec-verify/2`):
+   - (a) Under `complete`, a counted postreg whose `item_id` names no listed item fails
+     nothing: items S1, S2 and postregs for S1, S2 and S3 give `complete=PASS`, with S3 shown
+     as unlisted.
+   - (b) Contradictory statuses for one item pass: S1 with one postreg `reported` and another
+     `excluded` gives `complete=PASS`, shown as `✓ S1: reported, excluded`. It follows from
+     "any qualifying postreg satisfies an item".
+   - (c) D5b's "the report marks the postreg as late" holds only when `timely` is requested
+     (the report dict has the `timeliness` entries in every run).
+
+   All three follow the spec text as written and are kept. `ROADMAP.md`'s sentence that
+   presented (a) and the "any qualifying postreg" rule as settled is removed; it now reads
+   "(`complete` done ahead of 0.4.0.)". Commit `6962caa`.
+2. should-fix (#46): `T ≤ due` compared floats (`MIDP / 1e6 + RADI / 1e6` against
+   `datetime.timestamp()`), so a `due` equal to T to the microsecond read as late in about
+   one case in eight. Example: MIDP 2553427865607787, RADI 4273949, due
+   `2050-11-30T13:31:09.881736Z`. → `roughtime.verify_response` and `verify_ceiling` also return
+   the signed integers (`midpoint_us`, `radius_us`); `_no_later_than` is `midpoint_us +
+   radius_us`; `_parse_due` also returns the due as integer microseconds since the epoch
+   (`(dt - epoch) // 1 µs`); `_on_time` compares those. `no_later_than` in the report is now
+   microseconds. `docs/VERIFICATION.md` `timely` #4 says the comparison is exact, in whole
+   microseconds. Tests first: `test_timely__pass__4_compared_in_whole_microseconds` (the
+   reviewer's exact case; it also asserts the float sum exceeds the due's float) failed on
+   the old code (`timely=FAIL`), and `test_timely__fail__4_one_microsecond_after_due_is_late`
+   (MIDP + 1 µs) passes either way. Commit `ab1bd9f`.
+3. should-fix (#36): inline values that are wrong on their own exited 1, against README's
+   *Exit status* (64: the arguments themselves are wrong), while `--status done` exited 64. →
+   Each of `--plan`, `--items`, `--evidence` is parsed and held to its shape inside
+   `_get_arg_or_file`'s inline parser (`cli._shaped_arg_or_file`): an inline value that fails
+   it exits 64 with `asexec <cmd>: error: argument --<flag>: <reason>`; the same value from a
+   `--…-file` exits 1 (`error: <reason>`); what the named files are (a directory, missing, two
+   paths for one name, a `..` path) exits 1, as for `--subject`. The shape now also requires
+   string `media_type`, `label`, `uri` and `kind` (or none), and refuses unknown item fields
+   in the CLI rather than through the writer model. Tests first:
+   `test_claim_record_argument_errors_are_usage_errors` (now 28 cases, among them the
+   reviewer's five: `--items '{"id":"R1"}'`, `'[{"id":5}]'`, repeated ids, `'[{"id":"R1",
+   "foo":1}]'`, `--plan '[]'`), `test_claim_record_file_content_errors_exit_EXIT_ERROR` (19:
+   the same shapes from a file, exit 1), `test_claim_record_value_errors_exit_EXIT_ERROR` (4).
+   Red: 27 failed. README's *Exit status* row for 64 names these. Commit `0d2df7f`.
+4. should-fix (#46): "a commitment with no due stays open" left in `README.md:264`, `:312`
+   (`// deadline; none = stays open` → `none = no-due`), `:374` (the lose-the-key bullet now
+   names `no-due`), `src/asexec/manifest.py:45`, `src/asexec/models.py:29` and the
+   `tests/test_cli.py:388` docstring; `docs/VERIFICATION.md:906` now lists `open`,
+   `elapsed-no-postreg` or `invalid-due`. `git grep` for "stays open" / "stays `open`" now
+   finds nothing outside this file. Commit `ab1bd9f`.
+5. nit (#46): a witness-signed time past year 9999 (MIDP 2^62) raised `ValueError: year must
+   be in 1..9999` in `_utc_ceil`. → `_utc_ceil` falls back to `<seconds> (epoch seconds)`.
+   Tests first: `test_never_raises__witness_time_past_year_9999` (through `verify_paths`, with
+   `ceiling`, `complete`, `timely`) and `tests/test_cli.py::
+   test_verify_shows_a_witness_time_past_year_9999_as_epoch_seconds` (the late mark and the
+   trust line show `4611686018429 (epoch seconds)`); both raised before. Commit `ab1bd9f`.
+6. nit: quadratic `.count()` in `_complete`, `_repeated_names`, the `ManifestBody` validator
+   and `manifest._check_entries`, and `_complete` matched each item against every counted
+   postreg. → `collections.Counter`, and `_complete` indexes counted postregs by `item_id` and
+   the ids by a set. Timed with 20,000 items, 20,000 subject names and 20 postregs
+   (`cp7/perf.py`): `build_prereg` 6.9 s → 0.11 s, `sign` 3.44 s → 0.04 s, `verify_paths`
+   7.97 s → 0.98 s, the same code. Commit `70b606e`, which was committed with one failing test
+   (my mistake: the commit was chained after `check.sh | tail`, which hid its status). A
+   validly signed entry whose `name` is a list is unhashable for `Counter`, and
+   `test_never_raises__validly_signed_junk_in_a_body_field[entry-name-list]` caught it. Fixed
+   in `720efc3` (count string names only), pushed straight after; `check.sh` clean since.
+7. nit (#46): the `timely` doc example named `int08h-Roughtime` and `±1.0s`, but was made with a
+   synthetic witness. → The trust line now reads `ceiling witnessed by … at … (±…s), so no
+   later than … - you are trusting …`. Commit `ab1bd9f`.
+8. nit (#33): `hashing.py`'s docstring said signing refuses what `content` would fail, but a
+   symlink resolving outside `--artifacts` is signed. → The docstring says signing refuses what
+   `content` fails in any manifest, and that such a symlink is signed and fails content #5
+   there. No refusal added. Commit `70b606e`.
+9. nit (#36): `--plan '{"name":"plan.md","name":"k.key"}'` hashed `k.key`. → Inline JSON with a
+   duplicate key is refused, exit 64 (`duplicate JSON key 'name'`; cases `plan-duplicate-key`,
+   `item-duplicate-key`). Commit `0d2df7f`. `cli._load_json` (every `--…-file`, `--target-file`
+   included) has the same gap and predates this PR: observation below.
+10. nit (#33): `build_prereg(subject=[])` wrote `"subject": []`, which content #1 fails. →
+    `ManifestBody.subject` has `min_length=1`, like `evidence`. Test first:
+    `tests/test_manifest.py::test_writer_refuses_an_empty_entry_list[subject|evidence]` (the
+    `subject` case failed). Commit `70b606e`.
+11. The README plan label "refusal study plan" is generic: kept.
+
+`scripts/check.sh`: clean, 878 passed (842 before the round).
+
+**Observations added in review round 1 (out of scope):**
+- `asexec verify <fifo>` and any `--…-file <fifo>` block forever (`open` on a FIFO); the same on
+  the base. content #7 covers FIFOs named as artifacts only.
+- Item ids are printed raw in the commitments block (`✓ <id>: …`, `names item '<id>'`), so an
+  id holding a newline can fake report lines: the same class as checkpoint 5's unauthenticated
+  keyid. The code line and exit status are unaffected.
+- `cli._load_json` accepts duplicate JSON keys in `--…-file` contents (`--target-file`,
+  `--declaration-file`, `--notes-file`, and now `--plan-file`, `--items-file`,
+  `--evidence-file`); predates this PR.
+- `test_timely__pass__1_due_without_offset_is_read_as_utc` does not pin a local timezone. Low
+  risk, since `_parse_due` is TZ-pinned by `test_due__without_offset_is_read_as_utc_and_flagged`.
