@@ -2831,3 +2831,38 @@ manifests all correct):
 
 `scripts/check.sh` (run in full, its exit status checked before each commit): clean, 882
 passed.
+
+**Merged** (orchestrator): PR #56 merged into `feature/0321` as `8d97b34`, a merge commit,
+after two review rounds and a re-review of the round 1 fixes, with no in-scope findings left
+open. Code commits by issue:
+- #33: `18e63bf`, `ea3afa2`, `720efc3`.
+- #36: `5ac205f`, `0d2df7f`, `c8a03e1`.
+- #46: `c101617`, `ab1bd9f`, `c5ebcc9`.
+- #37: `d10957d`, `6962caa` (notes and ROADMAP only).
+- `70b606e` spans #33, #36 and #37.
+
+The review agent checked these cases:
+- **`timely` forgeries:** a valid response for another nonce, an unpinned witness, a wrong
+  key, a ceiling copied onto another postreg, edited unsigned midpoint or radius. Each counts
+  as no ceiling, and `timely` fails.
+- **Boundaries:** 300 random ceilings at microsecond precision. A due equal to T passes and
+  T−1 µs is late, every time. The first version used floats and got about 1 in 8 wrong.
+- **Junk:** about 30 `complete` cases, and a 400-run fuzz of unhashable values in every new
+  field. Nothing raised.
+- **Differential:** manifests written by the base CLI give the same codes on both branches.
+  The one change is `[OPEN]` → `[NO-DUE]`, which #46 intends.
+
+Two intermediate commits are red on their own: `70b606e` (fixed by `720efc3`) and `c8a03e1`
+(fixed by `c5ebcc9`), as the review notes above record. Pushed history wasn't rewritten.
+Post-merge on `feature/0321` at `8d97b34`: `scripts/check.sh` clean, 882 passed;
+`examples/adequacy-test/run.py` exit 0. CI on the last PR push (`479bddc`, run 44822032611):
+lint, build, test on 3.12, 3.13 and 3.14 pass.
+
+**Open for the human gate**, since `complete`'s meaning is fixed at 0.4.0:
+- a postreg for an unlisted item fails nothing;
+- contradictory statuses for one item pass;
+- D5b's late mark shows only when `timely` is requested.
+
+The adequacy example, as it stands, has a `due` and no ceilings, so once it is ported to the
+claim record, `complete` would fail every run, the baseline included. The release-gate port
+needs `--ceiling` on each postreg, or no `--due`.
