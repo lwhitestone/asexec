@@ -3275,3 +3275,66 @@ Action: none
 
 **CI:** PR #57 at `1fddc55` (run 44827998188): lint, python-matrix, test (3.12, 3.13, 3.14,
 each with the CLI smoke) and build pass.
+
+**Review round 1** (findings on PR #57; the reviewer checked the drand constants against
+api.drand.sh (genesis 1692803367, period 3, round 1000 at 1692806364), reproduced both `order`
+examples, and attacked `order` and `--floor-round` without getting through):
+1. should-fix (#34): *Untrusted* said "no value of it makes a file malformed", but an
+   `untrusted.big` of 5,001 digits set after signing gives `format: malformed: Exceeds the limit
+   (4300 digits)…` → the section now says it may hold "any value the file's JSON rules accept",
+   and names an integer of more than 4,300 digits beside the duplicate key and the depth limit,
+   as anywhere in the file. Test:
+   `test_untrusted__an_integer_past_the_digit_limit_makes_the_file_malformed` (it passed
+   before the fix: the behaviour was right, the doc wrong). Commit `576cbd9`. Under
+   `PYTHONINTMAXSTRDIGITS=0` that test would fail, as checkpoint 6's observation predicts.
+2. should-fix (#34): VERIFICATION.md and README called `untrusted` "the one part of the file
+   that nothing checks", but `ceiling.midpoint` and `ceiling.radius` are unsigned and read by
+   nothing too (`test_order__fail__5_the_unsigned_midpoint_and_radius_are_not_read` and
+   timely's twin rely on it; for a verified ceiling the report shows the signed `MIDP`/`RADI`)
+   → both now say "the one section of the file nothing checks", and name the ceiling's
+   midpoint and radius as restating the signed response and not read either. They are not
+   listed in the untrusted block. Commit `576cbd9`.
+   **Design option for the human gate:** `ceiling.midpoint`/`radius` could move out of the
+   ceiling (into `untrusted`, or be dropped, since the response carries them), or verify could
+   show them as unchecked, or require them to equal the signed values. Today the writer
+   writes them, the manifests block prints them for a verified ceiling (`created no later than
+   <midpoint> ±<radius>s`, which equal the signed values only if nobody edited them), and no
+   test reads them.
+3. should-fix (#38): nothing pinned that the prereg's time comes only from copies that are the
+   commitment; a verifier collecting ceilings by `ref` alone passed every test → two tests, each
+   giving the commitment its own ceiling a minute after the floor (from a second pinned
+   witness) beside a genuine ceiling for the same body nine seconds before it:
+   - `test_order__fail__2_a_rejected_copy_s_ceiling_is_not_the_prereg_s`: the early ceiling on
+     a copy claiming another key's keyid (a rejected pre-registration): `ceiling=PASS
+     format=PASS order=FAIL selfsig=FAIL`, the commitment's time `FLOOR_US + 61 s`, its postreg
+     `not-after`.
+   - `test_order__fail__2_another_signer_s_ceiling_is_not_the_prereg_s`: the same body signed
+     by a second key with the early ceiling, and a postreg of that key with round 1000's floor:
+     two commitments; the first `not-after` on its own late ceiling, the second `after` and
+     `ok` on its own early one; `order` `1/2 commitment(s) failed`.
+
+   The mutant (in a copy of `verifier.py`: every format-passing prereg's ceiling collected by
+   `ref`, and `_order` given that list): both new tests failed and the other 27 `order` tests
+   passed. Restored, all 29 pass. Commit `6ada68d`.
+4. nit: README's example postreg floor round 21543210 (2025-09-09) was before the prereg's
+   ceiling midpoint 1785911400 (2026-08-05), so the pair would fail `order`, and the Usage
+   snippet reused it → both now show round 31036100 (time 1785911664, after the ceiling's
+   1785911401). The prereg's own floor round 21102400 stays (before its own ceiling, as a
+   prereg's floor is). Commit `6ada68d`.
+5. nit: the second `order` example showed `due: 2099-01-01T00:00:00Z` and ref `b74ae2db…`
+   without saying the prereg was signed with `--due` → it now says so ("so another body, with
+   another `ref`"). Commit `6ada68d`.
+6. notes only, **for #45 (checkpoint 9):** the shared JSON helpers' messages, each confirmed
+   here on the CLI:
+   - an inline `--floor-round` holding a 5,001-digit integer gives `argument --floor-round:
+     Exceeds the limit (4300 digits) …`, without `_strict_json`'s `not valid JSON:` prefix (the
+     `ValueError` is not a `JSONDecodeError`); exit 64 all the same;
+   - the same from `--floor-round-file` gives `error: big.json: Exceeds the limit …`, through
+     `_shaped_arg_or_file`'s duplicate-key branch, so it reads like that path's message, not
+     `must contain valid JSON`;
+   - a `--floor-round-file` that is not UTF-8 prints a `UnicodeDecodeError` traceback (exit 1)
+     instead of `error: …`: `cli.main` catches `AsexecError` and `OSError` only. The same holds
+     for `--plan-file`, `--items-file` and `--evidence-file`, which share the loader.
+
+`scripts/check.sh` (in full, exit status checked, before each commit): clean, 1021 passed at
+`576cbd9` (checked with the #38 changes stashed) and 1023 at `6ada68d`.
