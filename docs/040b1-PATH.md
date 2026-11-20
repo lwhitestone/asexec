@@ -2519,3 +2519,133 @@ version*), `README.md` (the state list and the timeliness caveat, a new *On time
   ±1.0s` (epoch seconds), while the new marks and the trust block print ISO times.
 - `examples/adequacy-test` signs a `due` but no ceiling, so once ported it will need
   `--ceiling` on each postreg for `timely` (and `complete`'s deadline part) to pass.
+
+#### #37: `complete`
+
+**Landed:** `d10957d`. `complete` is in `TEST_CATALOG`. `verify_paths` keeps, per commitment,
+the prereg's `body.items` and each counted postreg's `body.item_id` and `body.status`, and
+`verifier._complete` gives each commitment a `complete` record (`examined`, `ok`, `reason`,
+`items`: per item `id`, `ok`, `statuses`, `reason`; `unlisted`: counted postregs whose
+`item_id` names no listed item). The deadline part calls `_on_time`, the function `timely`
+uses. `models.ItemsInput` (a strict array) is new beside `ItemInput`. The CLI prints, under a
+commitment whose prereg lists items, `items : N` and one `✓ <id>: <statuses>` or `✗ <id>: …`
+line per item, a `✗` line for repeated or malformed items, and `✗ postreg <ref> names item
+'<id>', which the prereg does not list`. Docs: `docs/VERIFICATION.md` (a `complete` section
+with an example, the summary row, *Output*, *Commitment states*, `chain`'s *Does not
+establish*, `timely`'s link, *TrustedDeclared*'s last line, *Not in this version*), `README.md`
+(an *Every item accounted for* bullet, the `chain` caveat), `ROADMAP.md` (done-ahead mark), the
+verifier docstring.
+
+**`complete`'s items** (for each commitment whose prereg's `body.items` is present and not
+`[]`):
+1. `body.items` is an array of objects with a string `id` (`items is not an array of objects
+   with a string id`);
+2. no two ids repeat (`item ids repeat: '<id>'`), even if every item is accounted for;
+3. each item has a counted postreg with `body.item_id` equal to its id and `body.status` one
+   of `reported`, `excluded`, `blocked` (item reasons `no counted postreg names it`, `no
+   counted postreg for it has a status of reported, excluded or blocked`);
+4. a present `body.due` parses (`due is not a parseable ISO-8601 timestamp`);
+5. with a `due`, one postreg meeting #3 is on time by `_on_time` (item reasons `not shown on
+   time: its postreg is late` / `has no ceiling` / `'s ceiling does not verify`).
+
+**Settled and pinned (judgement calls):**
+- **Several counted postregs for one item: any qualifying one satisfies it**
+  (`test_complete__pass__3_any_qualifying_postreg_accounts_for_an_item`: S2 with an unknown
+  status and a `reported` one passes; `__pass__5_any_qualifying_postreg_on_time_accounts_for_an_item`:
+  one without a ceiling and one on time passes). `complete` asks whether each item was
+  accounted for; a second, worse postreg for an item does not undo that, and a late one still
+  fails `timely`. The item line lists the statuses of the postregs that satisfy it.
+- **A postreg whose `item_id` is not in `items` accounts for nothing and fails nothing**; it is
+  listed (`unlisted`, and the `✗ … names item 'Z9', which the prereg does not list` line)
+  (`test_complete__pass__3_a_postreg_for_an_unlisted_item_is_shown_not_failed`,
+  `tests/test_cli.py::test_verify_shows_a_postreg_for_an_unlisted_item`). `complete` judges
+  the promised list; an extra postreg is visible, but no promise is broken by it.
+- **A postreg with an `item_id` but a missing or unknown status** does not account for the
+  item, which fails #3 unless another postreg does
+  (`test_complete__fail__3_each_item_has_a_counted_postreg_with_its_id_and_a_status`:
+  missing, `done`, `Reported` (case matters), a list; and an `item_id` of another case or a
+  list names no item). A counted postreg with no `item_id` is not read (the `summary`
+  postreg in the unlisted test).
+- **`items: []` is not examined** ("a prereg without items"), like an absent or `null` one;
+  a present non-array is examined and fails #1.
+- **Commitments only** (checkpoint 5's note): a rejected pre-registration's items are never
+  read (`test_complete__fail__empty_a_rejected_preregistration_is_not_examined`); a postreg
+  that does not count (signed by another key) accounts for no item
+  (`test_complete__fail__3_a_postreg_that_does_not_count_accounts_for_nothing`).
+- **The item lines are always shown** (the issue: "The commitments block shows each item's
+  status"), with the deadline part when the prereg has a parseable `due`. The per-postreg
+  timeliness marks stay with `timely` requested only, since an item line already says when
+  its postreg is late.
+- An unparseable `due` fails the commitment (#4) but leaves each item's line judged on #3
+  alone; the `due` line under the commitment says why.
+
+**Evidence:**
+- Red first: with only the tests changed, **68 failed, 774 passed**: every
+  `tests/verify/test_verify_complete.py` test (`complete` was no test: `KeyError`), the
+  never-raises cases that now request `complete` (27), the CLI item lines (4) and doc coverage
+  (`complete` #1-#5). With the code, 3 failed: doc coverage until the section was written and
+  the `--help` catalog list, now pinned in full (it had been passing on a prefix since #46
+  appended `timely`).
+- `scripts/check.sh`: clean, **842 passed** (800 after #46).
+- Tests (`tests/verify/test_verify_complete.py`, new; the scenario lists S1-S3 with due 2099
+  and one witnessed `reported` postreg each): `test_complete__pass__all`,
+  `__pass__3_each_status_accounts_for_an_item` (excluded, blocked),
+  `__fail__1_items_is_an_array_of_objects_with_string_ids` (6), `__pass__1_kind_is_not_read`,
+  `__fail__2_item_ids_are_unique`, **`__fail__3_a_dropped_item`** (`chain=PASS complete=FAIL`,
+  still `fulfilled`), `__fail__3_each_item_has_a_counted_postreg_with_its_id_and_a_status` (6),
+  `__fail__3_a_postreg_that_does_not_count_accounts_for_nothing`,
+  `__pass__3_any_qualifying_postreg_accounts_for_an_item`,
+  `__pass__3_a_postreg_for_an_unlisted_item_is_shown_not_failed`, `__fail__4_due_is_parseable`
+  (3), **`__fail__5_each_item_is_accounted_for_on_time`** (late, no ceiling, invalid ceiling;
+  still `fulfilled`), `__pass__5_any_qualifying_postreg_on_time_accounts_for_an_item`,
+  **`__pass__4_items_under_a_prereg_without_due`** (missing, null; no ceilings needed),
+  `__fail__3_a_dropped_item_under_a_prereg_without_due`,
+  `__pass__all_a_prereg_without_items_is_not_examined`,
+  `__fail__empty_no_commitment_lists_items` (missing, null, `[]`),
+  `__fail__empty_a_rejected_preregistration_is_not_examined`. Never raises: `SIGNED_JUNK`
+  gains `items-repeat-and-junk` and `items-nul-id`, and the whole list (41 cases) now runs
+  with `complete` and `timely`. CLI: `test_verify_shows_each_items_status` (complete,
+  dropped item, late items), `test_verify_shows_a_postreg_for_an_unlisted_item`,
+  `test_verify_help_names_both_required_tests` (the full catalog).
+- CLI demonstrations (scratch dir, `cp7/witness_cli.py` for `--ceiling`; `prereg --target
+  "model m via provider p" --due … --items '[{"id": "R1", "kind": "run"}, {"id": "R2",
+  "kind": "run"}]'`; `postreg --fulfills … --item-id … --status … [--prev …] --ceiling`):
+  - **Dropped item** (only R1's postreg): `[FULFILLED] prereg sha-256:4c78c886…`, `postregs :
+    1`, `items : 2`, `✓ R1: reported`, `✗ R2: no counted postreg names it`, `✓ chain=PASS`,
+    `✗ complete=FAIL (1/1 commitment(s) failed)`, `asexec-verify/1 chain=PASS complete=FAIL
+    format=PASS selfsig=PASS`.
+  - **Complete claim** (R1 `reported`, R2 `excluded`, chained): `✓ R1: reported`, `✓ R2:
+    excluded`, `asexec-verify/1 chain=PASS complete=PASS format=PASS selfsig=PASS
+    timely=PASS`.
+  - **Late items** (`--due 2000-01-01T00:00:00Z`): `[FULFILLED]`, the two `is late` marks
+    (with `timely` requested), `✗ R1: reported, but not shown on time: its postreg is late`,
+    the same for R2, `asexec-verify/1 complete=FAIL format=PASS selfsig=PASS timely=FAIL`.
+  - **No due, no ceilings**, R1 `blocked` plus a postreg for `Z9`: `due : (none declared)`,
+    `✓ R1: blocked`, `✗ postreg sha-256:cfa32c49… names item 'Z9', which the prereg does not
+    list`, `asexec-verify/1 complete=PASS format=PASS selfsig=PASS`.
+- **`examples/adequacy-test`'s "dropped S2" under `complete`.** `run.py` itself is unchanged
+  and exits 0 (it is ported to the claim record at the release gate, ROADMAP). A scratch port
+  (`cp7/run_ported.py`: `--items` on the prereg, `--item-id`/`--status` on each postreg,
+  `complete` added to its tests) shows:
+  - As the example is today, with `--due 2099-01-01T00:00:00Z` and no ceilings, `complete`
+    fails **every** run, the baseline included: each item reads `✗ S1: reported, but not shown
+    on time: its postreg has no ceiling`. With a `due`, the deadline part needs a ceiling on
+    every postreg, so the ported example must add `--ceiling` (network) or drop `--due`.
+  - Without `--due` (`cp7/run_ported_nodue.py`): the baseline is `chain=PASS complete=PASS
+    content=PASS …`, and **dropping S2 reads `✓ S1: reported`, `✗ S2: no counted postreg names
+    it`, `✓ A1: reported`, `chain=PASS complete=FAIL`**, still `[FULFILLED]`: caught, where
+    today's run reports "missed: needs `items` and `complete`". The swapped plants are still
+    caught by `content` only, and the late plants still missed (needs `order`).
+- Nothing left behind: `git grep` for `timely`, `complete` and "planned" finds no claim that
+  either is unbuilt outside this file; *Not in this version* now names `signer` and `order`.
+  `ROADMAP.md:459,462` (`due` and `ceiling` TrustedTested by `timely` and `complete`) are now
+  true.
+
+**Observations (out of scope):**
+- **For the release-gate port of `examples/adequacy-test`:** with a `due`, every postreg needs
+  a ceiling for `complete` and `timely` to pass (see above). Its README's *Results* table and
+  its "missed: needs `items` and `complete`" label will change.
+- `--item-id` is not checked against the prereg's items at signing (#36's call), so a typo is
+  only seen at verify, as an unlisted item and a missing one.
+- An item id is compared exactly, as a string (`S2` ≠ `s2`); ids that differ only by Unicode
+  normalization are different ids.
