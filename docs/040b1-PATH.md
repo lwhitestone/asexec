@@ -547,7 +547,8 @@ PR push (`04dfe45`, run 44670856152): lint, build, test on 3.12, 3.13 and 3.14 p
     `docs/MULTIVERSION.md`, `docs/DEVELOPMENT.md` or `docs/FORMAT.md`, and no `#bdr`
     anchor, `_bdr` or `test_verify_bdr` anywhere. In `docs/040b1-PATH.md`, the decisions
     (D2, D3), the checklist item and checkpoint 1's notes keep `BDR` as history.
-- CI: see the PR.
+- CI on PR #51 at `c0b3d2d` (run 44674053256): lint, python-matrix, test (3.12, 3.13, 3.14,
+  each with the CLI smoke `verify --tests format,selfsig`) and build all pass.
 
 **Observations (out of scope):**
 - `examples/adequacy-test/README.md:53-60`: *Results on asexec 0.3.19* still shows `BDR`
