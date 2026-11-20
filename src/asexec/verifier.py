@@ -26,8 +26,8 @@ The verify code is a summary of a computation, not a credential. Real verificati
 Tests (the catalog - only verifiable claims, no self-declarations)
 --------------------------------------------------------------------
   - ``ceiling``    : a ceiling witness (Roughtime) signature verifies against a
-                     pinned key AND its nonce == ref(payload). Applies to
-                     manifests that carry a ceiling.
+                     pinned key AND its nonce == ref (of the body bytes). Applies
+                     to manifests that carry a ceiling.
   - ``chain``      : prev_hash chain integrity (one root, no gaps, no forks: a
                      single linear chain). Applies to
                      commitments that have counted postregs.
@@ -38,21 +38,25 @@ Tests (the catalog - only verifiable claims, no self-declarations)
   - ``floor``      : the drand freshness floor BLS-verifies. Applies to
                      manifests that carry an anchor.floor.
   - ``format``     : the file can be read: a JSON object (unique keys, nested at
-                     most 64 deep) with an object payload that has canonical
-                     bytes, a string payloadType and a signature whose pubkey and
-                     sig are hex, and its payloadType names a format this release
-                     reads (a ``FORMATS`` key). Applies to every manifest file.
-                     **Required in every run.**
+                     most 64 deep) with an object dsse holding a string
+                     payloadType and an array of signatures, and a payload that
+                     is strict base64 of a JSON object held to the same rules on
+                     its own; and its dsse.payloadType names a format this
+                     release reads (a ``FORMATS`` key). Applies to every manifest
+                     file. **Required in every run.**
   - ``keyconsist`` : each validly signed postreg that names a commitment's ref
                      has the key of a commitment with that ref. Applies to the
                      commitments ``verify_paths`` marks ``key_checked``.
-  - ``selfsig``    : the file is unchanged since its own key signed it: the
-                     signature over the PAE input verifies by pubkey, and keyid
-                     derives from pubkey. Applies to every manifest that passes
-                     ``format``. **Required in every run.**
+  - ``selfsig``    : the file is unchanged since its own key signed it: exactly
+                     one signature, its sig and the file's pubkey are hex, the
+                     signature over the PAE of the body bytes verifies by pubkey,
+                     and its keyid derives from pubkey. Applies to every manifest
+                     that passes ``format``. **Required in every run.**
 
 Only a file that passes ``format`` is examined by any other test, and every test reads it
-under the rules of the format its payloadType names (``FORMATS``), never another's.
+under the rules of the format its dsse.payloadType names (``FORMATS``), never another's. The
+body bytes are read exactly as stored: nothing is re-serialized, so ``ref`` and the
+signature are of the bytes the file holds.
 
 A requested test is ``PASS`` iff it holds everywhere it applies AND it applies
 somewhere; a requested test that applies **nowhere** is ``FAIL``
@@ -96,15 +100,17 @@ from typing import Any
 from pydantic import ValidationError
 
 from . import drand, hashing, keys, manifest
-from .canonical import signing_input
+from .canonical import b64decode, signing_input
 from .constants import FORMATS, VERIFY_CODE_VERSION
-from .errors import VerificationError
+from .errors import ManifestError, VerificationError
 from .models import (
     CeilingInput,
     DueInput,
     EnvelopeInput,
     FloorInput,
+    KeyInput,
     LinkInput,
+    SignatureInput,
     SubjectEntryInput,
     SubjectInput,
 )
@@ -205,7 +211,9 @@ REASON_FORMAT_PRE_V1 = (
 )
 
 # Recognized only to say why they fail: what asexec 0.2.0 to 0.3.x wrote, and a beta's
-# type (``X.Y.ZbN``). Any other payloadType that is not a FORMATS key reads as newer.
+# type (``X.Y.ZbN``). Any other payloadType that is not a FORMATS key reads as newer. Those
+# releases wrote it at the top level, with no dsse: a file laid out that way under that
+# type gets its reason too.
 _PRE_V1_PAYLOAD_TYPE = "application/vnd.asexec+json"
 _BETA_PAYLOAD_TYPE = re.compile(r"application/vnd\.asexec\.[0-9]+\.[0-9]+\.[0-9]+b[0-9]+\+json")
 
@@ -218,52 +226,76 @@ def _unknown_format_reason(payload_type: str) -> str:
     return REASON_FORMAT_NEWER
 
 
+def _claimed_keyid(mani: dict[str, Any]) -> Any:
+    """``dsse.signatures[0].keyid``, the keyid a file claims as its signer, or None. Nothing
+    has authenticated it until the file meets the selfsig conditions."""
+    signatures = mani["dsse"]["signatures"]
+    first = signatures[0] if signatures else None
+    return first.get("keyid") if isinstance(first, dict) else None
+
+
 def verify_format(mani: dict[str, Any]) -> dict[str, Any]:
     """``format`` for a file ``manifest.load`` has read as a JSON object (which checks the
-    rest of format #1: readable, unique keys, nesting): the format its payloadType names
-    (#3), then that format's frame and hex fields, and the ``payload_type``, ``ref`` and
-    ``keyid`` that a file that passes is known by.
+    rest of format #1: readable, unique keys, nesting): the format its dsse.payloadType
+    names (#3), then that format's frame (#1) and body (#2). A file that passes also gets
+    the ``payload_type``, ``ref`` and ``keyid`` it is known by, and the ``body_bytes`` and
+    ``body`` the other tests read.
 
     #3 comes first: a file of a format this release does not read is not held to this
-    format's frame, which a newer format may lay out differently."""
-    payload_type = mani.get("payloadType")
+    format's frame, which a newer format may lay out differently. Never raises."""
+    dsse = mani.get("dsse")
+    payload_type = dsse.get("payloadType") if isinstance(dsse, dict) else None
+    if dsse is None and mani.get("payloadType") == _PRE_V1_PAYLOAD_TYPE:  # 0.3.x's layout
+        return {"ok": False, "errors": [REASON_FORMAT_PRE_V1]}
     if isinstance(payload_type, str) and payload_type not in FORMATS:  # format #3
         return {"ok": False, "errors": [_unknown_format_reason(payload_type)]}
     try:
-        envelope = EnvelopeInput.model_validate(mani)  # format #1 (frame), #2 (hex)
+        envelope = EnvelopeInput.model_validate(mani)  # format #1 (frame), #2 (base64)
     except ValidationError as e:
         return {"ok": False, "errors": [f"malformed: {_describe(e)}"]}
-    try:  # format #1: payload has canonical bytes
-        ref = manifest.ref(envelope.payload, envelope.payloadType)
-    except Exception as e:  # e.g. a string holding a lone surrogate, which has no UTF-8 form
-        return {"ok": False, "errors": [f"malformed: {e}"]}
+    body_bytes = b64decode(envelope.dsse.payload)  # format #2: the model checked it decodes
+    try:
+        body = manifest.parse_body(body_bytes)  # format #2: the body's own JSON rules
+    except ManifestError as e:
+        return {"ok": False, "errors": [f"malformed: body: {e}"]}
     return {
         "ok": True,
         "errors": [],
-        "payload_type": envelope.payloadType,
-        "ref": ref,
-        "keyid": envelope.signature.keyid,
+        "payload_type": payload_type,
+        "ref": manifest.ref(body_bytes, payload_type),
+        "keyid": _claimed_keyid(mani),
+        "body_bytes": body_bytes,
+        "body": body,
     }
 
 
-def verify_selfsig(mani: dict[str, Any]) -> dict[str, Any]:
-    """``selfsig`` for a file that passed ``format``: the signature verifies over the PAE
-    input by ``pubkey`` (#1), and ``keyid`` derives from ``pubkey`` (#2), both under the
-    rules of the file's own format. Never raises."""
-    envelope = EnvelopeInput.model_validate(mani)
-    payload_type = envelope.payloadType
-    sigblock = envelope.signature
-    pub = bytes.fromhex(sigblock.pubkey)
-    sig = bytes.fromhex(sigblock.sig)
+def verify_selfsig(mani: dict[str, Any], body_bytes: bytes, payload_type: str) -> dict[str, Any]:
+    """``selfsig`` for a file that passed ``format``, with the ``body_bytes`` it stores: one
+    signature (#1), a hex ``pubkey`` and ``sig`` (#2), a signature over the PAE of the body
+    bytes by ``pubkey`` (#3), and a ``keyid`` that derives from ``pubkey`` (#4), under the
+    rules of the file's own format. ``signature_ok`` is #1-#3 and ``keyid_ok`` #4. Never
+    raises."""
+    signatures = mani["dsse"]["signatures"]
+    if len(signatures) != 1 or not isinstance(signatures[0], dict):  # selfsig #1
+        return {**_SELFSIG_FAILED}
+    try:
+        entry = SignatureInput.model_validate(signatures[0])  # selfsig #2: sig
+        key = KeyInput.model_validate(mani)  # selfsig #2: pubkey
+    except ValidationError:
+        return {**_SELFSIG_FAILED}
+    pub = bytes.fromhex(key.pubkey)
+    sig = bytes.fromhex(entry.sig)
     return {
         "examined": True,
-        "signature_ok": keys.verify(pub, signing_input(envelope.payload, payload_type), sig),
-        "keyid_ok": keys.keyid_for(pub, payload_type) == sigblock.keyid,
+        "signature_ok": keys.verify(pub, signing_input(body_bytes, payload_type), sig),  # #3
+        "keyid_ok": keys.keyid_for(pub, payload_type) == entry.keyid,  # selfsig #4
     }
 
 
 # A file that fails ``format``: ``selfsig`` does not examine it.
 _SELFSIG_NOT_EXAMINED = {"examined": False, "signature_ok": False, "keyid_ok": False}
+# A file that passes ``format`` and fails selfsig #1 or #2: nothing to check a signature with.
+_SELFSIG_FAILED = {"examined": True, "signature_ok": False, "keyid_ok": False}
 
 
 def _selfsig_ok(record: dict[str, Any]) -> bool:
@@ -298,13 +330,13 @@ def verify_floor(body: dict[str, Any]) -> dict[str, Any]:
 
 
 def verify_ceiling(
-    mani: dict[str, Any], servers: dict[str, dict[str, object]] | None = None
+    mani: dict[str, Any], ref: str, servers: dict[str, dict[str, object]] | None = None
 ) -> dict[str, Any]:
-    """Verify the envelope-level ceiling witness (if present).
+    """Verify the ceiling witness in the file's wrapper (if present).
 
     Two conditions: (1) the witness signature verifies against a pinned key,
-    and (2) the witness's nonce binds to THIS manifest (nonce == ref(payload)).
-    Called only for a manifest that passed ``format``. Delegates the
+    and (2) the witness's nonce binds to THIS manifest (nonce == ``ref``, the digest of
+    its body bytes). Called only for a manifest that passed ``format``. Delegates the
     binding, the pin lookup in ``servers`` (default: the pinned
     ``roughtime.SERVERS``) and the witness cryptography to the ``roughtime`` module.
     """
@@ -318,17 +350,25 @@ def verify_ceiling(
     from . import roughtime
 
     try:  # ceiling #2 binding, #3 pin lookup, #4 equality, #5 response
-        expected_nonce = manifest.ref(mani["payload"], mani["payloadType"])
-        return roughtime.verify_ceiling(parsed, expected_nonce, servers)
-    except Exception as e:  # an unsigned, attacker-shaped envelope field must not crash verify
+        return roughtime.verify_ceiling(parsed, ref, servers)
+    except Exception as e:  # an unsigned, attacker-shaped wrapper field must not crash verify
         return {"status": "invalid", "error": str(e)}
 
 
-def _resolve_inside(artifacts_dir: str, name: str) -> str | None:
+# A subject name that no path on this system can have (it holds a NUL, or a lone surrogate
+# the filesystem encoding can't encode): it names no artifact (content #4).
+_NO_SUCH_PATH = object()
+
+
+def _resolve_inside(artifacts_dir: str, name: str) -> Any:
     """Resolve a subject ``name`` under ``artifacts_dir``; None if it escapes
-    (``..``, an absolute name, or a symlink pointing outside)."""
+    (``..``, an absolute name, or a symlink pointing outside), ``_NO_SUCH_PATH`` if no path
+    can have it."""
     root = os.path.realpath(artifacts_dir)
-    path = os.path.realpath(os.path.join(root, name.rstrip("/")))
+    try:
+        path = os.path.realpath(os.path.join(root, name.rstrip("/")))
+    except ValueError:  # embedded NUL, or UnicodeEncodeError
+        return _NO_SUCH_PATH
     if path != root and not path.startswith(root + os.sep):
         return None
     return path
@@ -348,7 +388,7 @@ def _verify_subject_item(item: Any, alg: Any, artifacts_dir: str) -> dict[str, A
     path = _resolve_inside(artifacts_dir, name)
     if path is None:
         return {"name": name, "ok": False, "reason": "path resolves outside --artifacts"}
-    if not os.path.exists(path):
+    if path is _NO_SUCH_PATH or not os.path.exists(path):
         return {"name": name, "ok": False, "reason": "artifact not found"}
     try:
         actual = hashing.digest_path(path, alg)
@@ -417,13 +457,16 @@ def verify_paths(
         except Exception as e:  # unreadable / not JSON / duplicate keys / not an object
             mani = {}
             fmt = {"ok": False, "errors": [f"malformed: {e}"]}
-        body = mani.get("payload")
-        if not isinstance(body, dict):
-            body = {}
+        # Only a file that passes format has a body: the one its body bytes hold.
+        body_bytes, body = fmt.pop("body_bytes", None), fmt.pop("body", {})
         clean = fmt["ok"]
-        selfsig = verify_selfsig(mani) if clean else {**_SELFSIG_NOT_EXAMINED}
+        selfsig = (
+            verify_selfsig(mani, body_bytes, fmt["payload_type"])
+            if clean
+            else {**_SELFSIG_NOT_EXAMINED}
+        )
         floor = verify_floor(body) if clean else {"status": "absent"}
-        ceiling = verify_ceiling(mani, servers) if clean else {"status": "absent"}
+        ceiling = verify_ceiling(mani, fmt["ref"], servers) if clean else {"status": "absent"}
         content = (
             verify_content(body, artifacts_dir, fmt["payload_type"])
             if clean

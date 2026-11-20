@@ -11,11 +11,16 @@ from typing import Annotated, Any
 
 from pydantic import AfterValidator, PlainValidator, Strict
 
-from . import drand
+from . import canonical, drand
 
 
 def _fromhex_ok(value: str) -> str:
     bytes.fromhex(value)  # a ValueError here becomes a ValidationError
+    return value
+
+
+def _base64_ok(value: str) -> str:
+    canonical.b64decode(value)  # a ValueError here becomes a ValidationError
     return value
 
 
@@ -53,6 +58,11 @@ Hex = Annotated[str, AfterValidator(_fromhex_ok)]
 # Hex as this tool writes it: lowercase, no whitespace. The writer models use it, so the
 # tool never writes a spelling that an exact comparison with a digest would reject.
 LowerHex = Annotated[str, AfterValidator(_lower_hex)]
+
+# Strict base64 (format #2): the standard alphabet, padded, no whitespace, and the one
+# spelling of its bytes. Kept as the string as written; ``canonical.b64decode`` gives the bytes.
+# The writer models use it too: the only spelling the tool writes is the one verify reads.
+Base64 = Annotated[str, AfterValidator(_base64_ok)]
 
 # A drand chain hash the verifier pins (floor #2). ``drand.CHAINS`` is fixed at import.
 PinnedChain = Annotated[str, AfterValidator(_pinned_chain)]

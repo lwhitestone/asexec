@@ -4,23 +4,29 @@
 than ``manifest.build_*``. A schema change edits the bodies here and the builder's own
 tests; ``tests/verify/test_verify_builder_guard.py`` fails until the builder agrees.
 
-Signing reuses the library's ``signing_input``, so the signed bytes are the real ones, and
-writes the ``payloadType`` signing writes (pinned in ``tests/test_constants.py``), so a release
-commit that changes it changes these files with it. Nothing else of the writer is used, so
-nothing gates what can be signed.
+A file is a wrapper around a DSSE envelope: ``{"dsse": {"payloadType", "payload",
+"signatures": [{"keyid", "sig"}]}, "pubkey"}``, where ``dsse.payload`` is the base64 of the
+body bytes. Signing serializes a body as the writer does (``canonical_bytes``) and reuses the
+library's ``signing_input``, so the signed bytes are the real ones, and writes the
+``payloadType`` signing writes (pinned in ``tests/test_constants.py``), so a release commit
+that changes it changes these files with it. Any bytes can be signed (``sign_bytes``), and
+nothing else of the writer is used, so nothing gates what can be signed.
 """
 
 from __future__ import annotations
 
+import base64
 import copy
 import hashlib
+import json
+import re
 from typing import Any
 
 import nacl.signing
 
 from asexec import keys
 from asexec.canonical import canonical_bytes, pae, signing_input
-from asexec.constants import MANIFEST_PAYLOAD_TYPE
+from asexec.constants import FORMATS, MANIFEST_PAYLOAD_TYPE
 
 # The files a verify scenario writes under --artifacts, and their sha-256 digests
 # ("harness/" is the directory hash of hashing.py's v1 scheme).
@@ -58,9 +64,15 @@ def subject_entry(name: str) -> dict[str, Any]:
     return {"name": name, "digest": {"sha-256": DIGESTS[name]}}
 
 
-def ref(body: dict[str, Any]) -> str:
-    """``sha-256:`` + the hex sha-256 of the body's canonical bytes."""
-    return "sha-256:" + hashlib.sha256(canonical_bytes(body)).hexdigest()
+def body_bytes(body: dict[str, Any]) -> bytes:
+    """The bytes signing stores for ``body``: its canonical serialization."""
+    return canonical_bytes(body)
+
+
+def ref(body: dict[str, Any] | bytes) -> str:
+    """``sha-256:`` + the hex sha-256 of the body bytes (``body``'s, if it is a dict)."""
+    raw = body if isinstance(body, bytes) else body_bytes(body)
+    return "sha-256:" + hashlib.sha256(raw).hexdigest()
 
 
 # A valid prereg, and a valid postreg fulfilling it: a chain of one.
@@ -83,44 +95,65 @@ POSTREG = {
 }
 
 
-def sign(body: dict[str, Any], key: tuple[bytes, bytes] = TEST_KEY) -> dict[str, Any]:
-    """An envelope around ``body``, signed by ``key`` whatever the body holds."""
+def sign_bytes(raw: bytes, key: tuple[bytes, bytes] = TEST_KEY) -> dict[str, Any]:
+    """A file around the body bytes ``raw``, signed by ``key`` whatever they hold."""
     priv, pub = key
     return {
-        "payloadType": MANIFEST_PAYLOAD_TYPE,
-        "payload": copy.deepcopy(body),
-        "signature": {
-            "alg": "ed25519",
-            "keyid": keys.keyid_for(pub),
-            "pubkey": pub.hex(),
-            "sig": keys.sign(priv, signing_input(body)).hex(),
+        "dsse": {
+            "payloadType": MANIFEST_PAYLOAD_TYPE,
+            "payload": base64.b64encode(raw).decode("ascii"),
+            "signatures": [
+                {"keyid": keys.keyid_for(pub), "sig": keys.sign(priv, signing_input(raw)).hex()}
+            ],
         },
+        "pubkey": pub.hex(),
     }
+
+
+def sign(body: dict[str, Any], key: tuple[bytes, bytes] = TEST_KEY) -> dict[str, Any]:
+    """A file around ``body``, signed by ``key`` whatever the body holds."""
+    return sign_bytes(body_bytes(body), key)
 
 
 def sign_labelled(
     body: dict[str, Any], payload_type: str, key: tuple[bytes, bytes] = TEST_KEY
 ) -> dict[str, Any]:
-    """An envelope labelled ``payload_type`` whose signature is valid under this release's
-    PAE prefix with that type in it: what verify would accept if it fell back to its own
+    """A file labelled ``payload_type`` whose signature is valid under this release's PAE
+    version with that type in it: what verify would accept if it fell back to its own
     rules for a format it does not read."""
-    priv, pub = key
+    priv, _pub = key
     envelope = sign(body, key)
-    signed = pae(b"asexec-PAE/v1", payload_type.encode(), canonical_bytes(body))
-    envelope["payloadType"] = payload_type
-    envelope["signature"]["sig"] = keys.sign(priv, signed).hex()
+    version = FORMATS[MANIFEST_PAYLOAD_TYPE]["signing_pae_version"]
+    signed = pae(version, payload_type.encode(), body_bytes(body))
+    envelope["dsse"]["payloadType"] = payload_type
+    envelope["dsse"]["signatures"][0]["sig"] = keys.sign(priv, signed).hex()
     return envelope
 
 
-def resign(envelope: dict[str, Any], key: tuple[bytes, bytes] = TEST_KEY) -> dict[str, Any]:
-    """A copy of ``envelope`` whose payload is signed again, by ``key``."""
-    return {**copy.deepcopy(envelope), "signature": sign(envelope["payload"], key)["signature"]}
+def decoded(envelope: dict[str, Any]) -> bytes:
+    """The body bytes ``envelope["dsse"]["payload"]`` holds."""
+    return base64.b64decode(envelope["dsse"]["payload"], validate=True)
+
+
+def body_of(envelope: dict[str, Any]) -> dict[str, Any]:
+    """The body ``envelope`` holds, decoded."""
+    return json.loads(decoded(envelope))
+
+
+def store(envelope: dict[str, Any], raw: bytes) -> None:
+    """In place: make ``raw`` the body bytes ``envelope`` holds. Its signature is kept."""
+    envelope["dsse"]["payload"] = base64.b64encode(raw).decode("ascii")
+
+
+def _segments(path: str) -> list[str | int]:
+    """``a.b[0].c`` or ``a.b.0.c`` -> ``["a", "b", 0, "c"]``."""
+    return [int(k) if k.isdigit() else k for k in re.sub(r"\[(\d+)\]", r".\1", path).split(".")]
 
 
 def set_path(obj: Any, path: str, value: Any) -> None:
-    """In place: set the dotted ``path`` (a numeric segment indexes an array), creating
-    missing objects on the way."""
-    *parents, last = [int(k) if k.isdigit() else k for k in path.split(".")]
+    """In place: set the dotted ``path`` (``[N]`` or a numeric segment indexes an array),
+    creating missing objects on the way."""
+    *parents, last = _segments(path)
     for key in parents:
         obj = obj[key] if isinstance(key, int) else obj.setdefault(key, {})
     obj[last] = value
@@ -128,10 +161,13 @@ def set_path(obj: Any, path: str, value: Any) -> None:
 
 def del_path(obj: Any, path: str) -> None:
     """In place: remove the dotted ``path`` if it is there."""
-    *parents, last = [int(k) if k.isdigit() else k for k in path.split(".")]
+    *parents, last = _segments(path)
     for key in parents:
         obj = obj[key]
-    obj.pop(last, None)
+    if isinstance(last, int):
+        del obj[last]
+    else:
+        obj.pop(last, None)
 
 
 def with_field(data: dict[str, Any], path: str, value: Any) -> dict[str, Any]:
@@ -146,6 +182,9 @@ def without_field(data: dict[str, Any], path: str) -> dict[str, Any]:
     return out
 
 
-def tamper_body(envelope: dict[str, Any], path: str, value: Any) -> dict[str, Any]:
-    """A copy of ``envelope`` with ``payload.<path>`` changed and the old signature kept."""
-    return with_field(envelope, f"payload.{path}", value)
+def malformed(body: dict[str, Any]) -> dict[str, Any]:
+    """A file around ``body``, signed, that is malformed all the same: its
+    ``dsse.signatures`` is not an array (format #1), so no test reads the body."""
+    envelope = sign(body)
+    envelope["dsse"]["signatures"] = envelope["dsse"]["signatures"][0]
+    return envelope

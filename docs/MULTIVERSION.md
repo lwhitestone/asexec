@@ -11,11 +11,10 @@ order to keep that promise.
 
 **Status: partly built.** Step 1 of the [Plan](#plan) is built except its frozen `0.4.0`
 manifest: the verifier selects a file's rules by its `payloadType` from a `FORMATS` table in
-[`constants.py`](../src/asexec/constants.py), which has one entry, and an unknown format
-fails `format`. The selector reads the top-level `payloadType` until the DSSE switch moves
-it into `dsse`. A second entry, `--code-version` and withdrawal are not built. The promise
-costs nothing until the first format change after `0.4.0`, and the rest of this work has to
-land before that change does.
+[`constants.py`](../src/asexec/constants.py), which has one entry, and an unknown format fails
+`format`. The selector reads `dsse.payloadType`. A second entry, `--code-version` and
+withdrawal are not built. The promise costs nothing until the first format change after
+`0.4.0`, and the rest of this work has to land before that change does.
 
 ## Goal
 
@@ -50,7 +49,7 @@ The other candidates don't work:
 |---|---|
 | PAE prefix | It becomes the fixed `DSSEv1`, which standard tooling requires. asexec can no longer version it, so a `/vN` bump stops being available at `0.4.0`. |
 | `predicateType` | It's inside the payload, so the verifier would have to decode the body before knowing how to read it. |
-| `signature.alg` | It's unsigned today, and the planned `0.4.0` `signatures` entries don't have it at all. |
+| `signature.alg` | It was unsigned, and the DSSE `signatures` entries don't have it at all. |
 
 Each `payloadType` value then fixes all the format rules: PAE prefix, hash, signature
 algorithm and body schema. There are no separate per-identifier versions that could combine
@@ -66,7 +65,7 @@ FORMATS: dict[str, dict] = {
     MANIFEST_PAYLOAD_TYPE: {  # "application/vnd.asexec.v1+json"
         "digest_ref_prefix": "sha-256:",
         "signing_key_alg": "ed25519",
-        "signing_pae_version": b"asexec-PAE/v1",  # DSSEv1 from the DSSE switch
+        "signing_pae_version": b"DSSEv1",
         "subject_default_hash_alg": "sha-256",
     },
 }
@@ -100,11 +99,11 @@ selector. The per-format ones are now fields of a `FORMATS` entry.
 
 | Identifier | Under multi-version support |
 |---|---|
-| `SIGNING_PAE_VERSION` | Built: the entry's `signing_pae_version`. Fixed to `DSSEv1` from `0.4.0`. |
+| `SIGNING_PAE_VERSION` | Built: the entry's `signing_pae_version`, now `DSSEv1`, which DSSE fixes. |
 | `MANIFEST_PAYLOAD_TYPE` | Built: the selector, and the key of the entry signing uses. Signing uses the newest value. |
 | `DIGEST_REF_PREFIX` | Built: the entry's `digest_ref_prefix`. A format's refs and keyids must all use its prefix. |
 | `SUBJECT_DEFAULT_HASH_ALG` | Built, split in two: the entry's `subject_default_hash_alg` is the verify fallback and never changes, and `SUBJECT_DEFAULT_HASH_ALG` stays as the signing default, which can, because signing always writes `hash_alg`. |
-| `SIGNING_KEY_ALG` | Built: the entry's `signing_key_alg`, which avoids selecting an algorithm from an unsigned field. Verify does not read `signature.alg`, and ed25519 is the only algorithm it checks. Existing key files keep working only if the format still uses their algorithm, so signing with a new algorithm needs a new key. |
+| `SIGNING_KEY_ALG` | Built: the entry's `signing_key_alg`, which avoids selecting an algorithm from an unsigned field. A manifest names no algorithm, and ed25519 is the only algorithm verify checks. Existing key files keep working only if the format still uses their algorithm, so signing with a new algorithm needs a new key. |
 | `VERIFY_CODE_VERSION` | Independent of the manifest format. See below. |
 | `IDENTITY_WELL_KNOWN_PATH` | Not manifest format. Fetch the new path, then fall back to the old one. |
 | `MANIFEST_PREDICATE_TYPE`, `IDENTITY_DOCUMENT_VERSION` | Written to new output only. A future test of these fields would check them per format. |
@@ -154,9 +153,9 @@ it needs a release note.
 ## Plan
 
 1. **In `0.4.0`:** ship `payloadType` as the selector, with one `FORMATS` entry and the
-   unknown-format failure (built). Add the first frozen `0.4.0` manifest (not yet: the DSSE
-   switch regenerates the frozen manifests). Doing this with the DSSE switch means `0.4.0`
-   verifiers already reject newer formats clearly.
+   unknown-format failure (built). Add the first frozen `0.4.0` manifest (not yet: format
+   changes before `0.4.0` still regenerate the frozen vectors). Doing this with the DSSE switch
+   means `0.4.0` verifiers already reject newer formats clearly.
 2. **Before the first later format change:** add the second entry and its frozen manifest.
 3. **Before the first grammar bump after `0.4.0`:** add `--code-version`.
 4. **When first needed:** add withdrawal support.

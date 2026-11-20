@@ -17,15 +17,15 @@ IDENTITY_DOCUMENT_VERSION = 1
 # Where a domain publishes its identity document.
 IDENTITY_WELL_KNOWN_PATH = ".well-known/asexec.json"
 
-# Media type of the signed payload (an asexec manifest body), and the format signing writes:
-# the key of its ``FORMATS`` entry. Format N is ``vN``, and goes with
+# Media type of the signed payload (an asexec manifest body), written to ``dsse.payloadType``,
+# and the format signing writes: the key of its ``FORMATS`` entry. Format N is ``vN``, and goes with
 # ``MANIFEST_PREDICATE_TYPE`` ``/vN``. ``scripts/release.sh`` rewrites this literal in each
 # release commit (a beta writes its own type); the entry under development is keyed by this
 # name, so its key moves with it.
 MANIFEST_PAYLOAD_TYPE = "application/vnd.asexec.v1+json"
 
 # The rules of each format verify reads, keyed by ``payloadType``. A file is read only under
-# the entry its own ``payloadType`` names, never another; one that names none fails
+# the entry its own ``dsse.payloadType`` names, never another; one that names none fails
 # ``format``. Signing uses the newest entry, ``MANIFEST_PAYLOAD_TYPE``'s.
 # Only the entry under development, the one no release has shipped yet, is keyed by the name
 # ``MANIFEST_PAYLOAD_TYPE``: until 0.4.0 that is the one entry, and each beta's release commit
@@ -37,11 +37,13 @@ FORMATS: dict[str, dict] = {
     MANIFEST_PAYLOAD_TYPE: {
         # Starts every ``ref`` and ``keyid``: ``sha-256:<hex>``. It names the hash behind them.
         "digest_ref_prefix": "sha-256:",
-        # The signature algorithm named in key files, signature blocks and identity documents.
+        # The signature algorithm of this format, named in key files and identity documents.
+        # A manifest names none (a DSSE signature entry is keyid and sig): it is the format's.
         "signing_key_alg": "ed25519",
-        # First field of the PAE signing input. It ties a signature to this format, so one
-        # made for another format can't pass as ours. Standard DSSE uses "DSSEv1" here.
-        "signing_pae_version": b"asexec-PAE/v1",
+        # First field of the PAE signing input: DSSE's own, which standard DSSE tooling
+        # requires, so asexec does not version it. The payloadType beside it in the PAE is
+        # what ties a signature to this format.
+        "signing_pae_version": b"DSSEv1",
         # The algorithm ``content`` reads a subject with when the manifest names none.
         "subject_default_hash_alg": "sha-256",
     },

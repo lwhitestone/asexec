@@ -5,7 +5,7 @@ import json
 import pytest
 
 from asexec import hashing, keys
-from asexec.canonical import canonical_bytes, pae, signing_input
+from asexec.canonical import b64decode, b64encode, canonical_bytes, pae, signing_input
 from asexec.errors import HashAlgError
 
 
@@ -22,11 +22,26 @@ def test_canonical_compact_utf8():
 def test_pae_is_unambiguous():
     # length-prefixing prevents "abc"+"" from colliding with "ab"+"c"
     assert pae(b"v", b"t", b"abc") != pae(b"v", b"t", b"ab") + b"c"
-    assert pae(b"asexec-PAE/v1", b"t", b"{}") == b"asexec-PAE/v1 1 t 2 {}"
+    assert pae(b"DSSEv1", b"t", b"{}") == b"DSSEv1 1 t 2 {}"
 
 
-def test_signing_input_changes_with_payload():
-    assert signing_input({"a": 1}) != signing_input({"a": 2})
+def test_signing_input_changes_with_the_body_bytes():
+    assert signing_input(b'{"a":1}') != signing_input(b'{"a":2}')
+    assert signing_input(b'{"a":1}') != signing_input(b'{"a": 1}')  # the bytes, not the JSON
+
+
+@pytest.mark.parametrize("data", [b"", b"A", b"AB", b"ABC", bytes(range(256))])
+def test_strict_base64_round_trips(data):
+    assert b64decode(b64encode(data)) == data
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["QQ", "QQ=", "QQ===", "QR==", "QQ==\n", "Q Q==", "-_8=", "_w==", "QQ==QQ==", "é", "Q\x00=="],
+)
+def test_strict_base64_has_one_spelling_per_byte_string(text):
+    with pytest.raises(ValueError):
+        b64decode(text)
 
 
 def test_hash_bytes_and_file(tmp_path):

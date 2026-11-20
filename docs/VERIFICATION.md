@@ -11,32 +11,55 @@ asexec verify <manifest|dir>... --tests <name>[,<name>...] [--artifacts <dir>]
 
 ## Conventions
 
-**Property paths.** A manifest file is an envelope with four top-level members:
-`payloadType` (its format), `payload` (the signed body), `signature`, and optionally
-`ceiling`. Properties are written as dotted paths from the envelope root, e.g.
-`payload.anchor.floor.round`, `signature.keyid`, `ceiling.nonce`. `[]` denotes array
-elements: `payload.subject[].name`.
+**Property paths.** A manifest file is a JSON object: an asexec wrapper around a standard
+[DSSE](https://github.com/secure-systems-lab/dsse) envelope. This format defines three
+top-level members: `dsse`, the envelope, which holds `dsse.payloadType` (the format),
+`dsse.payload` (the base64 of the signed body bytes) and `dsse.signatures` (a list of
+`{keyid, sig}`); `pubkey`, the signing key; and optionally `ceiling`. The **body bytes** are
+what `dsse.payload` decodes to, and the **body** is the JSON object they hold: the signed
+claim. Properties are written as dotted paths of two kinds:
+- `body.<path>` is inside the body, the decoded `dsse.payload`: `body.phase`,
+  `body.anchor.floor.round`.
+- Any other path is from the file's root, outside the body: `dsse.payloadType`,
+  `dsse.signatures[0].keyid`, `pubkey`, `ceiling.nonce`. None of these is in the body. Of
+  them, only `dsse.payloadType`, which the PAE signing input holds, is covered by the
+  signature.
 
-**Formats.** A file's `payloadType` names its format, and every test reads the file under
-that format's rules only, never another format's. This release reads one format,
+`[]` denotes array elements (`body.subject[].name`), and `[0]` the first.
+
+**Formats.** A file's `dsse.payloadType` names its format, and every test reads the file
+under that format's rules only, never another format's. This release reads one format,
 `application/vnd.asexec.v1+json`, and this document gives its rules: the PAE signing input
-starts `asexec-PAE/v1`, `ref` and `keyid` start `sha-256:`, and a subject with no
-`payload.hash_alg` is read as `sha-256`. A file whose `payloadType` names any other format
-fails [`format`](#format) #3.
+is DSSE's, `DSSEv1 SP len(type) SP type SP len(body) SP body` over `dsse.payloadType` and
+the body bytes; `ref` and `keyid` start `sha-256:`; and a subject with no `body.hash_alg` is
+read as `sha-256`. A file whose `dsse.payloadType` names any other format fails
+[`format`](#format) #3.
 
-**Phases.** A manifest's phase is its `payload.phase`. A *prereg* is a manifest with
-`payload.phase == "prereg"`; a *postreg* has `payload.phase == "postreg"`. `ref(m)` is
-`sha-256:<hex>` over the canonical bytes of `m.payload`.
+**Phases.** A manifest's phase is its `body.phase`. A *prereg* is a manifest with
+`body.phase == "prereg"`; a *postreg* has `body.phase == "postreg"`. `ref(m)` is
+`sha-256:<hex>` of the sha-256 of `m`'s body bytes, exactly as stored. Nothing re-serializes
+them: the signature and `ref` are of the same bytes, so the same JSON value spelled another
+way (other spacing, other key order) is another body, with another `ref`.
 
 **Hex.** A value required to be hex is a string that `bytes.fromhex` accepts: an even number
 of hex digits in either case, with ASCII whitespace allowed around and between bytes.
 Content #6 compares the bytes a digest's hex decodes to, so any such spelling matches.
 Ceiling #2 and floor #4 compare exactly against the lowercase hex of the digest.
 
+**Base64.** A value required to be strict base64 is a string in the standard alphabet
+(`A`-`Z`, `a`-`z`, `0`-`9`, `+`, `/`), padded with `=` to a multiple of 4 characters, with no
+whitespace or other character, and in the one spelling that base64 encoding gives its bytes:
+no unused bit of the last character is set. So each byte string has exactly one spelling.
+
 **JSON.** Valid JSON is what Python's `json.load` accepts (so `NaN` and `Infinity` are
 allowed), nested at most 64 deep: each array or object adds a level, and the outermost
 object is level 1. A deeper file is malformed, so every supported Python version reads a
-file the same way.
+file the same way. The body is held to the same rules on its own: its bytes are UTF-8 JSON
+text (no byte order mark), and its depth is counted from its own outermost object, level 1,
+whatever depth the file holds it at (in the file it is a string). A lone surrogate escape,
+such as `"\ud800"`, is valid JSON: the body bytes are read as stored, so a body may hold one.
+It is read as the string it spells, which equals no `ref` or `keyid`, parses as no time
+and names no file, and the report shows it escaped, as `\ud800`.
 
 **Result.** Each requested test yields exactly one of `PASS` / `FAIL`. There is no third
 value and no error state. Malformed input is never an exception: it is a failure of the
@@ -56,22 +79,25 @@ in the README's [Exit status](../README.md#exit-status).
   commitment exists.
 - A property is **absent** iff its key is missing or its value is `null`. Any other value,
   including `{}`, `[]`, `""`, `false` and `0`, is present. A property whose path runs
-  through a present non-object (e.g. `payload.anchor` is `[]`) is present, and malformed.
+  through a present non-object (e.g. `body.anchor` is `[]`) is present, and malformed.
 - (\*) A test is **empty** if no provided manifest or commitment has the properties it
   examines. An empty test has nothing to examine and is judged `FAIL`. Each test's *When
   empty* line gives the exact condition and the reason the report shows. A manifest or
   commitment that lacks the examined properties is not examined and cannot fail the test;
   it also does not count toward passing.
 - Verification is offline.
-- A file is **malformed** if it cannot be read, is not a JSON object, nests more than 64
-  deep, contains a duplicate JSON key at any level, lacks an object `payload`, a string
-  `payloadType` or an object `signature`, has a `payload` with no canonical bytes (a string
-  in it, key or value, holds an unpaired surrogate escape such as `"\ud800"`, which has no
-  UTF-8 encoding), or its `signature.pubkey` and `signature.sig` are not both hex
-  ([`format`](#format) #1 and #2). A file is of an **unknown format** if its `payloadType`
-  is a string that names no format this release reads ([`format`](#format) #3). A readable
-  JSON object with such a `payloadType` is judged by #3 instead of the rest of #1 and #2,
-  so it is of an unknown format and never malformed, whatever else it holds.
+- A file is **malformed** if verify cannot read it as a manifest: it cannot be read, is not
+  a JSON object, nests more than 64 deep, contains a duplicate JSON key at any level, or
+  lacks the frame. The frame is an object `dsse` holding a string `dsse.payloadType`, an
+  array `dsse.signatures`, and a `dsse.payload` that is strict base64 of body bytes that
+  are the UTF-8 JSON text of an object, nested at most 64 deep, with no duplicate key
+  ([`format`](#format) #1 and #2). Nothing else makes a file malformed. A missing or
+  non-hex `pubkey` or `sig`, a missing `keyid`, and other than exactly one signature are
+  judged by [`selfsig`](#selfsig). A file is of an **unknown format** if its
+  `dsse.payloadType` is a string that names no format this release reads
+  ([`format`](#format) #3). A readable JSON object with such a `dsse.payloadType` is judged
+  by #3 instead of the rest of #1 and #2, so it is of an unknown format and never
+  malformed, whatever else it holds.
 - A file that is malformed or of an unknown format fails [`format`](#format), and no other
   test examines it, `selfsig` included. It takes no part in any commitment: as a prereg it
   is no commitment, and as a postreg it is neither counted nor rejected (see
@@ -85,10 +111,10 @@ report's wording may change, except for the reasons this document lists.
 
 | Block | Printed | Shows |
 |---|---|---|
-| `=== manifests ===` | always | One line per file: `✓` if it passes `format` and meets `selfsig`'s conditions (else `✗`), the path, `payload.phase` and `signature.keyid`. Indented beneath: why a file fails `format` (`format: malformed: …`, or the [reason](#format) for an unknown format), and one line each for a floor, a ceiling and content hashes when the manifest has them. |
+| `=== manifests ===` | always | One line per file: `✓` if it passes `format` and meets `selfsig`'s conditions (else `✗`), the path, `body.phase` and `dsse.signatures[0].keyid` (`None` for a file that fails `format`, whose body is not read). Indented beneath: why a file fails `format` (`format: malformed: …`, or the [reason](#format) for an unknown format), and one line each for a floor, a ceiling and content hashes when the manifest has them. |
 | `=== commitments ===` | always | One entry per [commitment](#matching-postregs-to-commitments) (a validly signed prereg's `ref` and signer): its [state](#commitment-states), `ref`, signer keyid, `due`, the number of counted postregs, a chain problem if any, and each rejected postreg with its reason. |
-| `=== rejected pre-registrations ===` | if any | Each [rejected pre-registration](#matching-postregs-to-commitments) (a prereg that passes `format` but fails a `selfsig` condition, so is no commitment): its `ref` and its reason, `invalid signature`; the `signature.keyid` it claims, which nothing authenticated; and each postreg rejected under it, with the reason `the pre-registration's signature is invalid`. It has no state. |
-| `=== notarization-only … ===` | if any | Each [notarization-only](#matching-postregs-to-commitments) postreg: one whose `payload.fulfills` matches no provided prereg. |
+| `=== rejected pre-registrations ===` | if any | Each [rejected pre-registration](#matching-postregs-to-commitments) (a prereg that passes `format` but fails a `selfsig` condition, so is no commitment): its `ref` and its reason, `invalid signature`; the `dsse.signatures[0].keyid` it claims, which nothing authenticated; and each postreg rejected under it, with the reason `the pre-registration's signature is invalid`. It has no state. |
+| `=== notarization-only … ===` | if any | Each [notarization-only](#matching-postregs-to-commitments) postreg: one whose `body.fulfills` matches no provided prereg. |
 | `=== tests ===` | always | One line per requested test: its result and a short reason. |
 | `=== ceiling trust … ===` | if a ceiling verified | Which witness you are trusting, and for what time. |
 | code | always | The [code](#conventions). |
@@ -104,13 +130,13 @@ and still exit `0`.
 ```console
 $ asexec verify prereg.json postreg-1.json postreg-2.json --tests format,selfsig,chain,keyconsist
 === manifests ===
-✓ prereg.json  [prereg]  keyid=sha-256:7bc19c1d…
-✓ postreg-1.json  [postreg]  keyid=sha-256:7bc19c1d…
-✓ postreg-2.json  [postreg]  keyid=sha-256:7bc19c1d…
+✓ prereg.json  [prereg]  keyid=sha-256:bc562700…
+✓ postreg-1.json  [postreg]  keyid=sha-256:bc562700…
+✓ postreg-2.json  [postreg]  keyid=sha-256:bc562700…
 
 === commitments ===
   [FULFILLED] prereg sha-256:b17107d0…
-    signer       : sha-256:7bc19c1d…
+    signer       : sha-256:bc562700…
     due          : (none declared)
     postregs     : 2
 
@@ -128,13 +154,13 @@ Checked at 2026-12-31T23:59:59Z
 
 | Test | Examines (\*) | Passes when all |
 |---|---|---|
-| [`ceiling`](#ceiling) | • `ceiling.ceiling_type`<br>• `ceiling.nonce`<br>• `ceiling.witness_id`<br>• `ceiling.pubkey`<br>• `ceiling.response`<br>• `payload` | 1. `ceiling.ceiling_type` is `roughtime`<br>2. `ceiling.nonce` equals `ref(payload)`<br>3. `ceiling.witness_id` has a pinned key<br>4. `ceiling.pubkey`, if present, equals the pinned key<br>5. `ceiling.response` verifies against the pinned key |
-| [`chain`](#chain) | • `payload.phase`<br>• `payload.fulfills`<br>• `payload.prev_hash`<br>• `signature.pubkey`<br>• `signature.sig`<br>• `signature.keyid` | 1. exactly one counted postreg has no `payload.prev_hash`<br>2. every other `payload.prev_hash` is the `ref` of a counted postreg<br>3. no `ref` is the `payload.prev_hash` of more than one counted postreg |
-| [`content`](#content) | • `payload.subject`<br>• `payload.subject[].name`<br>• `payload.subject[].digest`<br>• `payload.hash_alg`<br>• `payloadType`<br>• `--artifacts` | 1. `payload.subject` is a non-empty array of well-formed entries<br>2. `payload.hash_alg` is available<br>3. `name` resolves inside `--artifacts`<br>4. the artifact exists<br>5. the artifact is readable<br>6. recomputed digest equals `digest[hash_alg]` |
-| [`floor`](#floor) | • `payload.anchor.floor.floor_type`<br>• `payload.anchor.floor.chain_hash`<br>• `payload.anchor.floor.round`<br>• `payload.anchor.floor.signature`<br>• `payload.anchor.floor.randomness` | 1. `floor_type` is `drand`<br>2. `chain_hash` is pinned<br>3. `round` is an integer and `signature` is hex<br>4. `randomness`, if present, equals `sha256(signature)`<br>5. `signature` BLS-verifies for `round` under the pinned key |
-| [`format`](#format) | • the file<br>• `payloadType`<br>• `payload`<br>• `signature`<br>• `signature.pubkey`<br>• `signature.sig` | 1. file is a well-formed JSON envelope<br>2. `signature.pubkey` and `signature.sig` are hex<br>3. `payloadType` names a format this release reads |
-| [`keyconsist`](#keyconsist) | • `payload.phase`<br>• `payload.fulfills`<br>• `signature.pubkey`<br>• `signature.sig`<br>• `signature.keyid` | 1. every validly signed postreg naming the commitment's `ref` has the `signature.keyid` of a commitment with that `ref` |
-| [`selfsig`](#selfsig) | • `payloadType`<br>• `payload`<br>• `signature.pubkey`<br>• `signature.sig`<br>• `signature.keyid` | 1. `signature.sig` verifies over `payload` by `signature.pubkey`<br>2. `signature.keyid` derives from `signature.pubkey` |
+| [`ceiling`](#ceiling) | • `ceiling.ceiling_type`<br>• `ceiling.nonce`<br>• `ceiling.witness_id`<br>• `ceiling.pubkey`<br>• `ceiling.response`<br>• `dsse.payload` | 1. `ceiling.ceiling_type` is `roughtime`<br>2. `ceiling.nonce` equals `ref`<br>3. `ceiling.witness_id` has a pinned key<br>4. `ceiling.pubkey`, if present, equals the pinned key<br>5. `ceiling.response` verifies against the pinned key |
+| [`chain`](#chain) | • `body.phase`<br>• `body.fulfills`<br>• `body.prev_hash`<br>• `pubkey`<br>• `dsse.signatures`<br>• `dsse.signatures[0].sig`<br>• `dsse.signatures[0].keyid` | 1. exactly one counted postreg has no `body.prev_hash`<br>2. every other `body.prev_hash` is the `ref` of a counted postreg<br>3. no `ref` is the `body.prev_hash` of more than one counted postreg |
+| [`content`](#content) | • `body.subject`<br>• `body.subject[].name`<br>• `body.subject[].digest`<br>• `body.hash_alg`<br>• `dsse.payloadType`<br>• `--artifacts` | 1. `body.subject` is a non-empty array of well-formed entries<br>2. `body.hash_alg` is available<br>3. `name` resolves inside `--artifacts`<br>4. the artifact exists<br>5. the artifact is readable<br>6. recomputed digest equals `digest[hash_alg]` |
+| [`floor`](#floor) | • `body.anchor.floor.floor_type`<br>• `body.anchor.floor.chain_hash`<br>• `body.anchor.floor.round`<br>• `body.anchor.floor.signature`<br>• `body.anchor.floor.randomness` | 1. `floor_type` is `drand`<br>2. `chain_hash` is pinned<br>3. `round` is an integer and `signature` is hex<br>4. `randomness`, if present, equals `sha256(signature)`<br>5. `signature` BLS-verifies for `round` under the pinned key |
+| [`format`](#format) | • the file<br>• `dsse`<br>• `dsse.payloadType`<br>• `dsse.signatures`<br>• `dsse.payload` | 1. file is a well-formed JSON object with the `dsse` frame<br>2. `dsse.payload` is strict base64 of a well-formed JSON object<br>3. `dsse.payloadType` names a format this release reads |
+| [`keyconsist`](#keyconsist) | • `body.phase`<br>• `body.fulfills`<br>• `pubkey`<br>• `dsse.signatures`<br>• `dsse.signatures[0].sig`<br>• `dsse.signatures[0].keyid` | 1. every validly signed postreg naming the commitment's `ref` has the `dsse.signatures[0].keyid` of a commitment with that `ref` |
+| [`selfsig`](#selfsig) | • `dsse.payloadType`<br>• `dsse.payload`<br>• `dsse.signatures`<br>• `dsse.signatures[0].sig`<br>• `dsse.signatures[0].keyid`<br>• `pubkey` | 1. `dsse.signatures` has exactly one entry, an object<br>2. `pubkey` and `dsse.signatures[0].sig` are hex<br>3. `dsse.signatures[0].sig` verifies over the PAE of the body bytes by `pubkey`<br>4. `dsse.signatures[0].keyid` derives from `pubkey` |
 
 Condition numbers match each test's *Passes when all* list below; the table shortens them.
 `format` and `selfsig` are required in every run. `selfsig` examines only files that pass
@@ -157,11 +183,11 @@ Roughtime witness: the manifest was created no later than time T.
 - `ceiling.witness_id`
 - `ceiling.pubkey`
 - `ceiling.response`
-- `payload`
+- `dsse.payload` (the body bytes, whose digest is `ref`)
 
 **Passes when all**
 1. `ceiling.ceiling_type == "roughtime"`.
-2. `ceiling.nonce` equals the hex of `ref(payload)`.
+2. `ceiling.nonce` equals the hex of `ref`, the sha-256 of the body bytes.
 3. `ceiling.witness_id` names a witness whose long-term key is pinned in the verifier. The
    key is never taken from the file.
 4. If `ceiling.pubkey` is present, it equals the pinned long-term key.
@@ -190,11 +216,11 @@ $ asexec verify prereg.json --tests format,selfsig,ceiling
 
 ```jsonc
 {
-  "payload": { … },                              // ref(payload) = sha-256:b17107d0…
-  "signature": { … },
+  "dsse": { … },                                 // ref = sha-256:b17107d0…
+  "pubkey": "91230c4e…",
   "ceiling": {
     "ceiling_type": "roughtime",
-    "nonce": "b17107d0…",                        // = ref(payload), without the prefix
+    "nonce": "b17107d0…",                        // = ref, without the prefix
     "witness_id": "int08h-Roughtime",
     "pubkey": "016e6e02…",                       // the pinned int08h key
     "response": "06000000400000006000…"
@@ -227,20 +253,22 @@ A postreg is **counted** for a prereg if it meets the
 [conditions for counting](#matching-postregs-to-commitments).
 
 **Examines (\*)**
-- `payload.phase`
-- `payload.fulfills`
-- `payload.prev_hash`
-- `signature.pubkey`
-- `signature.sig`
-- `signature.keyid`
+- `body.phase`
+- `body.fulfills`
+- `body.prev_hash`
+- `pubkey`
+- `dsse.signatures`
+- `dsse.signatures[0].sig`
+- `dsse.signatures[0].keyid`
 
-(The three `signature.*` properties decide only whether a postreg is counted.)
+(`pubkey` and the `dsse.signatures` properties, the [`selfsig`](#selfsig) conditions,
+decide only whether a postreg is counted.)
 
 **Passes when all** (for each prereg that has at least one counted postreg)
-1. Exactly one counted postreg has no `payload.prev_hash`.
-2. Every other counted postreg's `payload.prev_hash` equals the `ref` of a counted postreg
+1. Exactly one counted postreg has no `body.prev_hash`.
+2. Every other counted postreg's `body.prev_hash` equals the `ref` of a counted postreg
    of the same prereg (no gaps).
-3. No `ref` appears as `payload.prev_hash` of more than one counted postreg (no forks).
+3. No `ref` appears as `body.prev_hash` of more than one counted postreg (no forks).
 
 **When empty:** if no commitment has a counted postreg, the test has nothing to examine and
 is `FAIL`, with the reason `requested but no commitment has counted postregs to
@@ -256,20 +284,18 @@ detectable.
 $ asexec verify prereg.json postreg-1.json postreg-2.json --tests format,selfsig,chain
 ```
 
-The three files (unexamined fields elided; all three are signed by the same key):
+The three files' bodies (unexamined fields elided). All three are signed by the same key,
+so each has `dsse.signatures[0].keyid` `sha-256:bc562700…`:
 
 ```jsonc
 // prereg.json: ref = sha-256:b17107d0…
-{ "payload": { "phase": "prereg", … }, "signature": { "keyid": "sha-256:7bc19c1d…", … } }
+{ "phase": "prereg", … }
 
 // postreg-1.json: ref = sha-256:da0adf83…, the root (no prev_hash)
-{ "payload": { "phase": "postreg", "fulfills": "sha-256:b17107d0…", … },
-  "signature": { "keyid": "sha-256:7bc19c1d…", … } }
+{ "phase": "postreg", "fulfills": "sha-256:b17107d0…", … }
 
 // postreg-2.json: links to postreg-1
-{ "payload": { "phase": "postreg", "fulfills": "sha-256:b17107d0…",
-               "prev_hash": "sha-256:da0adf83…", … },
-  "signature": { "keyid": "sha-256:7bc19c1d…", … } }
+{ "phase": "postreg", "fulfills": "sha-256:b17107d0…", "prev_hash": "sha-256:da0adf83…", … }
 ```
 
 Output (from `=== tests ===` on), exit status `0`:
@@ -291,27 +317,28 @@ Checked at 2026-12-31T23:59:59Z
 Subject digests recomputed from the original artifacts.
 
 **Examines (\*)**
-- `payload.subject`
-- `payload.subject[].name`
-- `payload.subject[].digest`
-- `payload.hash_alg` (if absent, the default of the format `payloadType` names: `sha-256`)
-- `payloadType` (only for that default)
+- `body.subject`
+- `body.subject[].name`
+- `body.subject[].digest`
+- `body.hash_alg` (if absent, the default of the format `dsse.payloadType` names: `sha-256`)
+- `dsse.payloadType` (only for that default)
 - `--artifacts`
 
-**Passes when all** (for each manifest that has a `payload.subject`, and each of its entries)
-1. `payload.subject` is a non-empty array, and each entry's `name` is a string and
+**Passes when all** (for each manifest that has a `body.subject`, and each of its entries)
+1. `body.subject` is a non-empty array, and each entry's `name` is a string and
    `digest[hash_alg]` is hex.
 2. `hash_alg` is available in this install: `sha-256` always, `blake3` only if installed.
 3. `name` (trailing `/` removed) resolved with symlinks against `--artifacts` is the
    `--artifacts` directory or beneath it. `..` components, absolute names, and symlinks
    that point outside fail here.
-4. The resolved path exists.
+4. The resolved path exists. A `name` that no path on this system can have (one holding a
+   NUL, or a lone surrogate the filesystem cannot encode) names no artifact.
 5. The resolved path is readable.
 6. The recomputed digest of the file or directory under `hash_alg` equals the bytes of
    `digest[hash_alg]`, in either hex case.
 
 **When empty:** if `--artifacts` is not given or is empty (`--artifacts ""`), or no
-manifest that passes `format` has a `payload.subject`, the test has nothing to examine and is
+manifest that passes `format` has a `body.subject`, the test has nothing to examine and is
 `FAIL`, with the reason `requested but no content could be checked (need --artifacts and a
 manifest with a subject)`.
 
@@ -330,22 +357,19 @@ is the output of the named harness and model.
 $ asexec verify prereg.json --tests format,selfsig,content --artifacts artifacts
 ```
 
-`artifacts/transcript.txt` contains `hello` and a newline. `prereg.json` (unexamined fields
-elided):
+`artifacts/transcript.txt` contains `hello` and a newline. The body of `prereg.json`
+(unexamined fields elided):
 
 ```jsonc
 {
-  "payload": {
-    "subject": [
-      {
-        "name": "transcript.txt",
-        "digest": { "sha-256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03" }
-      }
-    ],
-    "hash_alg": "sha-256",
-    …
-  },
-  "signature": { … }
+  "subject": [
+    {
+      "name": "transcript.txt",
+      "digest": { "sha-256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03" }
+    }
+  ],
+  "hash_alg": "sha-256",
+  …
 }
 ```
 
@@ -368,21 +392,21 @@ Checked at 2026-12-31T23:59:59Z
 drand beacon: the manifest was created no earlier than time T.
 
 **Examines (\*)**
-- `payload.anchor.floor.floor_type`
-- `payload.anchor.floor.chain_hash`
-- `payload.anchor.floor.round`
-- `payload.anchor.floor.signature`
-- `payload.anchor.floor.randomness`
+- `body.anchor.floor.floor_type`
+- `body.anchor.floor.chain_hash`
+- `body.anchor.floor.round`
+- `body.anchor.floor.signature`
+- `body.anchor.floor.randomness`
 
 **Passes when all**
-1. `payload.anchor.floor` is an object and `floor_type == "drand"`.
+1. `body.anchor.floor` is an object and `floor_type == "drand"`.
 2. `chain_hash` (default: the pinned quicknet chain) is a chain the verifier pins.
 3. `round` is an integer and `signature` is hex.
 4. If `randomness` is present, it equals `sha256(signature)` in hex.
 5. `signature` is a valid BLS12-381 signature over `sha256(round as 8-byte big-endian)`
    under the pinned group public key.
 
-**When empty:** if no manifest that passes `format` has a `payload.anchor.floor`, the test
+**When empty:** if no manifest that passes `format` has a `body.anchor.floor`, the test
 has nothing to examine and is `FAIL`, with the reason `requested but no manifest carries an
 anchor.floor`.
 
@@ -397,23 +421,20 @@ freshness (anti-precomputation), not backdating.
 $ asexec verify prereg.json --tests format,selfsig,floor
 ```
 
-`prereg.json` (unexamined fields elided):
+The body of `prereg.json` (unexamined fields elided):
 
 ```jsonc
 {
-  "payload": {
-    "anchor": {
-      "floor": {
-        "floor_type": "drand",
-        "chain_hash": "52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971",
-        "round": 33394706,
-        "signature": "9791d98e2e577017…",
-        "randomness": "8442c678de44756b…"       // = sha256(signature)
-      }
-    },
-    …
+  "anchor": {
+    "floor": {
+      "floor_type": "drand",
+      "chain_hash": "52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971",
+      "round": 33394706,
+      "signature": "9791d98e2e577017…",
+      "randomness": "8442c678de44756b…"         // = sha256(signature)
+    }
   },
-  "signature": { … }
+  …
 }
 ```
 
@@ -438,33 +459,44 @@ every run.
 
 **Examines (\*)**
 - every manifest file found, as a whole
-- `payloadType`
-- `payload`
-- `signature`
-- `signature.pubkey`
-- `signature.sig`
+- `dsse`
+- `dsse.payloadType`
+- `dsse.signatures` (only that it is an array)
+- `dsse.payload`, and the body bytes it decodes to
 
 **Passes when all**
 1. The file can be read, and is a JSON object, nested at most 64 deep, with no duplicate
-   keys, containing an object `payload`, a string `payloadType` and an object `signature`,
-   and `payload` has canonical bytes (no string in it, key or value, holds an unpaired
-   surrogate escape).
-2. `signature.pubkey` and `signature.sig` are hex.
-3. `payloadType` names a format this release reads, compared exactly: in this release,
+   keys, holding an object `dsse` that holds a string `dsse.payloadType` and an array
+   `dsse.signatures`.
+2. `dsse.payload` is a string of strict base64 (see [Base64](#conventions)), and the body
+   bytes it decodes to are the UTF-8 JSON text of an object, held to the file's JSON rules
+   on its own: nested at most 64 deep, counted from the body's own outermost object, with
+   no duplicate keys.
+3. `dsse.payloadType` names a format this release reads, compared exactly: in this release,
    `application/vnd.asexec.v1+json` (see [Formats](#conventions)). A file that names
    another format is never read under this one's rules instead. Such a file is held only to
    the part of #1 that comes before any format: it can be read, and is a JSON object,
-   nested at most 64 deep, with no duplicate keys. The rest of #1, and #2, are this
-   format's rules, and a newer format may lay its file out differently.
+   nested at most 64 deep, with no duplicate keys, holding an object `dsse` with a string
+   `dsse.payloadType`. The rest of #1, and #2, are this format's rules, and a newer format
+   may lay out the rest of its file differently. A file laid out as asexec wrote it before
+   0.4.0 (no `dsse`, and a top-level `payloadType` of `application/vnd.asexec+json`, the
+   type those releases wrote) also fails #3, with that format's reason.
 
 A file that fails #1 or #2 is malformed, and one that fails #3 is of an unknown format (see
-[Run rules](#conventions)). Either way no other test examines it.
+[Run rules](#conventions)). Either way no other test examines it. That is all `format`
+judges: what `dsse.signatures` holds, and `pubkey`, are [`selfsig`](#selfsig)'s.
 
 **Failure reasons** (shown under the file in the report):
-- #1 and #2: `malformed: ` and what is wrong. A `payloadType` that is absent (missing or
-  `null`) is `malformed: payloadType: Field required`, and one that is not a string is
-  `malformed: payloadType: Input should be a valid string`.
-- #3, by what `payloadType` names:
+- #1 and #2: `malformed: ` and what is wrong, naming the property. For example, a `dsse`
+  that is absent (missing or `null`) is `malformed: dsse: Field required`, a
+  `dsse.payloadType` that is absent is `malformed: dsse.payloadType: Field required` and one
+  that is not a string `malformed: dsse.payloadType: Input should be a valid string`. A
+  `dsse.payload` that is not strict base64 is `malformed: dsse.payload: Value error, not
+  strict base64 (the standard alphabet, padded, no whitespace, one spelling per byte
+  string)`. Body bytes that fail #2 are `malformed: body: ` and what is wrong, e.g.
+  `malformed: body: duplicate JSON key 'phase'` or `malformed: body: the body must be a
+  JSON object`.
+- #3, by what `dsse.payloadType` names:
   - `application/vnd.asexec+json`, the format of asexec before 0.4.0: `payloadType names
     the format of asexec before 0.4.0, which is not supported: re-sign with this release`.
   - A beta's format, `application/vnd.asexec.X.Y.ZbN+json` (for example
@@ -478,9 +510,9 @@ A file that fails #1 or #2 is malformed, and one that fails #3 is of an unknown 
 `no manifests to verify`. A path that is not a directory is always examined, even if it
 does not exist (it is malformed), and so is a directory that cannot be listed.
 
-**Does not establish:** that the signature is valid (that is [`selfsig`](#selfsig)), which
-also covers `payloadType`; that `payload` is a well-formed asexec body (any object `payload`
-passes, whatever it holds).
+**Does not establish:** that the file has one valid signature (that is
+[`selfsig`](#selfsig)), which also covers `dsse.payloadType`; that the body is a
+well-formed asexec body (any JSON object passes, whatever it holds).
 
 **Example** (all requirements pass)
 
@@ -488,22 +520,22 @@ passes, whatever it holds).
 $ asexec verify prereg.json --tests format,selfsig
 ```
 
-`prereg.json`:
+`prereg.json`, and the body its `dsse.payload` decodes to:
 
 ```jsonc
 {
-  "payloadType": "application/vnd.asexec.v1+json",
-  "payload": {
-    "predicateType": "https://asexec.org/manifest/v1",
-    "phase": "prereg",
-    "target": "model m via provider p"
+  "dsse": {
+    "payloadType": "application/vnd.asexec.v1+json",
+    "payload": "eyJwaGFzZSI6InByZXJlZyIsInByZWRpY2F0ZVR5cGUiOiJodHRwczovL2FzZXhlYy5vcmcvbWFu…",
+    "signatures": [
+      { "keyid": "sha-256:bc562700…", "sig": "7a816afd…" }
+    ]
   },
-  "signature": {
-    "pubkey": "0743f489…",
-    "sig": "89ccc62e…",
-    "keyid": "sha-256:7bc19c1d…"
-  }
+  "pubkey": "91230c4e…"
 }
+
+// the body bytes it decodes to:
+// {"phase":"prereg","predicateType":"https://asexec.org/manifest/v1","target":"model m via provider p"}
 ```
 
 Output (from `=== tests ===` on), exit status `0`:
@@ -527,9 +559,9 @@ $ asexec verify prereg.json truncated.json --tests format,selfsig
 
 ```
 === manifests ===
-✓ prereg.json  [prereg]  keyid=sha-256:7bc19c1d…
+✓ prereg.json  [prereg]  keyid=sha-256:bc562700…
 ✗ truncated.json  [None]  keyid=None
-    ✗ format: malformed: Unterminated string starting at: line 5 column 15 (char 109)
+    ✗ format: malformed: Unterminated string starting at: line 4 column 16 (char 82)
 …
 === tests ===
   ✗ format=FAIL  (1/2 manifest(s) failed)
@@ -539,10 +571,10 @@ asexec-verify/1 format=FAIL selfsig=PASS
 ```
 
 Version skew: `postreg-v2.json` is `postreg-1.json` from the [`chain` example](#chain) with
-its `payloadType` changed to `application/vnd.asexec.v2+json`, as a later release would
+its `dsse.payloadType` changed to `application/vnd.asexec.v2+json`, as a later release would
 label its own files. It fails `format` with the upgrade reason, not as a bad signature, and
-`selfsig` still passes for `prereg.json`. It takes no part in the commitment, which stays
-open. Exit status `2`:
+`selfsig` still passes for `prereg.json`. Its body is not read, so it shows no phase, and it
+takes no part in the commitment, which stays open. Exit status `2`:
 
 ```console
 $ asexec verify prereg.json postreg-v2.json --tests format,selfsig
@@ -550,8 +582,8 @@ $ asexec verify prereg.json postreg-v2.json --tests format,selfsig
 
 ```
 === manifests ===
-✓ prereg.json  [prereg]  keyid=sha-256:7bc19c1d…
-✗ postreg-v2.json  [postreg]  keyid=None
+✓ prereg.json  [prereg]  keyid=sha-256:bc562700…
+✗ postreg-v2.json  [None]  keyid=None
     ✗ format: payloadType names a format newer than this release: upgrade asexec to read it
 
 === commitments ===
@@ -571,26 +603,27 @@ asexec-verify/1 format=FAIL selfsig=PASS
 Whether a commitment's postregs were signed by its own key.
 
 **Examines (\*)**
-- `payload.phase`
-- `payload.fulfills`
-- `signature.pubkey`
-- `signature.sig`
-- `signature.keyid`
+- `body.phase`
+- `body.fulfills`
+- `pubkey`
+- `dsse.signatures`
+- `dsse.signatures[0].sig`
+- `dsse.signatures[0].keyid`
 
 **Passes when all** (for each commitment with a counted postreg or a postreg rejected as
 `signed by a different key than the pre-registration`; see
 [Matching postregs to commitments](#matching-postregs-to-commitments))
-1. Every postreg whose `payload.fulfills` equals the commitment's `ref` and whose signature
-   is valid (it meets the [`selfsig`](#selfsig) conditions) has the `signature.keyid` of a
-   commitment with that `ref`.
+1. Every postreg whose `body.fulfills` equals the commitment's `ref` and whose signature
+   is valid (it meets the [`selfsig`](#selfsig) conditions) has the
+   `dsse.signatures[0].keyid` of a commitment with that `ref`.
 
 A postreg with an invalid signature is not judged here (it fails `selfsig`), so a commitment
 whose only postregs have invalid signatures has no key to check and is not examined. A
 [rejected pre-registration](#matching-postregs-to-commitments) is no commitment, so it is
-never examined, and its `signature.keyid`, which nothing authenticated, is compared with no
-postreg's.
+never examined, and its `dsse.signatures[0].keyid`, which nothing authenticated, is
+compared with no postreg's.
 
-**When empty:** if no validly signed postreg names a commitment (its `payload.fulfills` is
+**When empty:** if no validly signed postreg names a commitment (its `body.fulfills` is
 the `ref` of no commitment; a postreg that names only rejected pre-registrations names
 none), the test has nothing to examine and is `FAIL`, with the reason `requested but no
 validly signed postreg names a commitment`.
@@ -601,15 +634,15 @@ validly signed postreg names a commitment`.
 $ asexec verify prereg.json postreg.json --tests format,selfsig,keyconsist
 ```
 
-The two files (unexamined fields elided):
+The two files' bodies (unexamined fields elided). Both have `dsse.signatures[0].keyid`
+`sha-256:bc562700…`, the prereg's:
 
 ```jsonc
 // prereg.json: ref = sha-256:b17107d0…
-{ "payload": { "phase": "prereg", … }, "signature": { "keyid": "sha-256:7bc19c1d…", … } }
+{ "phase": "prereg", … }
 
-// postreg.json: same keyid as the prereg
-{ "payload": { "phase": "postreg", "fulfills": "sha-256:b17107d0…", … },
-  "signature": { "keyid": "sha-256:7bc19c1d…", … } }
+// postreg.json
+{ "phase": "postreg", "fulfills": "sha-256:b17107d0…", … }
 ```
 
 Output (from `=== tests ===` on), exit status `0`:
@@ -630,25 +663,30 @@ Checked at 2026-12-31T23:59:59Z
 
 Whether the file is unchanged since its own key signed it. Required in every run.
 
-`selfsig` is self-certifying: the file carries its own `signature.pubkey`, so a pass means
-only that whoever holds that key signed these bytes, and that they have not changed since.
-Nothing is pinned, and verify keeps no state between runs. Trust comes from the other
-layers: [`keyconsist`](#keyconsist) gives key continuity within one claim, and
+`selfsig` is self-certifying: the file carries its own `pubkey`, so a pass means only that
+whoever holds that key signed these bytes, and that they have not changed since. Nothing is
+pinned, and verify keeps no state between runs. Trust comes from the other layers:
+[`keyconsist`](#keyconsist) gives key continuity within one claim, and
 [`ceiling`](#ceiling) pins when the prereg was signed.
 
 **Examines (\*)**
-- `payloadType` (it is in the signing input, and names the format whose rules apply)
-- `payload`
-- `signature.pubkey`
-- `signature.sig`
-- `signature.keyid`
+- `dsse.payloadType` (it is in the signing input, and names the format whose rules apply)
+- `dsse.payload` (the body bytes)
+- `dsse.signatures`
+- `dsse.signatures[0].sig`
+- `dsse.signatures[0].keyid`
+- `pubkey`
 
 **Passes when all** (for each manifest that passes [`format`](#format), under the rules of
 its format)
-1. `signature.sig` is a valid ed25519 signature by `signature.pubkey` over the PAE signing
-   input of the file's `payloadType` and the canonical bytes of `payload`.
-2. `signature.keyid == "sha-256:" + sha256(bytes.fromhex(signature.pubkey)).hexdigest()`,
-   where `sha-256:` is the format's prefix.
+1. `dsse.signatures` holds exactly one entry, and it is an object. None, two (even two
+   copies of one valid signature) and an entry that is not an object fail.
+2. `pubkey` and `dsse.signatures[0].sig` are present and hex (see [Hex](#conventions)).
+3. `dsse.signatures[0].sig` is a valid ed25519 signature by `pubkey` over the PAE signing
+   input of the file's `dsse.payloadType` and its body bytes, exactly as stored:
+   `DSSEv1 SP len(type) SP type SP len(body) SP body`.
+4. `dsse.signatures[0].keyid == "sha-256:" + sha256(bytes.fromhex(pubkey)).hexdigest()`,
+   where `sha-256:` is the format's prefix. A missing `keyid` fails.
 
 **When empty:** if no manifest passes `format` (including when no manifest file is found),
 `selfsig` has nothing to examine and is `FAIL`, with the reason
@@ -663,7 +701,8 @@ A prereg that passes `format` but fails `selfsig` is a
 re-signed with another key, under that key's `keyid`, passes.
 
 **Example** (a body edited after signing). `tampered.json` is `postreg-1.json` from the
-[`chain` example](#chain) with its `payload.target` changed afterwards:
+[`chain` example](#chain) with its `body.target` changed afterwards: the body decoded,
+edited, and stored again as `dsse.payload`, with the old signature kept:
 
 ```console
 $ asexec verify prereg.json tampered.json --tests format,selfsig
@@ -692,12 +731,15 @@ Three terms, each narrower than the one before:
   prereg that fails `format` (malformed, or of an unknown format) is not a provided prereg:
   nothing can be said about what it names, so a postreg that names it is notarization-only.
 - A **commitment** is a provided prereg that also meets the [`selfsig`](#selfsig)
-  conditions, identified by its `ref` together with its signer, `signature.keyid`. The body
+  conditions, identified by its `ref` together with its signer, `dsse.signatures[0].keyid`.
+  The body
   holds no key, so the same body signed by two keys has one `ref` but is two commitments,
   each judged on its own.
-- A **rejected pre-registration** is a provided prereg that fails a `selfsig` condition. Its
-  signature does not verify, or its `signature.keyid` does not derive from its
-  `signature.pubkey`, so nothing authenticated the keyid it claims. It is no commitment: it
+- A **rejected pre-registration** is a provided prereg that fails a `selfsig` condition: it
+  has other than exactly one signature, its `pubkey` or `sig` is missing or not hex, its
+  signature does not verify, or its `dsse.signatures[0].keyid` does not derive from its
+  `pubkey`. So nothing authenticated the keyid it claims, its `dsse.signatures[0].keyid`
+  (absent if it has no signature entry). It is no commitment: it
   has no [state](#commitment-states), no postreg counts toward it, and `chain` and
   `keyconsist` never examine it, so no state and no `chain` or `keyconsist` result rests on
   its keyid. It is listed under its own heading, *rejected pre-registrations*, with the
@@ -712,18 +754,19 @@ Three terms, each narrower than the one before:
 | Passes `format` and `selfsig` | `PASS` | `PASS` | a **commitment** | *commitments*, with its state |
 
 A postreg `P` **counts** toward the commitment of prereg `R` iff all hold:
-1. `P.payload.phase == "postreg"` and `P.payload.fulfills == ref(R)`.
+1. `P.body.phase == "postreg"` and `P.body.fulfills == ref(R)`.
 2. `P` meets the [`selfsig`](#selfsig) conditions.
-3. `P.signature.keyid == R.signature.keyid`.
+3. `P.dsse.signatures[0].keyid == R.dsse.signatures[0].keyid`.
 4. `R` meets the [`selfsig`](#selfsig) conditions: `R` is a commitment, not a rejected
    pre-registration. This is condition 2 for the prereg, so a postreg is never matched to
    a keyid that nothing authenticated.
 
 A commitment is keyed by its signer, so a postreg counts toward at most one commitment: the
-one with its `payload.fulfills` as `ref` and its own `signature.keyid` as signer. A copy of
-a prereg that fails `selfsig` is a rejected pre-registration even when it claims the
-commitment's own `signature.keyid`, so it never merges into that commitment, and one that
-claims another key's `signature.keyid` does not make that key a signer.
+one with its `body.fulfills` as `ref` and its own `dsse.signatures[0].keyid` as signer. A
+copy of a prereg that fails `selfsig` is a rejected pre-registration even when it claims
+the commitment's own `dsse.signatures[0].keyid`, so it never merges into that commitment,
+and one that claims another key's `dsse.signatures[0].keyid` does not make that key a
+signer.
 
 A postreg that names a provided prereg (condition 1) but counts toward no commitment with
 that `ref` is **rejected**. It is left out of fulfillment and of `chain`, and is listed with
@@ -770,19 +813,20 @@ failure of their own. The failures in the postreg table come from `format` (the 
 `chain` and `keyconsist` empty, since it is no commitment.
 
 A manifest is identified by its `ref`. Copies of a postreg, with the same `ref` and
-`signature.keyid`, are listed once per outcome, however many are provided. Copies usually
-share an outcome, so they are counted, rejected or notarization-only once. A copy whose
-signature does not verify is judged on its own: it fails `selfsig` and, if it names a
+`dsse.signatures[0].keyid`, are listed once per outcome, however many are provided. Copies
+usually share an outcome, so they are counted, rejected or notarization-only once. A copy
+whose signature does not verify is judged on its own: it fails `selfsig` and, if it names a
 commitment, is listed as rejected for `invalid signature` beside the valid copy's outcome
 (so a broken copy of a counted postreg shows the same `ref` as counted and as rejected).
-Copies of a prereg, with the same `ref` and `signature.keyid`, are one commitment if they
-meet the `selfsig` conditions. A copy that does not is judged on its own, as a rejected
+Copies of a prereg, with the same `ref` and `dsse.signatures[0].keyid`, are one commitment
+if they meet the `selfsig` conditions. A copy that does not is judged on its own, as a rejected
 pre-registration beside the commitment. Copies of a rejected pre-registration, with the
-same `ref` and `signature.keyid`, are listed once, however each is broken.
+same `ref` and `dsse.signatures[0].keyid`, are listed once, however each is broken.
 
 **Example** (a rejected pre-registration). `prereg-badsig.json` is `prereg.json` from the
-[`chain` example](#chain) with one byte of `signature.sig` changed, checked with the two
-postregs that name it:
+[`chain` example](#chain) with one byte of `dsse.signatures[0].sig` changed, checked with
+the two postregs that name it. A prereg with two signatures, or none, or no `pubkey`, reads
+the same way:
 
 ```console
 $ asexec verify prereg-badsig.json postreg-1.json postreg-2.json --tests format,selfsig,chain,keyconsist
@@ -796,7 +840,7 @@ Output (from `=== commitments ===` on), exit status `2`:
 
 === rejected pre-registrations ===
   ✗ prereg sha-256:b17107d0… is NOT a commitment: invalid signature
-    keyid        : sha-256:7bc19c1d…
+    keyid        : sha-256:bc562700…
     ✗ postreg sha-256:da0adf83… does NOT count toward fulfillment: the pre-registration's signature is invalid
     ✗ postreg sha-256:ae569ef2… does NOT count toward fulfillment: the pre-registration's signature is invalid
 
@@ -818,16 +862,16 @@ One per commitment, shown in the `=== commitments ===` block of the report (see
 | State | Condition |
 |---|---|
 | `fulfilled` | at least one counted postreg |
-| `open` | no counted postreg, and `payload.due` is absent or in the future |
-| `elapsed-no-postreg` | no counted postreg, and `payload.due` is at or before now |
-| `invalid-due` | no counted postreg, and `payload.due` is present but not a parseable ISO-8601 string |
+| `open` | no counted postreg, and `body.due` is absent or in the future |
+| `elapsed-no-postreg` | no counted postreg, and `body.due` is at or before now |
+| `invalid-due` | no counted postreg, and `body.due` is present but not a parseable ISO-8601 string |
 
 A [notarization-only](#matching-postregs-to-commitments) postreg belongs to no commitment,
 so it has no state, and a
 [rejected pre-registration](#matching-postregs-to-commitments) is no commitment, so it has
 none either.
 
-A `payload.due` without a UTC offset or `Z` is read as UTC, never in the verifier's local
+A `body.due` without a UTC offset or `Z` is read as UTC, never in the verifier's local
 timezone, and is flagged in the report. Timeliness (a postreg created before `due`) is not
 checked in this version.
 
@@ -837,7 +881,7 @@ chained postregs as in the [`chain` example](#chain):
 ```
 === commitments ===
   [FULFILLED] prereg sha-256:b74ae2db…
-    signer       : sha-256:7bc19c1d…
+    signer       : sha-256:bc562700…
     due          : 2099-01-01T00:00:00Z
     postregs     : 2
 ```

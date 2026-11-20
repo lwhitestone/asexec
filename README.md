@@ -50,9 +50,9 @@ validly signed pre-registration and its signer):
 - **Integrity and non-repudiation.** A manifest (pre-registration or post-registration) was
   not altered after signing, and was signed by the private key whose public key its `keyid`
   names, so the holder of that key cannot later deny signing it.
-- **What was committed to.** The signature covers the whole `payload`: its `target` (which
-  `asexec prereg` and `postreg` always write) and, in a post-registration, the
-  pre-registration it `fulfills`.
+- **What was committed to.** The signature covers the whole body, the bytes `dsse.payload`
+  stores, exactly as stored: its `target` (which `asexec prereg` and `postreg` always
+  write) and, in a post-registration, the pre-registration it `fulfills`.
 - **Commitment state.** Each commitment is rendered as `fulfilled`, `open`,
   `elapsed-no-postreg` or `invalid-due`. A post-registration that names a pre-registration
   counts toward fulfilling it only if validly signed by that pre-registration's private key;
@@ -201,51 +201,38 @@ single-space delimited. The same result set is byte-identical everywhere.
 ## Manifest at a glance
 
 A pre-registration and a post-registration that fulfills it, as would be built by
-`asexec prereg` and `asexec postreg`, with every field filled in. Fields marked `required`
-are the only ones `verify` needs to read a manifest at all; without one, the file is
-malformed. Every other field is optional: leaving it out is structurally fine, and whether
-a manifest meets a bar is up to the [tests](#what-asexec-can-prove-optional-fields-and-tests)
-you request. Fields marked `always` are always written by `asexec prereg` or `asexec postreg`;
-the rest are the practitioner's call.
+`asexec prereg` and `asexec postreg`, with every field filled in. Each file is a standard
+[DSSE](https://github.com/secure-systems-lab/dsse) envelope, `dsse`, in an asexec wrapper.
+The signed body is stored as bytes: `dsse.payload` is their base64, and the body is the JSON
+object they hold, shown decoded below each file. Fields marked `required` are the only ones
+`verify` needs to read a manifest at all; without one, or with a `payload` that is not
+strict base64 of a JSON object, the file is malformed. Every other field is optional to
+read: leaving it out is structurally fine, and whether a manifest meets a bar is up to the
+[tests](#what-asexec-can-prove-optional-fields-and-tests) you request (the required
+[`selfsig`](./docs/VERIFICATION.md#selfsig) needs `pubkey` and the one signature's `keyid`
+and `sig`). Fields marked `always` are always written by `asexec prereg` or
+`asexec postreg`; the rest are the practitioner's call.
 
 **Pre-registration**
 
 ```jsonc
 {
-  "payloadType": "application/vnd.asexec.v1+json",      // required: the format; must be one this release reads
-  "payload": {                                          // required: the signed body
-    "predicateType": "https://asexec.org/manifest/v1",  // always
-    "phase": "prereg",                                  // always: prereg | postreg
-    "target": "claude-opus-4-8 via the anthropic API",  // always: text or JSON
-    "due": "2099-01-01T00:00:00Z",                      // deadline; none = stays open
-    "declaration": "all runs of this harness against this model, in full", // text or JSON
-    "subject": [                                        // artifacts, hashed
-      { "name": "harness/", "digest": { "sha-256": "2c26b46b…" } }
-    ],
-    "hash_alg": "sha-256",                              // always with subject
-    "anchor": {
-      "floor": {                                        // drand (--floor): not before
-        "floor_type": "drand",
-        "chain_hash": "52db9ba7…",
-        "round": 21102400,
-        "signature": "b7e04a19…",
-        "randomness": "1f0c9d2e…"
+  "dsse": {                                             // required: the DSSE envelope
+    "payloadType": "application/vnd.asexec.v1+json",    // required: the format; must be one this release reads
+    "payload": "eyJhbmNob3IiOnsiZmxvb3IiOnsiY2hh…",     // required: base64 of the body bytes, below
+    "signatures": [                                     // required: always exactly one
+      {
+        "keyid": "sha-256:8f3e0a91…",                   // always: sha-256 of pubkey
+        "sig": "3a91c0de…"                              // always: hex, over DSSE's PAE of the body bytes
       }
-    },
-    "identity": ["lab.example"],                        // free-form list
-    "notes": "hypothesis: refusal rate under 2%"        // text or JSON
+    ]
   },
-  "signature": {                                        // required
-    "alg": "ed25519",
-    "keyid": "sha-256:8f3e0a91…",                       // always: sha-256 of pubkey
-    "pubkey": "d75a9801…",                              // required: hex
-    "sig": "3a91c0de…"                                  // required: hex
-  },
+  "pubkey": "d75a9801…",                                // always: hex
   "ceiling": {                                          // Roughtime (--ceiling): not after
     "ceiling_type": "roughtime",
     "witness_id": "int08h-Roughtime",
     "pubkey": "016e6e02…",
-    "nonce": "4be1c1f8…",                               // = ref(payload)
+    "nonce": "4be1c1f8…",                               // = ref, the sha-256 of the body bytes
     "midpoint": 1785911400.0,
     "radius": 1.0,
     "response": "0400000040…"
@@ -253,49 +240,91 @@ the rest are the practitioner's call.
 }
 ```
 
+The body (`dsse.payload` decoded):
+
+```jsonc
+{
+  "predicateType": "https://asexec.org/manifest/v1",    // always
+  "phase": "prereg",                                    // always: prereg | postreg
+  "target": "claude-opus-4-8 via the anthropic API",    // always: text or JSON
+  "due": "2099-01-01T00:00:00Z",                        // deadline; none = stays open
+  "declaration": "all runs of this harness against this model, in full", // text or JSON
+  "subject": [                                          // artifacts, hashed
+    { "name": "harness/", "digest": { "sha-256": "2c26b46b…" } }
+  ],
+  "hash_alg": "sha-256",                                // always with subject
+  "anchor": {
+    "floor": {                                          // drand (--floor): not before
+      "floor_type": "drand",
+      "chain_hash": "52db9ba7…",
+      "round": 21102400,
+      "signature": "b7e04a19…",
+      "randomness": "1f0c9d2e…"
+    }
+  },
+  "identity": ["lab.example"],                          // free-form list
+  "notes": "hypothesis: refusal rate under 2%"          // text or JSON
+}
+```
+
 **Post-registration**
 
 ```jsonc
 {
-  "payloadType": "application/vnd.asexec.v1+json",      // required: the format; must be one this release reads
-  "payload": {                                          // required: the signed body
-    "predicateType": "https://asexec.org/manifest/v1",  // always
-    "phase": "postreg",                                 // always: prereg | postreg
-    "target": "claude-opus-4-8 via the anthropic API",  // always: text or JSON
-    "due": "2099-01-01T00:00:00Z",                      // deadline; none = stays open
-    "declaration": "all runs of this harness against this model, in full", // text or JSON
-    "subject": [                                        // artifacts, hashed
-      { "name": "transcript.txt", "digest": { "sha-256": "9f86d081…" } },
-      { "name": "harness/", "digest": { "sha-256": "2c26b46b…" } }
-    ],
-    "hash_alg": "sha-256",                              // always with subject
-    "fulfills": "sha-256:4be1c1f8…",                    // always in a postreg
-    "prev_hash": "sha-256:07ad3b2e…",                   // previous postreg
-    "anchor": {
-      "floor": {                                        // drand (--floor): not before
-        "floor_type": "drand",
-        "chain_hash": "52db9ba7…",
-        "round": 21543210,
-        "signature": "8d2f1c3a…",
-        "randomness": "c3d4e5f6…"
-      }
-    },
-    "identity": ["lab.example"],                        // free-form list
-    "provenance": "reproducible",                       // asserted | reproducible
-    "repro_recipe": { "seed": 42, "decode": "greedy", "runtime": "vllm 0.9" },
-    "notes": "free-form text or JSON"
-  }
-  // "signature" (required) and "ceiling": same shape as in the prereg
+  "dsse": {                                             // required, as in the prereg
+    "payloadType": "application/vnd.asexec.v1+json",
+    "payload": "eyJhbmNob3IiOnsiZmxvb3IiOnsiY2hh…",     // base64 of the body bytes, below
+    "signatures": [ { "keyid": "sha-256:8f3e0a91…", "sig": "5c0f7e21…" } ]
+  },
+  "pubkey": "d75a9801…"
+  // "ceiling": same shape as in the prereg
 }
 ```
 
-`sig` signs a [DSSE](https://github.com/secure-systems-lab/dsse)-style [PAE](https://github.com/secure-systems-lab/dsse/blob/master/protocol.md#signature-definition)
-(pre-authentication encoding) of `payload`, borrowing [in-toto](https://in-toto.io/) field names.
-A postreg carries its prereg's `target`, `due` and `declaration`, links back with `fulfills`
-(the prereg's ref, which is also its ceiling `nonce`) and `prev_hash`, and, from the CLI,
-adds `provenance` and `repro_recipe`. The ceiling sits outside the signed `payload` because
-its nonce is the payload's own hash; the floor sits inside it, because a value fixed before
-signing can be signed.
+The body (`dsse.payload` decoded):
+
+```jsonc
+{
+  "predicateType": "https://asexec.org/manifest/v1",    // always
+  "phase": "postreg",                                   // always: prereg | postreg
+  "target": "claude-opus-4-8 via the anthropic API",    // always: text or JSON
+  "due": "2099-01-01T00:00:00Z",                        // deadline; none = stays open
+  "declaration": "all runs of this harness against this model, in full", // text or JSON
+  "subject": [                                          // artifacts, hashed
+    { "name": "transcript.txt", "digest": { "sha-256": "9f86d081…" } },
+    { "name": "harness/", "digest": { "sha-256": "2c26b46b…" } }
+  ],
+  "hash_alg": "sha-256",                                // always with subject
+  "fulfills": "sha-256:4be1c1f8…",                      // always in a postreg
+  "prev_hash": "sha-256:07ad3b2e…",                     // previous postreg
+  "anchor": {
+    "floor": {                                          // drand (--floor): not before
+      "floor_type": "drand",
+      "chain_hash": "52db9ba7…",
+      "round": 21543210,
+      "signature": "8d2f1c3a…",
+      "randomness": "c3d4e5f6…"
+    }
+  },
+  "identity": ["lab.example"],                          // free-form list
+  "provenance": "reproducible",                         // asserted | reproducible
+  "repro_recipe": { "seed": 42, "decode": "greedy", "runtime": "vllm 0.9" },
+  "notes": "free-form text or JSON"
+}
+```
+
+`sig` signs the [DSSE](https://github.com/secure-systems-lab/dsse)
+[PAE](https://github.com/secure-systems-lab/dsse/blob/master/protocol.md#signature-definition)
+(pre-authentication encoding) of `payloadType` and the body bytes, `DSSEv1 <len> <type>
+<len> <body>`. Verify checks the bytes the file stores, exactly as stored, and never
+re-serializes them, so a body written by another tool, spaced or ordered differently,
+verifies the same way. The body borrows [in-toto](https://in-toto.io/) field names. A
+postreg carries its prereg's `target`, `due` and `declaration`, links back with `fulfills`
+(the prereg's ref, the sha-256 of its body bytes, which is also its ceiling `nonce`) and
+`prev_hash`, and, from the CLI, adds `provenance` and `repro_recipe`. The ceiling and
+`pubkey` sit outside the signed body: the ceiling's nonce is the body's own hash, and
+`selfsig` requires the signature's `keyid` to derive from `pubkey`, so a substituted key
+fails. The floor sits inside the body, because a value fixed before signing can be signed.
 
 ## Keys
 

@@ -34,10 +34,23 @@ still holds. Several documented failure modes of one item share a parametrized t
 
 Tests are black-box: they build inputs, run ``verify_paths``, and assert what the doc
 defines (verdicts, the code, documented reasons). Invalid inputs are written as the
-doc's dotted property paths (``scenario.set(name, "payload.anchor.floor.round", "1000")``),
-never through the verifier's own models. Nor are they built by the production writer:
-bodies start from the plain dicts in ``tests/manifest_data.py`` and are signed there, so
-any body can be signed, as anyone with a key could.
+doc's dotted property paths, never through the verifier's own models. Nor are they built by
+the production writer: bodies start from the plain dicts in ``tests/manifest_data.py`` and
+are signed there, so any body can be signed, as anyone with a key could.
+
+Paths follow the doc's notation (VERIFICATION.md, Conventions, Property paths):
+
+    body.<path>     inside the body, the JSON object ``dsse.payload`` decodes to:
+                    ``scenario.set(name, "body.anchor.floor.round", "1000")`` edits the
+                    decoded body, re-encodes it and signs it, so the junk is validly signed;
+                    with ``after_signing=True`` the body is re-encoded and the old signature
+                    kept, so it no longer matches.
+    <path>          from the file's root, edited after signing: ``dsse.payloadType``,
+                    ``dsse.signatures[0].keyid`` (``[N]`` indexes an array), ``pubkey``,
+                    ``ceiling.nonce``.
+
+``edit_body_bytes`` edits the body bytes themselves (a duplicate key, a lone surrogate
+escape: what no dict can hold), before signing or after.
 
 Cross-cutting files use ``test_matching__...``, ``test_state__<state>__...``,
 ``test_due__...`` and, in run rules, ``test_tests_arg__``, ``test_code__``, ``test_run__``
@@ -76,6 +89,7 @@ class _Spec:
     prev: str | None = None  # a spec name, or a literal "sha-256:<hex>" ref
     floor: bool = False
     mutations: list[Callable[[dict], None]] = field(default_factory=list)
+    byte_edits: list[Callable[[bytes], bytes]] = field(default_factory=list)  # signed
 
 
 class Scenario:
@@ -143,24 +157,44 @@ class Scenario:
         """Edit a body before signing (links to later manifests follow the edit)."""
         self.specs[name].mutations.append(fn)
 
-    def set(self, name: str, path: str, value: Any) -> None:
-        """Set the property at a doc-style dotted ``path`` (from the envelope root).
+    def set(self, name: str, path: str, value: Any, *, after_signing: bool = False) -> None:
+        """Set the property at a doc-style dotted ``path`` (see the module docstring).
 
-        ``payload.*`` is edited before signing, so the junk is validly signed; any other
-        root (``signature.*``, ``ceiling.*``) is edited after signing. Missing objects on
-        the way are created; a numeric segment indexes an array.
+        ``body.*`` is edited in the decoded body before signing, so the junk is validly
+        signed, unless ``after_signing``; any other root (``dsse.*``, ``pubkey``,
+        ``ceiling.*``) is edited after signing. Missing objects on the way are created; a
+        numeric segment or ``[N]`` indexes an array.
         """
-        self._edit(name, path, lambda envelope: data.set_path(envelope, path, value))
+        self._edit(name, path, lambda root: data.set_path(root, path, value), after_signing)
 
-    def unset(self, name: str, path: str) -> None:
+    def unset(self, name: str, path: str, *, after_signing: bool = False) -> None:
         """Remove the property at a doc-style dotted ``path`` (see ``set``)."""
-        self._edit(name, path, lambda envelope: data.del_path(envelope, path))
+        self._edit(name, path, lambda root: data.del_path(root, path), after_signing)
 
-    def _edit(self, name: str, path: str, apply: Callable[[dict], None]) -> None:
-        if path.split(".")[0] == "payload":
-            self.mutate(name, lambda body: apply({"payload": body}))
-        else:
+    def _edit(
+        self, name: str, path: str, apply: Callable[[dict], None], after_signing: bool
+    ) -> None:
+        if path.split(".")[0] != "body":
             self.tamper(name, apply)
+        elif not after_signing:
+            self.mutate(name, lambda body: apply({"body": body}))
+        else:
+
+            def edit_signed_body(envelope: dict) -> None:
+                body = data.body_of(envelope)
+                apply({"body": body})
+                data.store(envelope, data.body_bytes(body))
+
+            self.tamper(name, edit_signed_body)
+
+    def edit_body_bytes(
+        self, name: str, fn: Callable[[bytes], bytes], *, after_signing: bool = False
+    ) -> None:
+        """Replace the body bytes with ``fn(bytes)``: signed, unless ``after_signing``."""
+        if after_signing:
+            self.tamper(name, lambda envelope: data.store(envelope, fn(data.decoded(envelope))))
+        else:
+            self.specs[name].byte_edits.append(fn)
 
     def mutate_all(self, fn: Callable[[dict], None]) -> None:
         for name in self.specs:
@@ -177,7 +211,8 @@ class Scenario:
         self.signers[name] = signer
 
     def tamper(self, name: str, fn: Callable[[dict], None]) -> None:
-        """Edit the envelope after signing (the signature no longer matches)."""
+        """Edit the file after signing (an edit to ``dsse.payload`` or ``dsse.payloadType``
+        no longer matches the signature)."""
         self.post_sign.setdefault(name, []).append(fn)
 
     def drop(self, name: str) -> None:
@@ -205,7 +240,7 @@ class Scenario:
     def _link(self, target: str | None) -> str | None:
         if target is None or target.startswith("sha-256:"):
             return target
-        return data.ref(self._body(target))
+        return data.ref(self._raw(target))
 
     def _body(self, name: str) -> dict:
         if name not in self._bodies:
@@ -227,15 +262,22 @@ class Scenario:
             fn(body)
         return body
 
+    def _raw(self, name: str) -> bytes:
+        """The body bytes signed for ``name``: its body serialized, then any byte edits."""
+        raw = data.body_bytes(self._body(name))
+        for fn in self.specs[name].byte_edits:
+            raw = fn(raw)
+        return raw
+
     def write(self) -> list[str]:
         self._bodies = {}
         paths = []
         for name in self.specs:
-            body = self._body(name)
-            envelope = data.sign(body, self.signers.get(name, self.key))
+            raw = self._raw(name)
+            envelope = data.sign_bytes(raw, self.signers.get(name, self.key))
             record = self.ceilings.get(name)
             if record is not None:
-                nonce_hex = data.ref(body).split(":", 1)[-1]
+                nonce_hex = data.ref(raw).split(":", 1)[-1]
                 if record is _AUTO:
                     record = self.ceiling_for(
                         nonce_hex, WITNESS_ID, self.server_pub, self.sign_response

@@ -4,6 +4,9 @@ The scenario's prereg and postregs each carry a subject (the ``harness/`` direct
 plus one transcript file for each postreg) that matches ``scenario.artifacts``.
 """
 
+import json
+
+import manifest_data as d
 import pytest
 
 from asexec import hashing
@@ -55,7 +58,7 @@ def test_content__pass__all(scenario):
 )
 def test_content__fail__1_entry_is_well_formed(scenario, entry):
     """content #1: name is a string and digest[hash_alg] is hex."""
-    scenario.set("prereg", "payload.subject", [entry])
+    scenario.set("prereg", "body.subject", [entry])
     report = scenario.verify("content")
     assert report["code"] == FAIL
     assert _entry_reasons(report) == ["malformed subject entry"]
@@ -63,8 +66,8 @@ def test_content__fail__1_entry_is_well_formed(scenario, entry):
 
 @pytest.mark.parametrize("subject", [[], "x", {}], ids=["empty-list", "string", "object"])
 def test_content__fail__1_subject_is_a_non_empty_array(scenario, subject):
-    """content #1: a present payload.subject is a non-empty array."""
-    scenario.set("prereg", "payload.subject", subject)
+    """content #1: a present body.subject is a non-empty array."""
+    scenario.set("prereg", "body.subject", subject)
     assert scenario.code("content") == FAIL
 
 
@@ -195,11 +198,8 @@ def test_content__fail__empty_no_manifest_has_a_subject(scenario, absent):
 def test_content__fail__empty_malformed_manifest_not_examined(scenario):
     """content (*): a malformed manifest is not examined, even if it carries a subject."""
     scenario.mutate_all(lambda body: (body.pop("subject"), body.pop("hash_alg")))
-    scenario.add_raw(
-        "bad",
-        '{"payload": {"subject": [{"name": "harness", "digest": {"sha-256": "00"}}]},'
-        ' "signature": {}}',
-    )
+    subject = [{"name": "harness", "digest": {"sha-256": "00"}}]
+    scenario.add_raw("bad", json.dumps(d.malformed({"subject": subject})))
     report = scenario.verify("content")
     assert report["results"]["content"]["applicable"] == 0
     assert report["code"] == "asexec-verify/1 content=FAIL format=FAIL selfsig=PASS"

@@ -42,9 +42,11 @@ again after pulling dependency changes. It does not run lint or tests.
   written once.
 - `tests/verify/` is a black-box contract test of `VERIFICATION.md`: it calls
   `verify_paths` or the CLI and never imports the input models. Valid inputs come from the
-  production writer; invalid ones are written as dotted property paths
-  (`scenario.set("payload.anchor.floor.round", "1000")`), never built with the models, so a
-  wrong model cannot produce a matching wrong input. A coverage test requires a failing
+  production writer; invalid ones are written as dotted property paths in the doc's
+  notation (`scenario.set(name, "body.anchor.floor.round", "1000")` for a field of the
+  decoded body, re-encoded and signed; `scenario.set(name, "dsse.signatures[0].keyid", …)`
+  or `"pubkey"` for the file around it), never built with the models, so a wrong model
+  cannot produce a matching wrong input. A coverage test requires a failing
   test (`test_<name>__fail__<n>_...`) for every numbered requirement in the doc.
 
 ## Continuous integration (`.github/workflows/ci.yml`)

@@ -104,19 +104,21 @@ def _build_subject(paths: list[str] | None, hash_alg: str) -> list | None:
     return hashing.build_subject(paths, hash_alg) if paths else None
 
 
-def _load_manifest_body(path: str, flag: str) -> dict:
-    """Load a manifest file named by ``flag``, turning any failure into a clean error."""
+def _load_manifest_body(path: str, flag: str) -> tuple[bytes, dict]:
+    """The body bytes and body of a manifest file named by ``flag``, turning any failure
+    into a clean error."""
     try:
-        return manifest.get_body(manifest.load(path))
+        return manifest.read_body(manifest.load(path))
     except Exception as e:
         raise SystemExit(f"error: {flag} {path} is not a readable manifest: {e}") from e
 
 
 def _resolve_ref(value: str, flag: str) -> str:
-    """A --fulfills/--prev value is an existing manifest file or a well-formed
-    ``sha-256:<64 lowercase hex>`` ref; anything else (e.g. a typo'd path) is an error."""
+    """A --fulfills/--prev value is an existing manifest file (its ref: the digest of the
+    body bytes it stores) or a well-formed ``sha-256:<64 lowercase hex>`` ref; anything else
+    (e.g. a typo'd path) is an error."""
     if os.path.isfile(value):
-        return manifest.ref(_load_manifest_body(value, flag))
+        return manifest.ref(_load_manifest_body(value, flag)[0])
     if REF_RE.fullmatch(value):
         return value
     raise SystemExit(
@@ -125,16 +127,16 @@ def _resolve_ref(value: str, flag: str) -> str:
     )
 
 
-def _attach_ceiling(mani: dict, body: dict, want_ceiling: bool, best_effort: bool) -> None:
+def _attach_ceiling(mani: dict, ref: str, want_ceiling: bool, best_effort: bool) -> None:
     """Optionally fetch a Roughtime ceiling witness and attach it (sign-time,
-    network). The nonce is the body ref, so this must run *after* signing; it
+    network). The nonce is the body's ``ref``, so this must run *after* signing; it
     does not perturb ref. A failed fetch aborts (nothing is written) unless
     ``best_effort``."""
     if not want_ceiling:
         return
     from . import roughtime
 
-    nonce = manifest.ref(body)  # sha-256:<hex>
+    nonce = ref  # sha-256:<hex>
     try:
         ceiling = roughtime.fetch_ceiling(nonce)
     except Exception as e:
@@ -152,6 +154,13 @@ def _attach_ceiling(mani: dict, body: dict, want_ceiling: bool, best_effort: boo
         f"  ceiling : {ceiling.get('ceiling_type')} witness {ceiling.get('witness_id')} "
         f"@ {ceiling.get('midpoint')} (±{ceiling.get('radius')}s)"
     )
+
+
+def _show(text: str = "") -> None:
+    """Print a report line. A manifest's strings are printed as they are, except that a
+    character with no UTF-8 form (a lone surrogate, which a body may hold as valid JSON) is
+    shown as its escape, ``\\udXXX``, so the report never fails to print."""
+    print(text.encode("utf-8", "backslashreplace").decode("utf-8"))
 
 
 # --------------------------------------------------------------------------- #
@@ -192,10 +201,11 @@ def cmd_prereg(args) -> int:
         notes=_get_notes(args),
     )
     mani = manifest.sign(body, priv, pub)
-    _attach_ceiling(mani, body, args.ceiling, args.best_effort)
+    ref = manifest.ref(manifest.read_body(mani)[0])
+    _attach_ceiling(mani, ref, args.ceiling, args.best_effort)
     manifest.save(mani, args.out)
     print(f"{OK} pre-registration written: {args.out}")
-    print(f"  ref : {manifest.ref(body)}")
+    print(f"  ref : {ref}")
     if body.get("due"):
         print(f"  due : {body['due']}")
     return EXIT_OK
@@ -208,9 +218,9 @@ def cmd_postreg(args) -> int:
 
     fulfills = _resolve_ref(args.fulfills, "--fulfills")
     prev_hash = _resolve_ref(args.prev, "--prev") if args.prev else None
-    prereg_body = None
+    prereg_body = None  # the decoded body of the prereg file, to inherit from
     if os.path.isfile(args.fulfills):
-        prereg_body = _load_manifest_body(args.fulfills, "--fulfills")
+        prereg_body = _load_manifest_body(args.fulfills, "--fulfills")[1]
 
     # target / due / declaration / hash_alg inherit from the fulfilled prereg
     # unless overridden on this postreg.
@@ -239,10 +249,11 @@ def cmd_postreg(args) -> int:
         repro_recipe=args.repro_recipe,
     )
     mani = manifest.sign(body, priv, pub)
-    _attach_ceiling(mani, body, args.ceiling, args.best_effort)
+    ref = manifest.ref(manifest.read_body(mani)[0])
+    _attach_ceiling(mani, ref, args.ceiling, args.best_effort)
     manifest.save(mani, args.out)
     print(f"{OK} post-registration written: {args.out}")
-    print(f"  ref      : {manifest.ref(body)}")
+    print(f"  ref      : {ref}")
     print(f"  fulfills : {body['fulfills']}")
     if body.get("prev_hash"):
         print(f"  prev     : {body['prev_hash']}")
@@ -256,13 +267,13 @@ def cmd_verify(args) -> int:
     ``_tests_arg``)."""
     report = verifier.verify_paths(args.paths, args.tests, artifacts_dir=args.artifacts)
 
-    print("=== manifests ===")
+    _show("=== manifests ===")
     for m in report["manifests"]:
         ss = m["selfsig"]
         s = OK if (ss["signature_ok"] and ss["keyid_ok"]) else NO  # passes format and selfsig
-        print(f"{s} {m['path']}  [{m.get('phase')}]  keyid={m.get('keyid')}")
+        _show(f"{s} {m['path']}  [{m.get('phase')}]  keyid={m.get('keyid')}")
         for err in m["format"]["errors"]:
-            print(f"    {NO} format: {err}")
+            _show(f"    {NO} format: {err}")
         fl = m["floor"]
         if fl["status"] != "absent":
             fs = OK if fl["status"] == "verified" else NO
@@ -271,7 +282,7 @@ def cmd_verify(args) -> int:
                 if fl["status"] == "verified"
                 else ""
             )
-            print(f"    {fs} drand freshness floor round {fl.get('round', '?')}{extra}")
+            _show(f"    {fs} drand freshness floor round {fl.get('round', '?')}{extra}")
         cl = m["ceiling"]
         if cl["status"] != "absent":
             cs = OK if cl["status"] == "verified" else NO
@@ -281,66 +292,66 @@ def cmd_verify(args) -> int:
                 if cl["status"] == "verified"
                 else f" ({cl.get('error', cl['status'])})"
             )
-            print(f"    {cs} ceiling witness{extra}")
+            _show(f"    {cs} ceiling witness{extra}")
         c = m["content"]
         if c["status"] not in ("skipped",):
             cs = OK if c["status"] == "ok" else NO
-            print(f"    {cs} content hashes {c['status']}")
+            _show(f"    {cs} content hashes {c['status']}")
             for e in c.get("entries", []):
                 if not e["ok"]:
-                    print(f"        {NO} {e['name']}: {e.get('reason', 'digest mismatch')}")
+                    _show(f"        {NO} {e['name']}: {e.get('reason', 'digest mismatch')}")
 
-    print("\n=== commitments ===")
+    _show("\n=== commitments ===")
     if not report["commitments"] and report["rejected_preregs"]:
-        print("  (no commitments: no pre-registration provided is validly signed)")
+        _show("  (no commitments: no pre-registration provided is validly signed)")
     elif not report["commitments"]:
-        print("  (no pre-registrations among the provided manifests)")
+        _show("  (no pre-registrations among the provided manifests)")
     for c in report["commitments"]:
-        print(f"  [{c['state'].upper()}] prereg {c['ref']}")
-        print(f"    signer       : {c.get('keyid')}")
+        _show(f"  [{c['state'].upper()}] prereg {c['ref']}")
+        _show(f"    signer       : {c.get('keyid')}")
         due = c.get("due")
         if due is None:
             due = "(none declared)"
         elif not (isinstance(due, str) and due):
             due = json.dumps(due)  # present but no timestamp, e.g. "" or 0: show it as is
-        print(f"    due          : {due}")
+        _show(f"    due          : {due}")
         if c["due_naive"]:
-            print(f"    {NO} due has no timezone; read as UTC (re-sign with an explicit offset)")
+            _show(f"    {NO} due has no timezone; read as UTC (re-sign with an explicit offset)")
         if c["state"] == "invalid-due":
-            print(f"    {NO} due is not a parseable ISO-8601 timestamp")
-        print(
+            _show(f"    {NO} due is not a parseable ISO-8601 timestamp")
+        _show(
             f"    postregs     : {len(c['counted_postregs'])}"
             + ("" if c["chain_ok"] else f"  {NO} {c['chain_note']}")
         )
         for r in c["rejected_postregs"]:
-            print(f"    {NO} postreg {r['ref']} does NOT count toward fulfillment: {r['reason']}")
+            _show(f"    {NO} postreg {r['ref']} does NOT count toward fulfillment: {r['reason']}")
     if report["rejected_preregs"]:  # pass format, fail selfsig: no commitment, no state
-        print("\n=== rejected pre-registrations ===")
+        _show("\n=== rejected pre-registrations ===")
         for rp in report["rejected_preregs"]:
-            print(f"  {NO} prereg {rp['ref']} is NOT a commitment: {rp['reason']}")
-            print(f"    keyid        : {rp.get('keyid')}")
+            _show(f"  {NO} prereg {rp['ref']} is NOT a commitment: {rp['reason']}")
+            _show(f"    keyid        : {rp.get('keyid')}")
             for r in rp["rejected_postregs"]:
-                print(
+                _show(
                     f"    {NO} postreg {r['ref']} does NOT count toward fulfillment: {r['reason']}"
                 )
     if report["notarization_only"]:
-        print("\n=== notarization-only (postregs with no matching pre-registration) ===")
+        _show("\n=== notarization-only (postregs with no matching pre-registration) ===")
         for n in report["notarization_only"]:
-            print(f"  {n['ref']}  (fulfills {n.get('fulfills')})")
+            _show(f"  {n['ref']}  (fulfills {n.get('fulfills')})")
 
-    print("\n=== tests ===")
+    _show("\n=== tests ===")
     for t in report["tests"]:
         r = report["results"][t]
         s = OK if r["result"] == "PASS" else NO
-        print(f"  {s} {t}={r['result']}  ({r['reason']})")
+        _show(f"  {s} {t}={r['result']}  ({r['reason']})")
 
     if report["ceiling_trust"]:
-        print("\n=== ceiling trust (what you are accepting) ===")
+        _show("\n=== ceiling trust (what you are accepting) ===")
         for line in report["ceiling_trust"]:
-            print(f"  - {line}")
+            _show(f"  - {line}")
 
-    print(f"\n{report['code']}")
-    print(f"Checked at {report['checked_at']}")
+    _show(f"\n{report['code']}")
+    _show(f"Checked at {report['checked_at']}")
     return EXIT_OK if report["ok"] else EXIT_FAIL
 
 

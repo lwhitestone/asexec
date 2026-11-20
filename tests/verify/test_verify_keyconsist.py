@@ -20,9 +20,7 @@ def test_keyconsist__pass__all(scenario):
 
 def test_keyconsist__pass__1_invalid_signature_is_not_judged_here(scenario):
     """keyconsist #1: a postreg with an invalid signature is not judged here (it fails selfsig)."""
-    scenario.tamper(
-        "postreg0", lambda envelope: envelope["payload"]["target"].update(model_id="SWAPPED")
-    )
+    scenario.set("postreg0", "body.target.model_id", "SWAPPED", after_signing=True)
     assert scenario.code("keyconsist") == "asexec-verify/1 format=PASS keyconsist=PASS selfsig=FAIL"
 
 
@@ -63,9 +61,7 @@ def test_keyconsist__fail__empty_only_invalid_signatures(scenario):
     """keyconsist (*): a commitment whose postregs all have invalid signatures has no key
     to check, so it is not examined: keyconsist fails rather than passing unchecked."""
     for name in ("postreg0", "postreg1", "postreg2"):
-        scenario.tamper(
-            name, lambda envelope: envelope["payload"]["target"].update(model_id="SWAPPED")
-        )
+        scenario.set(name, "body.target.model_id", "SWAPPED", after_signing=True)
     report = scenario.verify("keyconsist")
     assert len(report["commitments"][0]["rejected_postregs"]) == 3
     assert report["code"] == "asexec-verify/1 format=PASS keyconsist=FAIL selfsig=FAIL"
@@ -86,7 +82,7 @@ def test_keyconsist__fail__empty_no_postreg_references_a_prereg(scenario):
 def test_keyconsist__fail__empty_prereg_fails_selfsig(scenario):
     """keyconsist (*): a prereg that fails selfsig is no commitment, so the validly signed
     postregs naming it, by its own key, name no commitment and nothing is key-checked."""
-    scenario.tamper("prereg", lambda envelope: envelope["signature"].update(sig="00" * 64))
+    scenario.set("prereg", "dsse.signatures[0].sig", "00" * 64)
     report = scenario.verify("keyconsist")
     assert report["commitments"] == []
     assert report["code"] == "asexec-verify/1 format=PASS keyconsist=FAIL selfsig=FAIL"
@@ -98,7 +94,7 @@ def test_keyconsist__fail__empty_postreg_by_another_key_naming_a_rejected_prereg
     """keyconsist (*): a postreg by another key naming a prereg that fails selfsig is not
     compared with that prereg's keyid, which nothing authenticated: it is no failure here,
     and nothing is key-checked."""
-    scenario.tamper("prereg", lambda envelope: envelope["signature"].update(sig="00" * 64))
+    scenario.set("prereg", "dsse.signatures[0].sig", "00" * 64)
     scenario.sign_with("postreg2", keys.generate())
     report = scenario.verify("keyconsist")
     assert report["results"]["keyconsist"]["applicable"] == 0

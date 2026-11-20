@@ -1,5 +1,8 @@
 """``ceiling`` (Roughtime witness): docs/VERIFICATION.md `### ceiling`. Naming: see conftest.py."""
 
+import json
+
+import manifest_data as d
 import pytest
 
 from asexec import keys, roughtime
@@ -17,7 +20,7 @@ def sc(scenario):
 
 
 def test_ceiling__pass__all(sc):
-    """ceiling #1-#5: roughtime type, nonce == ref(payload), pinned witness, valid response."""
+    """ceiling #1-#5: roughtime type, nonce == ref, pinned witness, valid response."""
     report = sc.verify("ceiling")
     assert report["code"] == PASS
     assert report["manifests"][0]["ceiling"]["status"] == "verified"
@@ -87,8 +90,8 @@ def test_ceiling__fail__1_present_falsy_ceiling_is_examined(sc, value):
     assert sc.code("ceiling") == FAIL
 
 
-def test_ceiling__fail__2_nonce_equals_ref_of_payload(sc):
-    """ceiling #2: nonce == ref(payload). A genuine response for some other nonce fails."""
+def test_ceiling__fail__2_nonce_equals_ref(sc):
+    """ceiling #2: nonce == ref. A genuine response for some other nonce fails."""
     other_nonce = "aa" * 32
     sc.ceilings["prereg"] = lambda nonce_hex: _record(sc, other_nonce)
     assert sc.code("ceiling") == FAIL
@@ -174,7 +177,7 @@ def test_ceiling__fail__empty_no_manifest_carries_one(scenario, absent):
 def test_ceiling__fail__empty_malformed_manifest_not_examined(scenario):
     """ceiling (*): a malformed manifest is not examined, even if it carries a ceiling."""
     scenario.add_raw(
-        "bad", '{"payload": {}, "signature": {}, "ceiling": {"ceiling_type": "roughtime"}}'
+        "bad", json.dumps({**d.malformed({}), "ceiling": {"ceiling_type": "roughtime"}})
     )
     report = scenario.verify("ceiling")
     assert report["results"]["ceiling"]["applicable"] == 0
