@@ -97,6 +97,39 @@ def test_ceiling__fail__2_nonce_equals_ref(sc):
     assert sc.code("ceiling") == FAIL
 
 
+def _spaced(raw: bytes) -> bytes:
+    """The same JSON value as ``raw`` (the writer's canonical bytes), spelled with spaces."""
+    spaced = json.dumps(json.loads(raw), indent=1).encode()
+    assert spaced != raw and json.loads(spaced) == json.loads(raw)
+    return spaced
+
+
+def test_ceiling__pass__2_nonce_is_ref_of_the_stored_bytes(sc):
+    """ceiling #2: the nonce is bound to ref, the sha-256 of the body bytes as stored. A body
+    stored with non-canonical spacing, validly signed, whose ceiling was fetched for those
+    bytes, passes."""
+    sc.edit_body_bytes("prereg", _spaced)
+    stored = d.decoded(json.loads(sc.read("prereg")))
+    assert stored != d.body_bytes(json.loads(stored))  # not what the writer would store
+    report = sc.verify("ceiling")
+    assert report["code"] == PASS
+    (prereg,) = [m for m in report["manifests"] if m["phase"] == "prereg"]
+    assert prereg["ceiling"]["status"] == "verified"
+    assert prereg["ref"] == d.ref(stored)
+
+
+def test_ceiling__fail__2_nonce_is_not_ref_of_a_reserialized_body(sc):
+    """ceiling #2: a witness for the canonical re-serialization of the same JSON value is
+    not a witness for the bytes stored: nothing re-serializes the body, so it fails."""
+    sc.edit_body_bytes("prereg", _spaced)
+    canonical_hex = d.ref(d.body_bytes(sc._body("prereg"))).split(":", 1)[1]
+    sc.ceilings["prereg"] = lambda nonce_hex: _record(sc, canonical_hex)
+    report = sc.verify("ceiling")
+    assert report["code"] == FAIL
+    (prereg,) = [m for m in report["manifests"] if m["phase"] == "prereg"]
+    assert prereg["ceiling"]["status"] == "invalid"
+
+
 def test_ceiling__fail__3_witness_has_pinned_key(sc):
     """ceiling #3: witness_id has a pinned key; a key is never taken from the file."""
     sc.ceilings["prereg"] = lambda nonce_hex: _record(sc, nonce_hex, witness_id="not-pinned")
