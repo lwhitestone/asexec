@@ -1,16 +1,21 @@
 # Multi-version support
 
 > [!NOTE]
-> This is a design proposal, not a description of current behavior. It is AI-assisted, so
-> treat it with due skepticism.
+> This is a design, built only in part: the *Status* line below says which part describes
+> current behavior, and the rest is a proposal. It is AI-assisted, so treat it with due
+> skepticism.
 
 Starting with `0.4.0`, a format change adds a new version and keeps accepting the old ones
 ([`ROADMAP.md`](../ROADMAP.md#versioning)). This document covers what the verifier needs in
 order to keep that promise.
 
-**Status: not built.** The verifier accepts one value of each identifier. The promise costs
-nothing until the first format change after `0.4.0`, and this work has to land before that
-change does.
+**Status: partly built.** Step 1 of the [Plan](#plan) is built except its frozen `0.4.0`
+manifest: the verifier selects a file's rules by its `payloadType` from a `FORMATS` table in
+[`constants.py`](../src/asexec/constants.py), which has one entry, and an unknown format
+fails `format`. The selector reads the top-level `payloadType` until the DSSE switch moves
+it into `dsse`. A second entry, `--code-version` and withdrawal are not built. The promise
+costs nothing until the first format change after `0.4.0`, and the rest of this work has to
+land before that change does.
 
 ## Goal
 
@@ -53,39 +58,53 @@ in ways nobody tested.
 
 ## Verifier design
 
-A table replaces the single constants the verifier uses today:
+A table replaces the single constants the verifier used. Each entry is a plain dict, like
+the pinned drand chains and Roughtime servers, and is keyed by `payloadType`. As built:
 
 ```python
-FORMATS = {
-    "application/vnd.asexec.v1+json": Format(
-        pae_version=b"DSSEv1",
-        digest_ref_prefix="sha-256:",
-        default_hash_alg="sha-256",
-        signing_alg="ed25519",
-    ),
+FORMATS: dict[str, dict] = {
+    MANIFEST_PAYLOAD_TYPE: {  # "application/vnd.asexec.v1+json"
+        "digest_ref_prefix": "sha-256:",
+        "signing_key_alg": "ed25519",
+        "signing_pae_version": b"asexec-PAE/v1",  # DSSEv1 from the DSSE switch
+        "subject_default_hash_alg": "sha-256",
+    },
 }
 ```
 
-- **Known `payloadType`:** verify under that entry's rules.
-- **Unknown `payloadType`:** `format=FAIL`, with a reason saying the format is newer than
-  this release and to upgrade. Never fall back to another entry. `selfsig` does not examine
-  that file, so it still passes for the others: the code tells "upgrade" apart from
-  "damaged".
-- **New format:** add an entry. Existing entries are never edited.
+Only the entry under development, which no release has shipped yet, is keyed by the name
+`MANIFEST_PAYLOAD_TYPE`. Until `0.4.0` that is the one entry, so each beta's release commit,
+which rewrites that literal to the beta's own type, re-keys it. The `0.4.0` release commit
+(at the latest, before any later release commit rewrites the literal) makes the entry's key
+the literal `application/vnd.asexec.v1+json`, which never changes after that. Otherwise the
+next release commit would re-key the released `v1` entry, and every `v1` manifest would
+read as an unknown format.
+
+- **Known `payloadType`:** verify under that entry's rules: the PAE signing input, the prefix
+  of `ref` and `keyid`, and the `hash_alg` a subject without one is read with.
+- **Unknown `payloadType`:** `format=FAIL`, with a reason that says what the type is: a
+  format newer than this release (upgrade), a beta's (unsupported), or the format asexec
+  wrote before `0.4.0` (unsupported, re-sign). Never fall back to another entry. `selfsig`
+  does not examine that file, so it still passes for the others: the code tells "upgrade"
+  apart from "damaged". A missing or non-string `payloadType` is malformed, which also fails
+  `format`.
+- **New format:** add an entry, keyed by `MANIFEST_PAYLOAD_TYPE` while it is under
+  development. A released entry is never edited or re-keyed.
 
 Signing always uses the newest entry. There is no option to write an older format.
 
 ## Per-identifier behavior
 
-Names are from [`constants.py`](../src/asexec/constants.py).
+Names are the identifiers [`constants.py`](../src/asexec/constants.py) defined before the
+selector. The per-format ones are now fields of a `FORMATS` entry.
 
 | Identifier | Under multi-version support |
 |---|---|
-| `SIGNING_PAE_VERSION` | A per-format entry. Fixed to `DSSEv1` from `0.4.0`. |
-| `MANIFEST_PAYLOAD_TYPE` | The selector. Signing uses the newest value. |
-| `DIGEST_REF_PREFIX` | A per-format entry. A format's refs and keyids must all use its prefix. |
-| `SUBJECT_DEFAULT_HASH_ALG` | Split in two: the per-format verify fallback never changes, and the signing default can, because signing always writes `hash_alg`. |
-| `SIGNING_KEY_ALG` | A per-format entry, which avoids selecting an algorithm from an unsigned field. Existing key files keep working only if the format still uses their algorithm, so signing with a new algorithm needs a new key. |
+| `SIGNING_PAE_VERSION` | Built: the entry's `signing_pae_version`. Fixed to `DSSEv1` from `0.4.0`. |
+| `MANIFEST_PAYLOAD_TYPE` | Built: the selector, and the key of the entry signing uses. Signing uses the newest value. |
+| `DIGEST_REF_PREFIX` | Built: the entry's `digest_ref_prefix`. A format's refs and keyids must all use its prefix. |
+| `SUBJECT_DEFAULT_HASH_ALG` | Built, split in two: the entry's `subject_default_hash_alg` is the verify fallback and never changes, and `SUBJECT_DEFAULT_HASH_ALG` stays as the signing default, which can, because signing always writes `hash_alg`. |
+| `SIGNING_KEY_ALG` | Built: the entry's `signing_key_alg`, which avoids selecting an algorithm from an unsigned field. Verify does not read `signature.alg`, and ed25519 is the only algorithm it checks. Existing key files keep working only if the format still uses their algorithm, so signing with a new algorithm needs a new key. |
 | `VERIFY_CODE_VERSION` | Independent of the manifest format. See below. |
 | `IDENTITY_WELL_KNOWN_PATH` | Not manifest format. Fetch the new path, then fall back to the old one. |
 | `MANIFEST_PREDICATE_TYPE`, `IDENTITY_DOCUMENT_VERSION` | Written to new output only. A future test of these fields would check them per format. |
@@ -126,16 +145,18 @@ it needs a release note.
 - **Frozen manifests:** keep at least one for each format, and never edit or regenerate them.
   Every release must verify all of them. [`test_constants.py`](../tests/test_constants.py) is
   where these live today.
-- **Tampering:** changing `payloadType` to another known format must fail `selfsig`.
-- **Unknown format:** an unrecognized `payloadType` fails with the upgrade reason.
+- **Tampering:** changing `payloadType` to another known format must fail `selfsig`. Tested
+  today with a second entry added only for the test.
+- **Unknown format:** an unrecognized `payloadType` fails with the upgrade reason (tested).
 - **Old grammars:** each supported `--code-version` matches a frozen expected code.
 - **Withdrawal:** a withdrawn format fails with its reason.
 
 ## Plan
 
 1. **In `0.4.0`:** ship `payloadType` as the selector, with one `FORMATS` entry and the
-   unknown-format failure. Add the first frozen `0.4.0` manifest. Doing this with the DSSE
-   switch means `0.4.0` verifiers already reject newer formats clearly.
+   unknown-format failure (built). Add the first frozen `0.4.0` manifest (not yet: the DSSE
+   switch regenerates the frozen manifests). Doing this with the DSSE switch means `0.4.0`
+   verifiers already reject newer formats clearly.
 2. **Before the first later format change:** add the second entry and its frozen manifest.
 3. **Before the first grammar bump after `0.4.0`:** add `--code-version`.
 4. **When first needed:** add withdrawal support.

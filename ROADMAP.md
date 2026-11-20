@@ -51,10 +51,10 @@ format people adopt is the format we can stand behind.
     release notes.
   - **Until `0.4.0`:** a `MINOR` change may ship as a `0.3.x` `PATCH` instead, with the break
     called out in the release notes. From `0.4.0`, it needs a `MINOR`.
-- **Identifiers baked into signed bytes.** `SIGNING_PAE_VERSION` (`asexec-PAE/v1`) and
-  `MANIFEST_PAYLOAD_TYPE` are in the signing input, and `MANIFEST_PREDICATE_TYPE` is
-  written into the signed body. Changing any of them is a deliberate format change, never
-  incidental. In 0.4.0 the PAE prefix becomes `DSSEv1`.
+- **Identifiers baked into signed bytes.** The PAE prefix (`asexec-PAE/v1`, a `FORMATS`
+  entry's `signing_pae_version`) and `MANIFEST_PAYLOAD_TYPE` are in the signing input, and
+  `MANIFEST_PREDICATE_TYPE` is written into the signed body. Changing any of them is a
+  deliberate format change, never incidental. In 0.4.0 the PAE prefix becomes `DSSEv1`.
   The full list, and how each may change, is in
   [`tests/test_constants.py`](tests/test_constants.py).
 - **The verify-code grammar is versioned separately** (`asexec-verify/N`). The
@@ -83,7 +83,7 @@ diverged from `docs/VERIFICATION.md` changes codes only where they were wrong, a
 release note names which. A
 test name's documented meaning is fixed per code grammar, starting with `asexec-verify/1`.
 How the verifier keeps this is in [`docs/MULTIVERSION.md`](docs/MULTIVERSION.md), which
-isn't built yet.
+is built only in part (the `payloadType` selector).
 
 **Field meanings belong to each format.** A manifest is read under the rules of its own
 `payloadType`. A field that a later format defines is never read from an earlier format's
@@ -149,7 +149,8 @@ manifest, even if that manifest happens to carry it; there, it stays an unknown 
   says the body is an asexec manifest, and a third format identifier that no test checks
   could disagree with the other two. (Done ahead of 0.4.0.)
 - `dsse.payloadType` selects the format version, and unknown values fail `format`
-  ([`docs/MULTIVERSION.md`](docs/MULTIVERSION.md)).
+  ([`docs/MULTIVERSION.md`](docs/MULTIVERSION.md)). (Done ahead of 0.4.0 on the top-level
+  `payloadType`, which the DSSE envelope moves into `dsse`.)
 - `hash_alg` moves into each subject entry. A body-level `hash_alg` is no longer read, and is
   shown as unknown and unchecked, like any unknown field.
 - Subjects are an explicit list of files, each hashed exactly as listed, because directory

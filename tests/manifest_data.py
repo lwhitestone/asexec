@@ -4,8 +4,10 @@
 than ``manifest.build_*``. A schema change edits the bodies here and the builder's own
 tests; ``tests/verify/test_verify_builder_guard.py`` fails until the builder agrees.
 
-Signing reuses the library's ``signing_input``, so the signed bytes are the real ones.
-Nothing else of the writer is used, so nothing gates what can be signed.
+Signing reuses the library's ``signing_input``, so the signed bytes are the real ones, and
+writes the ``payloadType`` signing writes (pinned in ``tests/test_constants.py``), so a release
+commit that changes it changes these files with it. Nothing else of the writer is used, so
+nothing gates what can be signed.
 """
 
 from __future__ import annotations
@@ -17,7 +19,8 @@ from typing import Any
 import nacl.signing
 
 from asexec import keys
-from asexec.canonical import canonical_bytes, signing_input
+from asexec.canonical import canonical_bytes, pae, signing_input
+from asexec.constants import MANIFEST_PAYLOAD_TYPE
 
 # The files a verify scenario writes under --artifacts, and their sha-256 digests
 # ("harness/" is the directory hash of hashing.py's v1 scheme).
@@ -84,7 +87,7 @@ def sign(body: dict[str, Any], key: tuple[bytes, bytes] = TEST_KEY) -> dict[str,
     """An envelope around ``body``, signed by ``key`` whatever the body holds."""
     priv, pub = key
     return {
-        "payloadType": "application/vnd.asexec.v1+json",
+        "payloadType": MANIFEST_PAYLOAD_TYPE,
         "payload": copy.deepcopy(body),
         "signature": {
             "alg": "ed25519",
@@ -93,6 +96,20 @@ def sign(body: dict[str, Any], key: tuple[bytes, bytes] = TEST_KEY) -> dict[str,
             "sig": keys.sign(priv, signing_input(body)).hex(),
         },
     }
+
+
+def sign_labelled(
+    body: dict[str, Any], payload_type: str, key: tuple[bytes, bytes] = TEST_KEY
+) -> dict[str, Any]:
+    """An envelope labelled ``payload_type`` whose signature is valid under this release's
+    PAE prefix with that type in it: what verify would accept if it fell back to its own
+    rules for a format it does not read."""
+    priv, pub = key
+    envelope = sign(body, key)
+    signed = pae(b"asexec-PAE/v1", payload_type.encode(), canonical_bytes(body))
+    envelope["payloadType"] = payload_type
+    envelope["signature"]["sig"] = keys.sign(priv, signed).hex()
+    return envelope
 
 
 def resign(envelope: dict[str, Any], key: tuple[bytes, bytes] = TEST_KEY) -> dict[str, Any]:

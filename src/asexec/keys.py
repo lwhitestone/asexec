@@ -15,13 +15,17 @@ import os
 
 import nacl.signing
 
-from .constants import DIGEST_REF_PREFIX, SIGNING_KEY_ALG
+from .constants import FORMATS, MANIFEST_PAYLOAD_TYPE
 from .errors import AsexecError
 
+# The algorithm of the format signing writes: a key file names it, and only such a key signs.
+_ALG = FORMATS[MANIFEST_PAYLOAD_TYPE]["signing_key_alg"]
 
-def keyid_for(public_key: bytes) -> str:
-    """Stable key identifier: ``sha-256:<hex of sha256(pubkey)>``."""
-    return DIGEST_REF_PREFIX + hashlib.sha256(public_key).hexdigest()
+
+def keyid_for(public_key: bytes, payload_type: str = MANIFEST_PAYLOAD_TYPE) -> str:
+    """Stable key identifier: ``sha-256:<hex of sha256(pubkey)>``, with the prefix of format
+    ``payload_type`` (by default the one signing writes)."""
+    return FORMATS[payload_type]["digest_ref_prefix"] + hashlib.sha256(public_key).hexdigest()
 
 
 def generate() -> tuple[bytes, bytes]:
@@ -40,7 +44,7 @@ def save(private_key: bytes, path: str, *, force: bool = False) -> str:
     kid = keyid_for(pub)
     secret = {
         "version": 1,
-        "alg": SIGNING_KEY_ALG,
+        "alg": _ALG,
         "keyid": kid,
         "private_key": private_key.hex(),
         "public_key": pub.hex(),
@@ -63,7 +67,7 @@ def save(private_key: bytes, path: str, *, force: bool = False) -> str:
         json.dump(
             {
                 "version": 1,
-                "alg": SIGNING_KEY_ALG,
+                "alg": _ALG,
                 "keyid": kid,
                 "public_key": pub.hex(),
             },
@@ -86,7 +90,7 @@ def load_signing_key(path: str) -> tuple[bytes, bytes]:
             raise AsexecError(f"key file {path} is not valid JSON: {e}") from e
     if not isinstance(data, dict):
         raise AsexecError(f"key file {path} is not a JSON object")
-    if data.get("alg") != SIGNING_KEY_ALG:
+    if data.get("alg") != _ALG:
         raise AsexecError(f"unsupported key alg {data.get('alg')!r}")
     try:
         priv = bytes.fromhex(data["private_key"])

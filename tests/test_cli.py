@@ -245,6 +245,44 @@ def test_verify_marks_each_file_by_format_and_selfsig(tmp_path, key, prereg, cap
     assert "asexec-verify/1 format=FAIL selfsig=FAIL" in out
 
 
+@pytest.mark.parametrize(
+    "payload_type,reason",
+    [
+        (
+            "application/vnd.asexec.v2+json",
+            "payloadType names a format newer than this release: upgrade asexec to read it",
+        ),
+        (
+            "application/vnd.asexec.0.3.0b1+json",  # a beta no release will read
+            "payloadType names an asexec beta format, and betas are not supported",
+        ),
+    ],
+    ids=["newer", "beta"],
+)
+def test_verify_version_skew_reads_as_format_not_signature(
+    tmp_path, key, prereg, capsys, payload_type, reason
+):
+    """A postreg of a format this release does not read, beside a good prereg: its reason
+    is shown under it, attributed to format, and selfsig still passes for the prereg. The
+    postreg joins no commitment, so the prereg stays open."""
+    post = tmp_path / "post.json"
+    assert run("postreg", "--key", key, "--fulfills", prereg, "--out", post) == 0
+    mani = json.loads(post.read_text())
+    mani["payloadType"] = payload_type
+    post.write_text(json.dumps(mani))
+    capsys.readouterr()
+    assert run("verify", prereg, post, "--tests", "format,selfsig") == 2
+    out = capsys.readouterr().out
+    lines = out.split("=== commitments ===")[0].splitlines()
+    i = lines.index(f"{cli.NO} {post}  [postreg]  keyid=None")
+    assert lines[i + 1] == f"    {cli.NO} format: {reason}"
+    assert lines[1].startswith(f"{cli.OK} {prereg}  [prereg]")
+    assert "  [OPEN] prereg " in out
+    assert "  ✗ format=FAIL  (1/2 manifest(s) failed)" in out
+    assert "  ✓ selfsig=PASS  (1/1 manifest(s) ok)" in out
+    assert "asexec-verify/1 format=FAIL selfsig=PASS" in out
+
+
 def test_verify_renders_rejected_postreg_and_invalid_due(tmp_path, key, capsys):
     out = tmp_path / "pre.json"
     run("prereg", "--key", key, "--target", "t", "--out", out)

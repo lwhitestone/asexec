@@ -18,10 +18,13 @@ from collections.abc import Callable
 from datetime import datetime
 
 from . import __version__, drand, hashing, identity, keys, manifest, verifier
-from .constants import DIGEST_REF_PREFIX, SUBJECT_DEFAULT_HASH_ALG
+from .constants import FORMATS, MANIFEST_PAYLOAD_TYPE, SUBJECT_DEFAULT_HASH_ALG
 from .errors import AsexecError, VerificationError
 
-REF_RE = re.compile(re.escape(DIGEST_REF_PREFIX) + r"[0-9a-f]{64}")
+# A ref as the format signing writes it.
+REF_RE = re.compile(
+    re.escape(FORMATS[MANIFEST_PAYLOAD_TYPE]["digest_ref_prefix"]) + r"[0-9a-f]{64}"
+)
 OK = "✓"
 NO = "✗"
 

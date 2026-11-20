@@ -209,7 +209,7 @@ the rest are the practitioner's call.
 
 ```jsonc
 {
-  "payloadType": "application/vnd.asexec.v1+json",
+  "payloadType": "application/vnd.asexec.v1+json",      // required: the format; must be one this release reads
   "payload": {                                          // required: the signed body
     "predicateType": "https://asexec.org/manifest/v1",  // always
     "phase": "prereg",                                  // always: prereg | postreg
@@ -254,7 +254,7 @@ the rest are the practitioner's call.
 
 ```jsonc
 {
-  "payloadType": "application/vnd.asexec.v1+json",
+  "payloadType": "application/vnd.asexec.v1+json",      // required: the format; must be one this release reads
   "payload": {                                          // required: the signed body
     "predicateType": "https://asexec.org/manifest/v1",  // always
     "phase": "postreg",                                 // always: prereg | postreg

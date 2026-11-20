@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .constants import MANIFEST_PAYLOAD_TYPE, SIGNING_PAE_VERSION
+from .constants import FORMATS, MANIFEST_PAYLOAD_TYPE
 
 
 def canonical_bytes(payload: Any) -> bytes:
@@ -32,18 +32,18 @@ def canonical_bytes(payload: Any) -> bytes:
     ).encode("utf-8")
 
 
-def pae(payload_type: bytes, body: bytes) -> bytes:
+def pae(version: bytes, payload_type: bytes, body: bytes) -> bytes:
     """Pre-Authentication Encoding.
 
-    PAE(t, b) = PREFIX SP LEN(t) SP t SP LEN(b) SP b
+    PAE(t, b) = VERSION SP LEN(t) SP t SP LEN(b) SP b
 
-    where SP is a single ASCII space and LEN is ASCII decimal of the byte
-    length. Signing/verifying always happens over this string, never over raw
-    JSON.
+    where VERSION is the format's ``signing_pae_version``, SP is a single ASCII space
+    and LEN is ASCII decimal of the byte length. Signing/verifying always happens over
+    this string, never over raw JSON.
     """
     return b" ".join(
         [
-            SIGNING_PAE_VERSION,
+            version,
             str(len(payload_type)).encode("ascii"),
             payload_type,
             str(len(body)).encode("ascii"),
@@ -52,6 +52,8 @@ def pae(payload_type: bytes, body: bytes) -> bytes:
     )
 
 
-def signing_input(payload: Any) -> bytes:
-    """The exact bytes to sign/verify for a manifest payload."""
-    return pae(MANIFEST_PAYLOAD_TYPE.encode("ascii"), canonical_bytes(payload))
+def signing_input(payload: Any, payload_type: str = MANIFEST_PAYLOAD_TYPE) -> bytes:
+    """The exact bytes to sign/verify for a manifest payload of format ``payload_type`` (a
+    key of ``FORMATS``; by default the one signing writes), under that format's rules."""
+    version = FORMATS[payload_type]["signing_pae_version"]
+    return pae(version, payload_type.encode("ascii"), canonical_bytes(payload))

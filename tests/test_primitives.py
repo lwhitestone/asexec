@@ -21,8 +21,8 @@ def test_canonical_compact_utf8():
 
 def test_pae_is_unambiguous():
     # length-prefixing prevents "abc"+"" from colliding with "ab"+"c"
-    assert pae(b"t", b"abc") != pae(b"t", b"ab") + b"c"
-    assert pae(b"application/vnd.asexec.v1+json", b"{}").startswith(b"asexec-PAE/v1 ")
+    assert pae(b"v", b"t", b"abc") != pae(b"v", b"t", b"ab") + b"c"
+    assert pae(b"asexec-PAE/v1", b"t", b"{}") == b"asexec-PAE/v1 1 t 2 {}"
 
 
 def test_signing_input_changes_with_payload():

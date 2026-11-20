@@ -189,7 +189,7 @@ breaks any vector that hardcodes it. The options:
 - [x] 0. Decisions D1–D6 above; #47 and #48 opened for D4
 - [x] 1. #35: predicate type, `payloadType` `v1`, drop `schema_id` (D1, D1b) (on feature/0321)
 - [x] 2. #26: split `BDR` into `format` and `selfsig` (D3) (on feature/0321)
-- [ ] 3. #31: `FORMATS` table; an unknown format fails `format`
+- [x] 3. #31: `FORMATS` table; an unknown format fails `format` (on feature/0321)
 - [ ] 4. #30: beta release support (after #31, because it rewrites the `FORMATS` key)
 - [ ] 5. #44 (D2), then #42 and #43
 - [ ] 6. #32: DSSE envelope
@@ -663,3 +663,345 @@ fail when broken. Post-merge on `feature/0321` at `f1f2093`: `scripts/check.sh` 
 passed; `examples/adequacy-test/run.py` exit 0. CI on the last PR push (`ba01f26`, run
 44676473727): lint, build, test on 3.12, 3.13 and 3.14 pass. Carried forward: the
 non-string `signature.keyid` crash, noted above, goes to checkpoint 5 (#44).
+
+### Checkpoint 3: #31
+
+**Landed** (branch `feature/0321-checkpoint3`):
+- #31, `6e6c7cf` (with `80689ab`, test literals): `constants.FORMATS` holds the rules of each
+  `payloadType` verify reads, and verify reads each file under its own entry. It has one
+  entry, keyed by the name `MANIFEST_PAYLOAD_TYPE`, with `digest_ref_prefix`,
+  `signing_key_alg`, `signing_pae_version` and `subject_default_hash_alg`.
+  `SIGNING_PAE_VERSION`, `DIGEST_REF_PREFIX` and `SIGNING_KEY_ALG` are removed.
+  `SUBJECT_DEFAULT_HASH_ALG` stays, as the signing default only (now `NEW_OUTPUT`). The
+  entry's `subject_default_hash_alg` is verify's fallback. `canonical.pae` takes the PAE
+  version, and `signing_input`, `manifest.ref` and `keys.keyid_for` take a `payload_type`
+  (by default the one signing writes). Verify passes the file's own type to `selfsig`, to
+  the ceiling nonce and to `content`'s fallback. `EnvelopeInput` gains `payloadType: str`.
+  New `format` #3: a string `payloadType` that is not a `FORMATS` key fails `format`, with
+  one of three stable reasons. It is checked before this format's frame. A missing or
+  non-string `payloadType` is malformed (#1). `docs/VERIFICATION.md`, `docs/MULTIVERSION.md`
+  and `ROADMAP.md` are updated (below).
+
+**How it reads now:**
+- `format` #1's frame is an object `payload`, a **string `payloadType`** and an object
+  `signature`. A missing or `null` `payloadType` gives `malformed: payloadType: Field
+  required`, and one that is not a string gives `malformed: payloadType: Input should be a
+  valid string`.
+- `format` #3: `payloadType` names a `FORMATS` key, compared exactly. A string that names
+  none fails `format` with one of three reasons:
+  - `application/vnd.asexec+json` (what 0.2.0 to 0.3.20 wrote): `payloadType names the
+    format of asexec before 0.4.0, which is not supported: re-sign with this release`.
+  - `application/vnd.asexec.X.Y.ZbN+json`: `payloadType names an asexec beta format, and
+    betas are not supported`.
+  - Any other string: `payloadType names a format newer than this release: upgrade asexec
+    to read it`.
+
+  #3 runs before the frame check. A file of an unknown format is held only to "readable
+  JSON object, at most 64 deep, no duplicate key", so a later format that lays its file out
+  differently still gets the upgrade reason and not `malformed`. A file that fails #3 is
+  treated as a malformed file is: no other test examines it, it joins no commitment, and
+  it shows `✗` with the reason beneath.
+- `docs/VERIFICATION.md`:
+  - *Property paths* names `payloadType`, and a new *Formats* convention gives the v1 rules.
+  - The run rules define *malformed* (now including "a string `payloadType`") and *unknown
+    format*; both fail `format` and are examined by nothing else.
+  - The summary row, *Examines* (`payloadType`), #1, the new #3 and the failure reasons are
+    updated. *Does not establish* loses its "does not read `payloadType`" clause, and there
+    is a version-skew example.
+  - `ceiling`, `content` and `floor` read "a manifest that fails `format`" and "no manifest
+    that passes `format`" where they said malformed or well-formed. The matching table's
+    first row is "Malformed, or of an unknown format". `selfsig` #1 names the file's
+    `payloadType`.
+- `docs/MULTIVERSION.md`:
+  - Status is "partly built": step 1 is built except its frozen 0.4.0 manifest, which #32
+    regenerates. The selector reads the top-level `payloadType` until the DSSE switch.
+  - The design block is the built entry, and the unknown-format bullet lists the three
+    reasons.
+  - Each per-identifier row says where the value now lives.
+  - *Testing* and *Plan* step 1 mark what is built. Nothing else is claimed.
+- `ROADMAP.md`: the identifiers bullet names the entry's `signing_pae_version`. The support
+  section says MULTIVERSION is built in part. The `dsse.payloadType` bullet is marked done
+  ahead of 0.4.0 on the top-level `payloadType`.
+
+**Evidence:**
+- `scripts/check.sh`: ruff check and format check clean; pytest **417 passed before**
+  (`ffbc79c`), **442 after**. By file: `test_verify_format.py` 22 → 38, `test_constants.py`
+  15 → 19, `test_verify_run_rules.py` 40 → 44, `test_cli.py` 79 → 81,
+  `test_verify_planted_faults.py` 26 → 25 (the `payloadType-missing` case moved to `format`).
+- Red first: with only the tests changed, 34 failed and 408 passed. The failures were
+  `format=PASS` where `format=FAIL` was expected (14 codes, the CLI exit status), `module
+  'asexec.constants' has no attribute 'FORMATS'` (8), `pae() takes 2 positional arguments`
+  (2), the doc-coverage test (`('format', 3)` has no doc item), the IMPACT set,
+  `PRE_V1_MANIFEST` reading `format=PASS selfsig=FAIL`, and the reason lists. With the code
+  in place only the doc-coverage test failed. It passed once `docs/VERIFICATION.md` had #3.
+- Tests that pin each requirement:
+  - `format` #3: `test_format__fail__3_payload_type_names_a_known_format`, with 9 cases:
+    `v2`, `v10`, `not-asexec`, `empty`, `other-case` (the current type in capitals),
+    `trailing-space`, `beta` (`0.3.0b1`), `beta-wide` (`1.12.3b20`) and `before-0.4.0`. Each
+    gives `format=FAIL selfsig=PASS`, format `1/4 manifest(s) failed`, selfsig applicable 3,
+    and its exact reason.
+  - `test_format__fail__3_unknown_format_is_not_judged_by_this_formats_frame`: a
+    `{payloadType: v2, dsse: …}` file gets the upgrade reason, not `malformed`.
+  - `test_format__fail__3_never_falls_back_to_this_releases_rules`: a file signed over
+    `asexec-PAE/v1` with the v2 type in its PAE, which a fallback to v1's rules would accept,
+    fails `format`.
+  - `format` #1: `test_format__fail__1_payload_type_is_a_string` (missing, `null`, number,
+    list, object), each with its exact `malformed: payloadType: …` reason.
+    `test_format__pass__all` now names #1-#3. The `missing-payload` and
+    `missing-signature` malformed files now carry a `payloadType`, so each still lacks only
+    the one property.
+  - Treated as malformed (run rules):
+    - `test_run__malformed_file_fails_format_and_no_other_test_examines_it[unknown-format]`:
+      a relabelled copy of the prereg, ceiling and all, gives `ceiling=PASS chain=PASS
+      content=PASS format=FAIL keyconsist=PASS selfsig=PASS`.
+    - `test_run__file_failing_format_is_examined_by_no_other_test[unknown-format]`: floor,
+      ceiling and content are not examined.
+    - `test_run__malformed_postreg_joins_no_commitment[newer-format|beta-format]`: neither
+      counted nor rejected nor notarization-only, and `keyconsist` applicable 0.
+  - The selector itself (`tests/test_constants.py`), with a second entry added through
+    `monkeypatch.setitem` whose every rule but `signing_key_alg` (ed25519 in both) differs
+    from v1's:
+    - `test_formats__a_file_is_read_under_its_own_entry`: `signing_input(…, OTHER)` starts
+      `asexec-PAE/other 33 application/vnd.asexec.other+json`. Its file and a v1 file both
+      pass `format` and `selfsig` (each PAE and keyid prefix), the refs start `other-256:`
+      and `sha-256:`, and `content`'s fallback is per entry (`algorithm unavailable:
+      'no-such-alg'` for one, `ok` for the other).
+    - `test_formats__payload_type_is_signed_so_relabelling_fails_selfsig`: either file
+      relabelled with the other known type gives `format=PASS selfsig=FAIL`
+      (MULTIVERSION's *Tampering* test).
+    - `test_formats__signing_uses_the_entry_of_manifest_payload_type`: the new entry does not
+      change what signing writes.
+  - Constants: `test_formats_has_one_entry_keyed_by_manifest_payload_type`
+    (`list(FORMATS) == [MANIFEST_PAYLOAD_TYPE]`, and the entry equals a literal dict of all
+    four values). `test_signing_pae_version_and_manifest_payload_type`,
+    `test_digest_ref_prefix`, `test_signing_key_alg` and the new
+    `test_format_subject_default_hash_alg` pin each value again with what it does.
+    `test_subject_default_hash_alg` is now the signing default, `NEW_OUTPUT`, and
+    `test_every_identifier_is_classified` checks the new IMPACT.
+    `test_manifest_payload_type_change_fails_what_was_signed_before_it` now requires
+    `PRE_V1_MANIFEST` to give `format=FAIL selfsig=FAIL` with the pre-0.4.0 reason.
+    `test_not_enforced_yet__envelope_payload_type` is removed, because it is enforced now.
+  - CLI: `tests/test_cli.py::test_verify_version_skew_reads_as_format_not_signature[newer|beta]`
+    checks the `✗ <file>  [postreg]  keyid=None` line, the `    ✗ format: <reason>` line
+    under it, `✓` for the prereg, `[OPEN]`, `format=FAIL (1/2 …)`, `selfsig=PASS (1/1 …)`
+    and exit 2.
+  - `tests/test_primitives.py::test_pae_is_unambiguous` covers the three-argument `pae`.
+- **Signed bytes unchanged:**
+  - The frozen vectors pass unedited (`test_frozen_manifests_still_verify` and the PAE
+    literal in `test_signing_pae_version_and_manifest_payload_type`).
+  - `git diff ffbc79c -- tests/test_constants.py` doesn't touch a vector. An AST comparison
+    of the `FROZEN_KEY`, `FROZEN_BODY`, `FROZEN_MANIFEST`, `FROZEN_NO_HASH_ALG_MANIFEST` and
+    `PRE_V1_MANIFEST` assignments at `ffbc79c` and now finds them identical, and no `-`/`+`
+    line of the diff holds a signature or key hex.
+  - Independently, a script (in the session scratchpad) ran on the pre-change worktree
+    (`ffbc79c`) and on this branch. It writes `signing_input`, `manifest.sign`'s envelope and
+    `ref` for three bodies (a prereg; one with `due` and a non-ASCII structured
+    `declaration`; a postreg with `prev_hash`), with a fixed key, plus `keyid_for` and
+    `identity.build_wellknown`. The two outputs are byte-identical (sha256 `90df7f42…` for
+    both).
+  - Each run imported its own `asexec/constants.py`, checked by whether `FORMATS` exists.
+- CLI demonstrations, in a scratch dir. The files:
+  - `keygen`; `prereg --target "model m via provider p"`; `postreg --fulfills prereg.json`
+    → `postreg-1.json`.
+  - `postreg-v2.json` and `postreg-beta.json` are `postreg-1.json` with `payloadType` set to
+    `application/vnd.asexec.v2+json` and `application/vnd.asexec.0.4.0b1+json`.
+  - `old-0.3.20.json` is a prereg signed by the real 0.3.20 CLI (`git worktree add <scratch>
+    v0.3.20`; `asexec --version` printed `asexec 0.3.20`; its `payloadType` is
+    `application/vnd.asexec+json`). 0.3.20's own verifier gives it `asexec-verify/1 BDR=PASS`.
+
+  Each command is `asexec verify prereg.json <file> --tests format,selfsig,chain,keyconsist`:
+  - With `postreg-v2.json`: `✓ prereg.json  [prereg]  keyid=sha-256:6dd1ef2d…`, then
+    `✗ postreg-v2.json  [postreg]  keyid=None` with `    ✗ format: payloadType names a format
+    newer than this release: upgrade asexec to read it` beneath. Then `[OPEN] prereg
+    sha-256:b17107d0…` (`postregs : 0`), `✗ format=FAIL  (1/2 manifest(s) failed)`,
+    `✓ selfsig=PASS  (1/1 manifest(s) ok)` and `asexec-verify/1 chain=FAIL format=FAIL
+    keyconsist=FAIL selfsig=PASS`, exit 2.
+  - With `postreg-beta.json`: the same, with `    ✗ format: payloadType names an asexec beta
+    format, and betas are not supported`.
+  - With `old-0.3.20.json`: `✗ old-0.3.20.json  [prereg]  keyid=None` and `    ✗ format:
+    payloadType names the format of asexec before 0.4.0, which is not supported: re-sign with
+    this release`, then `format=FAIL`, `selfsig=PASS (1/1)`, exit 2.
+  - All five files: `[FULFILLED]` by `postreg-1.json`, `✗ format=FAIL  (3/5 manifest(s)
+    failed)`, `✓ selfsig=PASS  (2/2 manifest(s) ok)`, `asexec-verify/1 chain=PASS
+    format=FAIL keyconsist=PASS selfsig=PASS`, exit 2.
+  - The good pair alone: `asexec-verify/1 chain=PASS format=PASS keyconsist=PASS
+    selfsig=PASS`, exit 0.
+
+  The same files under the pre-change verifier (`ffbc79c`):
+  - `postreg-v2.json` and `postreg-beta.json` **passed everything**: `✓`, keyid shown,
+    `chain=PASS format=PASS keyconsist=PASS selfsig=PASS`. Verify checked under the constant,
+    so a type changed after signing went unseen.
+  - `old-0.3.20.json` gave `format=PASS selfsig=FAIL`, a bad signature, with no word about
+    the format.
+- Release-commit rehearsal for #30, on a scratch copy and reverted: `sed` on the one line
+  `MANIFEST_PAYLOAD_TYPE = "…"` to `application/vnd.asexec.0.4.0b1+json`, with no other edit.
+  4 tests failed and 438 passed. The failures were the literal pin
+  (`test_signing_pae_version_and_manifest_payload_type`), `test_frozen_manifests_still_verify`,
+  `test_not_enforced_yet__predicate_type` and `test_not_enforced_yet__signature_alg`. The
+  last three read `FROZEN_MANIFEST` (see observations).
+- `uv run python examples/adequacy-test/run.py`: exit 0, the same codes and caught/missed
+  results as after checkpoint 2.
+- Nothing left behind: `git grep -n -e SIGNING_PAE_VERSION -e DIGEST_REF_PREFIX -e
+  SIGNING_KEY_ALG -e 'does not read payloadType' -e envelope_payload_type -e
+  payloadType-missing` outside `docs/040b1-PATH.md` finds only the three rows of
+  `docs/MULTIVERSION.md`'s per-identifier table, which name the old identifiers on purpose
+  and say where each now lives. `keys.py` keeps a private `_ALG` read from the signing entry.
+- CI on PR #52 at `d8d8c80` (run 44679335086): lint, python-matrix, test (3.12, 3.13, 3.14)
+  and build pass.
+
+**Observations (out of scope):**
+- For #30:
+  - `release.sh` needs to rewrite only the one `MANIFEST_PAYLOAD_TYPE = "…"` line in
+    `src/asexec/constants.py`. `FORMATS` is keyed by that name, so its key follows.
+  - In `tests/test_constants.py`, the literals it must rewrite (or the D6b skip must cover)
+    are all in `test_signing_pae_version_and_manifest_payload_type`: the type, the PAE
+    bytes, and `_signed_prereg()["payloadType"]`.
+  - The D6b skip must also cover `test_not_enforced_yet__predicate_type` and
+    `test_not_enforced_yet__signature_alg` (`tests/test_constants.py:372-381`). They verify
+    `FROZEN_MANIFEST`, a v1 file, which a beta build reads as an unknown format.
+  - `docs/VERIFICATION.md` (*Formats*, `format` #3) names `application/vnd.asexec.v1+json`
+    as the one format read. On main after b1 that is the beta type (D6a), so the doc will
+    describe 0.4.0, not main.
+- For #32:
+  - Its scope names "the `SIGNING_PAE_VERSION` literal". That literal is now
+    `FORMATS[MANIFEST_PAYLOAD_TYPE]["signing_pae_version"]` in `src/asexec/constants.py`.
+  - `verify_format` (`src/asexec/verifier.py:224`) reads the top-level `payloadType`, and
+    `EnvelopeInput.payloadType` (`src/asexec/models.py:92`) is its frame field. Both move to
+    `dsse.payloadType`. The #3 check should still come before the new frame, so a later
+    format keeps the upgrade reason.
+  - `tests/manifest_data.py` `sign_labelled` hardcodes `b"asexec-PAE/v1"`.
+- The manifests block still shows `payload.phase` for a file of an unknown format (`[postreg]`
+  in the demos), read from a body this release can't interpret. It is display only and no
+  verdict depends on it, and malformed files show it the same way. Left as it is, since the
+  checkpoint says to treat them exactly as malformed files are.
+- `signing_key_alg` is data only on the verify side. `keys.verify` is ed25519 whatever the
+  entry says, and `signature.alg` is still not read (`test_not_enforced_yet__signature_alg`).
+  With one algorithm there is nothing to dispatch on, so a second algorithm needs a dispatch
+  in `keys.verify`.
+- The "newer" reason covers every unrecognised string, including ones that are not asexec
+  types at all (`application/something-else`). #31 specifies two kinds of reason, and a
+  fourth, "not an asexec type", wasn't added.
+
+**Judgement calls / new paradigms:**
+- **Entry structure:** a plain `dict[str, dict]`, the convention of `drand.CHAINS` and
+  `roughtime.SERVERS`. It is not a class or a `NamedTuple`. The field names are the old
+  constant names in lowercase, so each value can be traced to the identifier it replaced
+  (and to the release notes). `docs/MULTIVERSION.md`'s example now shows the built shape.
+- **The key is the name, not a second literal.** `FORMATS = {MANIFEST_PAYLOAD_TYPE: {...}}`
+  keeps one definition of the type, which is `constants.py`'s rule. #30 then rewrites one
+  line, and the key can't disagree with the constant.
+  `test_formats_has_one_entry_keyed_by_manifest_payload_type` pins both the one entry and the
+  key. `FORMATS` therefore sits just after `MANIFEST_PAYLOAD_TYPE`, out of alphabetical
+  order, and its comment says why. The name key is only for the entry under development:
+  the 0.4.0 release commit (at the latest, before any later release commit) makes the `v1`
+  key its literal (corrected in review round 1, below).
+- **`SUBJECT_DEFAULT_HASH_ALG` split, not removed.** `docs/MULTIVERSION.md` says to split it.
+  The entry holds verify's fallback, and the constant stays as the signing default
+  (`hashing`, `manifest._build`, the CLI's `--hash-alg`), reclassified `NEW_OUTPUT`: signing
+  always writes `hash_alg` beside a subject, so changing it alters only new files. The other
+  three constants are removed. Their signing-side readers (`keys`, `identity`, the writer
+  `Signature` model, the CLI's `REF_RE`, `manifest.ref`) now read the newest entry. That
+  goes beyond #31's listed files, but it is what "replaces the single constants" requires.
+- **Absent and non-string `payloadType` are malformed (#1), not #3.** This is the
+  conservative reading: they fail `format`, and nothing falls back. They belong to the
+  frame, as D3a's "a missing frame" and #32/ROADMAP's malformed rule ("`dsse` with
+  `payloadType`") put it, and they read like a missing `payload`. Their reasons are
+  pydantic's, as for every frame field, and the tests pin them exactly, so a pydantic upgrade
+  that rewords them fails a test.
+- **A pre-0.4.0 reason of its own.** The upgrade reason would be wrong for a 0.3.x file, since
+  upgrading can't help. The verifier recognises the one type 0.2.0 to 0.3.20 wrote, checked
+  in the tags, only to give the reason. It is a private literal in `verifier.py`, not a
+  `constants.py` identifier, because nothing writes it.
+- **Reasons are fixed strings with no file content**, like `REASON_INVALID_SIGNATURE`, so
+  nothing from the file reaches the terminal. They start with `payloadType`, without
+  `malformed:`, because the file is not damaged.
+- **#3 before the frame** (above): otherwise a future format with another layout would read
+  as `malformed`, which is what D3 is meant to prevent.
+- **`tests/manifest_data.py` signs with `MANIFEST_PAYLOAD_TYPE`** rather than its own copy of
+  the literal. Verify now reads that field, so a copy would break every verify test under
+  #30's beta type. The literal stays pinned in `tests/test_constants.py`. For the same
+  reason (`80689ab`), the new tests take the current type from the constant, and use the
+  beta `0.3.0b1`, which no release reads, rather than `0.4.0b1`, which b1 will read.
+
+**Release-note entries** (for #40, in the `tests/test_constants.py` header format):
+
+```
+Identifier: SIGNING_PAE_VERSION, DIGEST_REF_PREFIX, SIGNING_KEY_ALG -> removed from asexec.constants; now FORMATS[<payloadType>]["signing_pae_version" | "digest_ref_prefix" | "signing_key_alg"], values unchanged
+Impact: BREAKS_USERS
+Affected: a tool that imports these names from asexec.constants (ImportError); no published manifest (signed bytes, refs and keyids are unchanged)
+Action: read constants.FORMATS[constants.MANIFEST_PAYLOAD_TYPE][...] instead
+
+Identifier: FORMATS (new), the rules of each payloadType verify reads; verify now reads payloadType
+Impact: BREAKS_USERS
+Affected: a manifest whose payloadType is not a FORMATS key now fails format with a reason (0.3.x manifests: format=FAIL "... before 0.4.0 ... re-sign", where selfsig=FAIL before); a manifest with no string payloadType is malformed
+Action: re-sign 0.3.x manifests with this release
+
+Identifier: SUBJECT_DEFAULT_HASH_ALG, sha-256 (unchanged), reclassified BREAKS_USERS -> NEW_OUTPUT
+Impact: NEW_OUTPUT
+Affected: nothing published (verify's fallback is now FORMATS[...]["subject_default_hash_alg"])
+Action: none
+```
+
+**Review round 1** (findings on PR #52):
+1. `selfsig` reads `payloadType` (the PAE input and the keyid prefix), and `content` reads it
+   for its default `hash_alg`, but neither listed it under *Examines* → added to both
+   sections and to both summary rows. `selfsig` #2 now notes that `sha-256:` is the format's
+   prefix. Commit `514ba6c`.
+2. `README.md:202-203` says fields marked `required` are the ones without which a file is
+   malformed, but `payloadType` wasn't marked → both envelope examples mark it
+   `// required: the format; must be one this release reads`. Commit `58ce175`.
+3. A prereg that fails `format` makes a postreg naming it notarization-only, and neither the
+   doc nor a test said so. *Matching postregs to commitments* now defines a **provided
+   prereg** as one that passes `format`, and adds that a prereg failing it is no commitment,
+   so a postreg naming it is notarization-only. The run rule says "as a prereg it is no
+   commitment, and as a postreg it is neither counted nor rejected". Test:
+   `test_run__prereg_failing_format_is_not_a_provided_prereg[bad-hex|newer-format]` (no
+   commitment, the postreg notarization-only with its `fulfills`, `keyconsist` applicable 0,
+   `selfsig` applicable 1). The behaviour already held, so the test was checked against a
+   planted change in `verify_paths` that keeps a prereg failing `format` as a commitment.
+   Both cases failed under it and passed once it was reverted. Commit `514ba6c`.
+4. The name key contradicted "existing entries are never edited", and its trigger ("when a
+   second format is added") was too late. After 0.4.0, any release commit that rewrites the
+   type would re-key the released `v1` entry. The reviewer showed it: a `sed` to
+   `application/vnd.asexec.0.5.0b1+json` makes `FROZEN_MANIFEST` fail with "newer than
+   this release" → the `constants.py` comment, the
+   `test_formats_has_one_entry_keyed_by_manifest_payload_type` comment and
+   `docs/MULTIVERSION.md` (*Verifier design*, *New format*) now say that only the entry
+   under development has the name key. They also say the 0.4.0 release commit (at the
+   latest, before any later release commit rewrites the literal) makes the key the literal
+   `application/vnd.asexec.v1+json`, which never changes after that. The judgement call
+   above is corrected to match. #30 is not implemented here (see observations). Commit
+   `58ce175`.
+5. #40's release-note list names `SIGNING_PAE_VERSION`, which no longer exists → moved to
+   observations (below).
+6. `tests/test_constants.py` and these notes said every `OTHER_RULES` rule differs from
+   v1's, but `signing_key_alg` is `ed25519` in both → both reworded. Commit `58ce175`.
+7. The malformed definition ("lacks an object `payload`") also fits a later format's file
+   with another layout → the run rule now says a readable JSON object with an unknown
+   `payloadType` is judged by #3 instead of the rest of #1 and #2, so it is of an unknown
+   format and never malformed. Commit `514ba6c`.
+8. The `docs/MULTIVERSION.md` banner still called the whole document a proposal → it now
+   says the *Status* line marks which part describes current behavior. Commit `58ce175`.
+
+`scripts/check.sh`: clean, 444 passed (442 + the 2 new run-rule cases). CI on `3f62b80`
+(run 44681321756): lint, python-matrix, test (3.12, 3.13, 3.14) and build pass.
+
+**Observations added in review round 1 (out of scope):**
+- **#44 (checkpoint 5), an intended contrast:** a prereg that fails `format` is not a provided
+  prereg, so a postreg naming it is notarization-only (finding 3). Under D2, a prereg that
+  passes `format` but fails `selfsig` is also not a commitment, but it is listed under
+  *rejected pre-registrations*, and a postreg naming it is listed as rejected under it, not
+  as notarization-only. The difference is intended. A file that fails `format` can't be read
+  under any rules this release has, so nothing can be said about what it names. One that
+  passes `format` is readable, and only its signature is in question.
+- **#30 (checkpoint 4), the frozen-vector skip:** D6b's skip ("when `MANIFEST_PAYLOAD_TYPE`
+  is a beta type") should apply only while it is a 0.4.0 beta, that is, before any format
+  has been released. Otherwise, after 0.4.0, a beta release commit would skip every test
+  that guards the `v1` entry, at the same time as it could be re-keying that entry. With a
+  `0.5.0b1` type, all four tests that read the frozen `v1` vectors would be skipped. An
+  alternative is a pin that `application/vnd.asexec.v1+json` is a `FORMATS` key whenever
+  the type is not a 0.4.0 beta. #30 should also make the `v1` key a literal in the 0.4.0
+  release commit (finding 4), or say which step does.
+- **#40:** its body has the release notes name `SIGNING_PAE_VERSION` (#32's change). That
+  constant no longer exists. Its value is `FORMATS[MANIFEST_PAYLOAD_TYPE]["signing_pae_version"]`,
+  so the release-note entry for the PAE prefix should name that field.
