@@ -2393,3 +2393,129 @@ body examples, which say "every field filled in") and `ROADMAP.md` (done-ahead m
   other tests use it.
 - The usage error for bad inline JSON prints no `usage:` line, unlike argparse's own; the
   exit status is the same.
+
+#### #46: `timely` and the `no-due` state
+
+**Landed:** `c101617`. `timely` is in `TEST_CATALOG`. Per commitment, `verify_paths` collects
+the ceiling of every counted copy of each counted postreg and, when the prereg's `due`
+parses, gives each counted postreg a `timeliness` entry (`ref`, `status`: `on-time`, `late`,
+`no-ceiling` or `invalid-ceiling`, and `no_later_than`) from **`verifier._on_time`, the one
+ceiling-to-`due` comparison** (#37 reuses it). Each commitment gets a `timely` record
+(`examined`, `ok`, `reason`), `due_present` and `due_invalid`. A verified ceiling record gains
+`no_later_than` (`_no_later_than`: `midpoint + radius` from the verified response). State
+`no-due` replaces `open` for a commitment with no counted postreg and no `due`. CLI: `[NO-DUE]`;
+with `timely` requested, one `✗ postreg <ref> …` line under its commitment per counted postreg
+not shown on time; the unparseable-`due` line in every state; the ceiling trust line adds `so
+no later than <T>`. Docs: `docs/VERIFICATION.md` (a `timely` section with example, the summary
+row, *Output*, *Commitment states*, the version-skew example's `[NO-DUE]`, *Not in this
+version*), `README.md` (the state list and the timeliness caveat, a new *On time* bullet),
+`ROADMAP.md` (done-ahead marks), the verifier docstring.
+
+**`timely`'s items** (for each commitment with a `body.due` and a counted postreg):
+1. `body.due` parses (naive read as UTC), else the commitment fails with `due is not a
+   parseable ISO-8601 timestamp` (D5a);
+2. each counted postreg has a `ceiling` (D5a: no ceiling fails);
+3. that ceiling meets the `ceiling` conditions #1-#5;
+4. its time T is at or before `due`.
+
+**The two settled points (as the brief asked):**
+- **Which time a ceiling gives:** T = `SREP.MIDP + SREP.RADI`, the later end of the interval
+  the witness signed, read from the verified response by `roughtime.verify_ceiling`, never
+  from the file's unsigned `ceiling.midpoint`/`ceiling.radius`. This is the conservative
+  "existed no later than" time, and the ceiling trust block now prints it beside `midpoint ±
+  radius`. Pinned by `test_timely__fail__4_ceiling_at_or_before_due[2023-11-14T22:13:20Z]`
+  (a due at the midpoint, one radius before T, fails), `test_timely__pass__4_ceiling_exactly_at_due`
+  (T itself passes) and `test_timely__fail__4_the_unsigned_midpoint_and_radius_are_not_read`.
+- **A ceiling that fails the `ceiling` conditions is not on time:** it is treated like a
+  missing one (`invalid-ceiling`), whatever time it claims. Pinned by
+  `test_timely__fail__3_ceiling_meets_the_ceiling_conditions` (an unpinned witness, a genuine
+  ceiling of another body, a genuine response for another nonce, a non-roughtime type, a
+  `ceiling.pubkey` that is not the pinned key, a junk string).
+
+**Judgement calls:**
+- **Commitments only** (checkpoint 5's note): a rejected pre-registration's `due` is never
+  read (`test_timely__fail__empty_a_rejected_preregistration_is_not_examined`). D5a's "no
+  prereg has a due" is read as "no commitment with a due has a counted postreg", which is
+  also the empty reason: `requested but no commitment with a due has a counted postreg`. A
+  commitment with a `due` and no counted postreg is not examined either (the issue's
+  *Examines*: "at least one counted postreg"); its state says it was not reported.
+- **Copies:** a postreg is its `ref`. With several counted copies, it is on time when any
+  counted copy carries a ceiling that meets the conditions and is on time, and its time is the
+  earliest such T. A ceiling binds the body, not the copy, so any genuine witness of the body
+  shows it existed. The counted entries are unchanged (still deduplicated), so `chain` and
+  `keyconsist` see exactly what they saw before.
+- **Report marks are shown with `timely` requested only**, so a run that never asks about
+  timeliness (and has no ceilings) gets no `✗` lines for it; the report dict has the
+  `timeliness` entries either way. The unparseable-`due` line is now shown in every state (it
+  was shown for `invalid-due` only), since `timely` fails on it.
+- A late or unwitnessed postreg is reported as "not shown on time", not as "created after
+  due": the ceiling is the only evidence of time, and one fetched late shows only that.
+
+**Evidence:**
+- Red first: with only the tests changed, **63 failed, 737 passed**: `timely` was no test
+  (`KeyError: 'timely'` through `verify_paths`; every `test_verify_timely.py` test, the
+  never-raises cases that now request `timely`), `[OPEN]` where `[NO-DUE]` was expected (the
+  states tests, the CLI), the CLI's missing marks and trust-block time, and doc coverage
+  (`timely` #1-#4). With the code, 5 failed: the version-skew test's `[OPEN]` (now `[NO-DUE]`,
+  intended), doc coverage until the section was written, and one test whose tampering (the
+  response's last byte to `00`) changed nothing; it now uses a genuine response for another
+  nonce.
+- `scripts/check.sh`: clean, **800 passed** (763 after #36).
+- Tests (`tests/verify/test_verify_timely.py`, new): `test_timely__pass__all` (3 on time,
+  `no_later_than` = 2023-11-14T22:13:21Z), `__pass__1_due_without_offset_is_read_as_utc`,
+  `__fail__1_due_is_parseable` (5: text, number, list, empty, zero; still `fulfilled`),
+  `__fail__2_counted_postreg_has_a_ceiling`, `__fail__3_ceiling_meets_the_ceiling_conditions`
+  (6), `__fail__4_ceiling_at_or_before_due` (2: well before, and at the midpoint; still
+  `fulfilled` with 3 counted, each `late`), `__pass__4_ceiling_exactly_at_due`,
+  `__fail__4_the_unsigned_midpoint_and_radius_are_not_read`,
+  `__pass__2_any_counted_copy_with_a_verified_ceiling_shows_it`,
+  `__pass__all_a_prereg_without_due_is_not_examined` (a mixed run, applicable 1),
+  `__fail__empty_no_prereg_has_a_due` (missing, null),
+  `__fail__empty_due_but_no_counted_postreg`,
+  `__fail__empty_a_rejected_preregistration_is_not_examined`.
+  States: `test_state__open__no_counted_postreg_and_due_in_the_future`,
+  `test_state__no_due__no_counted_postreg_and_no_due` (absent, null),
+  `test_state__fulfilled__with_no_due`, `test_state__fulfilled__a_late_postreg_still_fulfills`.
+  Never raises: `test_never_raises__junk_ceiling_on_a_counted_postreg` (5, with `ceiling` and
+  `timely`), and `test_never_raises__validly_signed_junk_in_a_body_field` (now 39 cases, among
+  them `due-not-string`) runs with `timely`. CLI:
+  `test_verify_marks_each_counted_postreg_not_shown_on_time` (on time, late, no ceiling; no
+  marks without `timely`), `test_verify_ceiling_trust_names_the_time_timely_compares`,
+  `test_verify_renders_no_due`, `test_verify_flags_an_unparseable_due_on_a_fulfilled_commitment`.
+- CLI demonstrations, in a scratch dir, through `cp7/witness_cli.py` (session scratchpad): it
+  runs `asexec` in-process with a pinned synthetic Roughtime witness (MIDP
+  2023-11-14T22:13:20Z, RADI 1 s) standing in for the network for `--ceiling`; nothing else
+  changes. `prereg --target "model m via provider p" --due …`, `postreg --fulfills … [--ceiling]`:
+  - **On time** (`--due 2099-01-01T00:00:00Z`, postreg with `--ceiling`): `[FULFILLED] prereg
+    sha-256:b74ae2db…`, `postregs : 1`, no mark, `✓ timely=PASS (1/1 commitment(s) ok)`, trust
+    line `ceiling witnessed by synthetic at 1700000000.0 (±1.0s), so no later than
+    2023-11-14T22:13:21Z - you are trusting synthetic …`, `asexec-verify/1 format=PASS
+    selfsig=PASS timely=PASS`, exit 0.
+  - **Late but fulfilled** (`--due 2000-01-01T00:00:00Z`): `[FULFILLED] prereg
+    sha-256:daa96b3a…`, `postregs : 1`, `✗ postreg sha-256:5006f81b… is late: its ceiling (no
+    later than 2023-11-14T22:13:21Z) is after due`, `✗ timely=FAIL (1/1 commitment(s)
+    failed)`, exit 2.
+  - **No ceiling**: `[FULFILLED]`, `✗ postreg sha-256:6d17348b… is not shown on time: it has no
+    ceiling`, `timely=FAIL`.
+  - **Forged ceilings:** the late postreg with its unsigned `ceiling.midpoint` edited to
+    2020-01-01 and `radius` to 0 still reads `is late: … (no later than 2023-11-14T22:13:21Z)`;
+    with `witness_id` changed to `made-up`: `✗ ceiling witness (no pinned long-term key for
+    witness 'made-up'; …)` and `✗ postreg sha-256:5006f81b… is not shown on time: its ceiling
+    does not verify`, `ceiling=FAIL … timely=FAIL`; the on-time postreg's genuine ceiling
+    copied onto another postreg: `✗ ceiling witness (ceiling nonce does not bind to this
+    manifest (nonce != ref))`, `its ceiling does not verify`, `ceiling=FAIL … timely=FAIL`.
+  - **No-due**: a prereg with no `--due`: `[NO-DUE] prereg sha-256:b17107d0…`, `due : (none
+    declared)`, `postregs : 0`, `✗ timely=FAIL (requested but no commitment with a due has a
+    counted postreg)`.
+  - The `docs/VERIFICATION.md` `timely` examples use these refs (b74ae2db…, daa96b3a…,
+    5006f81b…), which depend only on the bodies, with the witness and times elided.
+- `examples/adequacy-test/run.py`: exit 0, unchanged (it does not request `timely`; its
+  prereg has a `due` but its postregs have no ceiling, so `timely` would fail every run).
+- Nothing left behind: `git grep -n "Timeliness (a postreg created before"` and `git grep -n
+  "arrives in 0.4.0"` find nothing; `timely` is gone from *Not in this version*.
+
+**Observations (out of scope):**
+- The manifests block's ceiling line still prints `created no later than 1700000000.0
+  ±1.0s` (epoch seconds), while the new marks and the trust block print ISO times.
+- `examples/adequacy-test` signs a `due` but no ceiling, so once ported it will need
+  `--ceiling` on each postreg for `timely` (and `complete`'s deadline part) to pass.
