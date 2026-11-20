@@ -216,6 +216,35 @@ def test_verify_exit_codes_and_malformed_file(tmp_path, key, prereg, capsys):
     assert f"    {cli.NO} format: malformed: " in out  # the reason, under the file it is about
 
 
+def test_verify_marks_each_file_by_format_and_selfsig(tmp_path, key, prereg, capsys):
+    """The manifests block: ✓ only for a file that passes format and selfsig, and a
+    malformed file's reason, attributed to format, only under that file."""
+    tampered = tmp_path / "tampered.json"
+    assert run("postreg", "--key", key, "--fulfills", prereg, "--out", tampered) == 0
+    mani = json.loads(tampered.read_text())
+    mani["payload"]["target"] = "something else"  # changed after signing: selfsig fails
+    tampered.write_text(json.dumps(mani))
+    other_keyid = tmp_path / "other-keyid.json"  # valid signature, another key's keyid
+    mani = json.loads(open(prereg).read())
+    mani["signature"]["keyid"] = keys.keyid_for(keys.generate()[1])
+    other_keyid.write_text(json.dumps(mani))
+    truncated = tmp_path / "truncated.json"
+    truncated.write_text(open(prereg).read()[:120])
+    capsys.readouterr()
+    files = [prereg, tampered, other_keyid, truncated]
+    assert run("verify", *files, "--tests", "format,selfsig") == 2
+    out = capsys.readouterr().out
+    lines = out.split("=== commitments ===")[0].splitlines()[1:]
+    marks = [line for line in lines if not line.startswith(" ") and line]
+    assert [line[0] for line in marks] == [cli.OK, cli.NO, cli.NO, cli.NO]
+    assert [line.split()[1] for line in marks] == [str(f) for f in files]
+    reasons = [i for i, line in enumerate(lines) if line.startswith(f"    {cli.NO} format: ")]
+    (reason,) = reasons
+    assert lines[reason].startswith(f"    {cli.NO} format: malformed: ")
+    assert lines[reason - 1] == marks[3]  # under the truncated file, and only there
+    assert "asexec-verify/1 format=FAIL selfsig=FAIL" in out
+
+
 def test_verify_renders_rejected_postreg_and_invalid_due(tmp_path, key, capsys):
     out = tmp_path / "pre.json"
     run("prereg", "--key", key, "--target", "t", "--out", out)
@@ -244,14 +273,17 @@ def test_verify_shows_a_present_due_as_it_is(tmp_path, key, capsys, due, shown):
 
 @pytest.mark.parametrize(
     "tests",
-    ["chain", "format,chain", "selfsig", "format,selfsig,nope", ","],
-    ids=["no-required", "no-selfsig", "no-format", "unknown", "none"],
+    ["chain", "format,chain", "selfsig", "format,selfsig,nope", ",", "BDR", "BDR,format,selfsig"],
+    ids=["no-required", "no-selfsig", "no-format", "unknown", "none", "BDR", "BDR-beside-both"],
 )
 def test_verify_bad_tests_is_a_usage_error(prereg, tests, capsys):
     with pytest.raises(SystemExit) as e:
         run("verify", prereg, "--tests", tests)
     assert e.value.code == cli.EXIT_USAGE
-    assert "asexec-verify/1" not in capsys.readouterr().out  # nothing ran
+    out, err = capsys.readouterr()
+    assert "asexec-verify/1" not in out  # nothing ran
+    if "BDR" in tests:  # split into format and selfsig (#26), not kept as an alias
+        assert "unknown test(s): BDR;" in err
 
 
 @pytest.mark.parametrize(

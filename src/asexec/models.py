@@ -210,7 +210,7 @@ class ManifestBody(BaseModel):
 
     model_config = ConfigDict(strict=True, extra="forbid")
 
-    # structural bedrock - the format frame
+    # structural bedrock - the body frame
     predicateType: str = MANIFEST_PREDICATE_TYPE
     phase: str
 

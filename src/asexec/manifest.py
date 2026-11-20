@@ -34,7 +34,7 @@ from .models import Anchor, Manifest, ManifestBody, Signature
 # central commitment -> fulfillment / gap claim. Two disjoint reasons a field is
 # bedrock:
 #
-#   structural : format-frame invariants - a body without these is not an
+#   structural : body-frame invariants - a body without these is not an
 #                asexec manifest at all (they scope every other check).
 #   semantic   : the claim the tool actually adjudicates - what was committed to
 #                (``target``). The deadline (``due``) is *optional*: a commitment
