@@ -190,7 +190,7 @@ breaks any vector that hardcodes it. The options:
 - [x] 1. #35: predicate type, `payloadType` `v1`, drop `schema_id` (D1, D1b) (on feature/0321)
 - [x] 2. #26: split `BDR` into `format` and `selfsig` (D3) (on feature/0321)
 - [x] 3. #31: `FORMATS` table; an unknown format fails `format` (on feature/0321)
-- [ ] 4. #30: beta release support (after #31, because it rewrites the `FORMATS` key)
+- [x] 4. #30: beta release support (after #31, because it rewrites the `FORMATS` key) (on feature/0321)
 - [ ] 5. #44 (D2), then #42 and #43
 - [ ] 6. #32: DSSE envelope
 - [ ] 7. #33 → #36 → #46 → #37
@@ -1018,3 +1018,319 @@ Roughtime binds the hex. It also ran about 25 junk or near-miss `payloadType` va
 PR push (`f12368c`, run 44681499571): lint, build, test on 3.12, 3.13 and 3.14 pass.
 Carried forward to checkpoint 4 (#30): limit the frozen-vector skip to 0.4.0 betas, or pin
 that the `v1` key exists, as the review round 1 notes above say.
+
+### Checkpoint 4: #30
+
+**Landed** (branch `feature/0321-checkpoint4`):
+- #30, `da4a4c2`: `scripts/release.sh` accepts `X.Y.Z` and the PEP 440 beta `X.Y.ZbN`, and
+  its release commit sets the `payloadType`. `.github/workflows/publish.yml` creates a beta's
+  GitHub release with `--prerelease`, and `verify-release` admits only those two tag forms.
+  In `tests/test_constants.py`, the frozen `v1` vectors are skipped in a `0.4.0` beta build
+  only, a sign-then-verify roundtrip runs in every build, and a never-skipped test pins the
+  `v1` key. `docs/DEVELOPMENT.md` documents all of it. The `src/asexec/constants.py`
+  comments now name `release.sh` as what rewrites the literal and the key.
+
+**How it works now:**
+- **Versions:** `^N\.N\.N(bN)?$`, where `N` is `0|[1-9][0-9]*`. `X.Y.ZaN`, `rcN`, `.devN`,
+  `.postN`, `X.Y`, a leading `v`, `-b1`, `B1` and leading zeros are refused (exit 2) before
+  anything is touched. Every earlier safeguard stays: clean tree, `main` only, versions
+  agree and are new, no local or remote tag, the check script, `git diff --check`, the tag
+  points at the release commit, and the remote tag is verified.
+- **The rewrite:** one Python step computes every edit, and writes nothing unless all of
+  them match:
+  - `__version__` and `version` (as before);
+  - `^MANIFEST_PAYLOAD_TYPE = "…"$` in `src/asexec/constants.py`;
+  - `^    assert constants\.MANIFEST_PAYLOAD_TYPE == "…"$` in `tests/test_constants.py`,
+    which is now the one line in that file that holds the literal.
+
+  Each rewrite must match exactly one line, or the release stops. The type:
+  - A beta: `application/vnd.asexec.X.Y.ZbN+json`. There must be exactly one `FORMATS`
+    entry keyed by the name (`^    MANIFEST_PAYLOAD_TYPE: \{$`), the entry under
+    development the beta signs with. Its key moves with the literal, and is not edited.
+  - A full release: `RELEASE_PAYLOAD_TYPES = {"0.4": "application/vnd.asexec.v1+json"}`. A
+    line with no entry (`0.5.0`, `1.0.0`) is refused.
+  - The first full release of a line, `X.Y.0` (so `0.4.0`), also rewrites the name key to
+    the literal (`    "application/vnd.asexec.v1+json": {`). A later `X.Y.Z` requires the
+    literal key exactly once and no name-keyed entry.
+- **Cleanup:** `git restore` now covers `src/asexec/constants.py` and
+  `tests/test_constants.py` as well as `__init__.py`, `pyproject.toml` and `uv.lock`, and
+  the release commit adds the two payloadType files.
+- **The skip** (`frozen_v1` mark): `_is_0_4_0_beta(MANIFEST_PAYLOAD_TYPE)`, a full match of
+  `application/vnd\.asexec\.0\.4\.0b[0-9]+\+json`. The reason is "a 0.4.0 beta build does
+  not read v1, the frozen vectors' format (D6b)". It marks every test that reads a frozen
+  vector under the `v1` entry:
+  - `test_frozen_manifests_still_verify`;
+  - `test_signing_input_of_the_frozen_v1_vector` (new: the `v1` PAE literal, moved out of
+    `test_signing_pae_version_and_manifest_payload_type` so the pinned type is one line);
+  - `test_not_enforced_yet__predicate_type`;
+  - `test_not_enforced_yet__signature_alg`.
+
+  The other readers of the vectors don't need the `v1` entry, and pass in a beta build
+  (shown below):
+  - `test_manifest_payload_type_change_fails_what_was_signed_before_it` compares payloads and
+    verifies `PRE_V1_MANIFEST`.
+  - `test_formats__payload_type_is_signed_so_relabelling_fails_selfsig` relabels
+    `FROZEN_MANIFEST` to the test's own second format.
+  - `test_formats__a_file_is_read_under_its_own_entry` takes only a payload, and signs it
+    under the current type.
+- **The roundtrip:** `test_current_format_sign_then_verify_roundtrip` runs in every build. It
+  takes a prereg from the production writer (`build_prereg` with a `build_subject` subject,
+  then `manifest.sign`), and a body with no `hash_alg` signed under `MANIFEST_PAYLOAD_TYPE`
+  with the entry's default digest. Through `verify_paths` with `content,format,selfsig`, both
+  must pass, with `2/2 manifest(s) ok` for `format` and `selfsig`, `content` `ok` for each,
+  and the entry's prefix on every ref and keyid. The same two files with `target` changed
+  after signing give `format=PASS selfsig=FAIL` (`2/2 manifest(s) failed`).
+- **The invariant:** `test_v1_is_read_by_every_build_but_a_0_4_0_beta`, never skipped:
+  `_is_0_4_0_beta(MANIFEST_PAYLOAD_TYPE) or "application/vnd.asexec.v1+json" in FORMATS`.
+  `test_frozen_v1_vectors_are_skipped_only_in_a_0_4_0_beta` pins the predicate on 8 strings:
+  `0.4.0b1` and `0.4.0b12` are skipped; `v1`, `0.5.0b1`, `0.4.1b1`, `10.4.0b1`, `0.4.0rc1`
+  and `0.4.0b1` with a trailing space are not.
+- **publish.yml:**
+  - `verify-release` fails a tag that is not `vX.Y.Z` or `vX.Y.ZbN`, before any upload. The
+    trigger glob `v[0-9]*.[0-9]*.[0-9]*` also matches `rc`, `a` and `.dev` tags.
+  - `github-release` adds `--prerelease` for `^v[0-9]+\.[0-9]+\.[0-9]+b[0-9]+$`.
+  - Nothing else needed changing for a beta:
+    - The trigger glob matches `v0.4.0b1`.
+    - The tag/version equality compares the same strings `release.sh` wrote.
+    - `uv build` names the files `asexec-0.4.0b1-py3-none-any.whl` and
+      `asexec-0.4.0b1.tar.gz`, which the `dist` globs expect, because the version is
+      normalized.
+    - `uv pip install "asexec==0.4.0b1"` selects the beta without `--prerelease`, since an
+      exact pin names a prerelease explicitly.
+    - `asexec --version` prints `asexec 0.4.0b1`, which contains the tag version.
+    - The CLI smoke signs and verifies under the beta's own type.
+
+**Evidence:**
+- `scripts/check.sh`: ruff check and format check clean; pytest **444 passed before**
+  (`9a71e7f`), **455 after**. `tests/test_constants.py` went from 19 to 30: the PAE vector
+  test, the invariant, 8 predicate cases and the roundtrip.
+- Red first:
+  - The old `release.sh` in the throwaway clone: `scripts/release.sh --no-check 0.4.0b1` →
+    `Error: version must look like X.Y.Z`, exit 2.
+  - The old tests, under a release commit made by hand (`sed` on the two literal lines to
+    `0.4.0b1`): 4 failed, 440 passed. The failures were
+    `test_frozen_manifests_still_verify`, `test_signing_pae_version_and_manifest_payload_type`
+    (its PAE literal), `test_not_enforced_yet__predicate_type` and
+    `test_not_enforced_yet__signature_alg`.
+  - The new tests under the same edit: 451 passed and 4 skipped, each with the D6b reason.
+- **Rehearsals.** A script in the session scratchpad clones this repo (`--no-tags`) at
+  `da4a4c2` into a throwaway directory. It points `origin` (fetch and push) at a local
+  `git init --bare` repo, creates `main` there and pushes it. Before every `release.sh` run
+  it aborts unless `origin` is the only remote and both its URLs are the bare repo, and it
+  prints `git remote -v`. Nothing ran in this checkout or against GitHub, and no tag left
+  the scratch directory.
+  - **Rejected:** `0.4.0a1`, `0.4.0rc1`, `0.4.0.dev1`, `0.4.0.post1`, `0.4`, `v0.4.0b1`,
+    `0.4.0b01`, `00.4.0`, `0.4.0-b1` and `0.4.0B1` each give `Error: version must look like
+    X.Y.Z or X.Y.ZbN (a PEP 440 beta), with no leading zeros`, exit 2. The tree stays clean
+    and no tag is made.
+  - **Induced failure, after every edit:** a committed test that fails and prints
+    `git status --porcelain` from inside `check.sh`. `release.sh 0.4.0b1` printed
+    `payloadType: application/vnd.asexec.0.4.0b1+json` and the four-file diff. The failing
+    test showed ` M pyproject.toml`, ` M src/asexec/__init__.py`,
+    ` M src/asexec/constants.py`, ` M tests/test_constants.py` and ` M uv.lock`, then
+    `1 failed, 451 passed, 4 skipped`, exit 1. Afterwards:
+    - `git status --porcelain` and `git diff HEAD` were empty, HEAD was unchanged, and there
+      was no tag here or on `origin`;
+    - the files read `MANIFEST_PAYLOAD_TYPE = "application/vnd.asexec.v1+json"`, the pin
+      `…== "application/vnd.asexec.v1+json"`, `__version__ = "0.3.20"`, `version =
+      "0.3.20"`, and `uv.lock`'s asexec `version = "0.3.20"`.
+  - **Induced failure, before any edit:** the pinned line duplicated in a commit →
+    `Error: tests/test_constants.py: expected exactly one pinned MANIFEST_PAYLOAD_TYPE
+    literal, found 2`, exit 1, with nothing written.
+  - **`0.4.0b1`:** exit 0. The release commit `Release v0.4.0b1` changes 5 files, one line
+    each:
+    - `pyproject.toml` and `__init__.py`: `0.3.20` → `0.4.0b1`;
+    - `constants.py`: `MANIFEST_PAYLOAD_TYPE = "application/vnd.asexec.v1+json"` →
+      `"application/vnd.asexec.0.4.0b1+json"`;
+    - `tests/test_constants.py`: `assert constants.MANIFEST_PAYLOAD_TYPE == "…v1+json"` →
+      `"…0.4.0b1+json"`;
+    - `uv.lock`: asexec `0.3.20` → `0.4.0b1`.
+
+    The tag object is `type commit`, `tag v0.4.0b1`, message `Release v0.4.0b1`, and
+    `v0.4.0b1^{commit}` and the remote `refs/tags/v0.4.0b1^{}` both equal the release commit.
+  - **`check.sh` after the `0.4.0b1` commit:** lint and format clean. `451 passed, 4
+    skipped`: the four `frozen_v1` tests, each `SKIPPED … a 0.4.0 beta build does not read
+    v1, the frozen vectors' format (D6b)`. `test_current_format_sign_then_verify_roundtrip`
+    and `test_v1_is_read_by_every_build_but_a_0_4_0_beta` passed, and so did the 8 predicate
+    cases.
+  - **Built from the `0.4.0b1` commit:** `uv build` gives `dist/asexec-0.4.0b1.tar.gz` and
+    `dist/asexec-0.4.0b1-py3-none-any.whl`. Into a fresh venv, the hash-locked dependencies
+    from `uv export` went in first, then `uv pip install --no-deps --no-index --find-links
+    dist "asexec==0.4.0b1"` (no `--prerelease`): `+ asexec==0.4.0b1`, exit 0.
+    `asexec --version` printed `asexec 0.4.0b1`.
+  - **`0.4.0b2` after it:** the commit `Release v0.4.0b2` changes the same 5 lines,
+    `0.4.0b1` → `0.4.0b2` and `…0.4.0b1+json` → `…0.4.0b2+json`, and is tagged `v0.4.0b2`.
+  - **`0.4.0`:** `payloadType: application/vnd.asexec.v1+json`. The commit `Release v0.4.0`
+    changes 5 files, 6 lines: the two version lines and `uv.lock` (`0.4.0b2` → `0.4.0`), the
+    two literals (`…0.4.0b2+json` → `application/vnd.asexec.v1+json`), and in `FORMATS`
+    `    MANIFEST_PAYLOAD_TYPE: {` → `    "application/vnd.asexec.v1+json": {`. It is tagged
+    `v0.4.0`.
+  - **`check.sh` after the `0.4.0` commit:** clean, `455 passed`, no skips. The four frozen
+    `v1` tests ran and passed, and so did the roundtrip and the invariant.
+  - **After `0.4.0`:**
+    - `--no-check 0.5.0b1`: `Error: src/asexec/constants.py: a beta writes the FORMATS entry
+      under development, but there is not exactly one keyed by MANIFEST_PAYLOAD_TYPE`.
+    - `--no-check 0.5.0`: `Error: no payloadType is set for full releases of 0.5; add it to
+      RELEASE_PAYLOAD_TYPES in scripts/release.sh`.
+    - Both exit 1, leaving the tree clean and no tag.
+    - `--no-check 0.4.1`: `payloadType: application/vnd.asexec.v1+json`, and the commit
+      changes only `pyproject.toml` and `__init__.py`.
+  - **The re-key the never-skipped test catches.** On the `0.4.0` tree, a hand edit sets the
+    `v1` key back to the name and both literals to `0.5.0b1`: the case the checkpoint 3
+    review raised. `pytest tests/test_constants.py` gives 5 failed and 25 passed:
+    `test_frozen_manifests_still_verify`, `test_signing_input_of_the_frozen_v1_vector`,
+    `test_v1_is_read_by_every_build_but_a_0_4_0_beta` and both `not_enforced_yet` tests.
+    Under D6b's unnarrowed wording ("a beta type"), the four vector tests would have been
+    skipped.
+- **publish.yml:**
+  - `actionlint` 1.7.12 (`uvx --from actionlint-py`) on `publish.yml` and `ci.yml`: exit 0.
+  - With `shellcheck` 0.11.0 (`-shellcheck`): one warning, SC2055 on the existing
+    `if [[ "$ver" != "$py_ver" || "$ver" != "$init_ver" ]]` (observations). It is present on
+    `9a71e7f` too.
+  - `shellcheck scripts/release.sh`: clean.
+  - The workflow parsed with PyYAML. A script in the scratchpad ran `verify-release`'s
+    tag-form check and the `github-release` step with a stub `gh` that prints its
+    arguments:
+    - `v0.4.0b1` → `gh release create v0.4.0b1 dist/… --repo OWNER/REPO --verify-tag
+      --generate-notes --prerelease`, and the same for `v0.4.0b12`.
+    - `v0.4.0` → `gh release create v0.4.0 dist/… --repo OWNER/REPO --verify-tag
+      --generate-notes`, and the same for `v0.4.1`.
+    - `v0.4.0rc1`, `v0.4.0a1`, `v0.4.0.dev1` and `v0.04.0` →
+      `::error::tag … is not vX.Y.Z or vX.Y.ZbN`, exit 1, in `verify-release`, so they never
+      reach the release step.
+- `uv run python examples/adequacy-test/run.py`: exit 0 on this branch. At the rehearsal's
+  `v0.4.0b1` it also exits 0, and its output is the same once refs and uv's build lines are
+  removed.
+- Nothing left behind: no other test or example holds the `v1` literal. `git grep -n
+  'vnd\.asexec'` outside the docs finds:
+  - the one `MANIFEST_PAYLOAD_TYPE` line and two comments in `src/asexec/constants.py`;
+  - in `tests/test_constants.py`, the frozen vectors, `V1_PAYLOAD_TYPE`, the pinned line,
+    the predicate cases and comments;
+  - the docstring example in `src/asexec/manifest.py:6` (observations);
+  - the pre-0.4.0 type in `src/asexec/verifier.py`;
+  - the made-up `v2`, `v10`, `other` and `0.3.0b1` types in the verify, CLI and selector
+    tests.
+- CI on PR #53 at `dd45abf` (run 44684208161): lint, python-matrix, test (3.12, 3.13, 3.14)
+  and build pass.
+
+**Observations (out of scope):**
+- `--no-check` leaves `uv.lock`'s asexec version at the previous release. `uv.lock` changes
+  only when `check.sh`'s `uv run` re-locks, and the rehearsed `0.4.1 --no-check` commit
+  changed only the two version files. This is how it worked before (`scripts/release.sh`,
+  the `LOCK_FILE` handling).
+- SC2055 on `publish.yml` `verify-release` (the `"$ver" != "$py_ver" || "$ver" !=
+  "$init_ver"` test) is a false positive: "fail if either differs" is the intent. It
+  predates this checkpoint.
+- The CLI smoke's `--version` check is a substring match (`*"$expected"*`), so `0.4.0`
+  would also match `asexec 0.4.0b1`. The exact `==` install pin makes that unreachable
+  today. Not changed, because a beta doesn't need it.
+- `scripts/dev-setup.sh:52` prints `scripts/release.sh X.Y.Z` and doesn't mention betas.
+- `src/asexec/manifest.py:6` (docstring) and `docs/VERIFICATION.md` (*Formats*, `format` #3)
+  show `application/vnd.asexec.v1+json`. On main after b1 the type is the beta's (D6a), so
+  they describe 0.4.0, not main (as checkpoint 3 noted for VERIFICATION.md).
+- `docs/MULTIVERSION.md` (*Verifier design*) still says the `0.4.0` release commit makes the
+  key a literal "at the latest". That is still accurate, but it could now name
+  `release.sh`.
+- A patch release (`0.4.Z`, `Z > 0`) cut from main while a new format's entry is under
+  development there is refused: the name-keyed entry would collide with the literal `v1`
+  key. How patches are released alongside a new format (a release branch, say) isn't
+  designed yet. Refusing is the conservative outcome.
+- **Open design question for after 0.4.0, which the human tester should see: there is no
+  workable path to a `0.5.0b1` yet** (review round 1, finding 5). The beta guard needs a
+  `FORMATS` entry keyed by the name `MANIFEST_PAYLOAD_TYPE`. After `0.4.0`, main keeps
+  `MANIFEST_PAYLOAD_TYPE = "application/vnd.asexec.v1+json"` (D6a), so a new
+  `MANIFEST_PAYLOAD_TYPE: {...}` entry would have the same key as the literal `v1` entry.
+  Ruff flags that (F601), and at runtime the later entry would replace `v1`'s rules. How a
+  later line's betas are developed and released, and the patch case above, need designing
+  together before the first post-0.4.0 format change. This is not a b1 problem: every
+  `0.4.0` beta and `0.4.0` itself work, as rehearsed. `docs/DEVELOPMENT.md` no longer
+  promises the `0.5.0b1` workflow.
+
+**Judgement calls / new paradigms:**
+- **Full releases use an explicit table.** `RELEASE_PAYLOAD_TYPES = {"0.4": v1}` covers
+  `0.4.0` and its patches. A full release of any other line is refused until its format is
+  decided and added, rather than guessed (for example as `v<minor-3>`).
+- **`release.sh` makes the `v1` key a literal at `0.4.0`.** It is not left to #40. #30's
+  scope says the script "sets ... its `FORMATS` key", and this way the step can't be
+  forgotten. The rule is general: the first full release of a line (`X.Y.0`) releases the
+  entry under development, and later releases of the line require the literal key and no
+  name-keyed entry. The never-skipped invariant test backs it up.
+- **Guards beyond the four rewrites.** A beta requires exactly one name-keyed entry, and a
+  patch requires the literal key and no name key. Without them, `--no-check` could release
+  a build whose signing entry is missing, or one that has two entries under the `v1` key,
+  where the later silently wins. They are also checked before anything is written.
+- **The skip is narrowed to `0.4.0` betas**, against D6b's wording ("when
+  `MANIFEST_PAYLOAD_TYPE` is a beta type"), as the checkpoint 3 review asked. While no format
+  has been released, a beta build reads only its own type. From `0.4.0` on, every build,
+  `0.5.0b1` included, must read `v1`, so its vectors must run, and a `0.5.0b1` release commit
+  that re-keyed `v1` is caught (shown above).
+- **The roundtrip runs in every build**, not only when the vectors are skipped. It costs
+  nothing, it is exercised on main and in CI today rather than only after b1, and it checks
+  the current entry in a `v1` build as well.
+- **One pinned line.** The `v1` PAE literal moved to its own `frozen_v1` test, and
+  `_signed_prereg()["payloadType"]` is compared against the constant, which the line above
+  pins. Otherwise the release commit would have to rewrite a PAE literal with its length
+  prefix. Nothing is weaker in a `v1` build: the type is pinned, the PAE literal for `v1` is
+  pinned, and the default PAE equals the one for the pinned type.
+- **Normalized versions only.** Leading zeros, which the old `^[0-9]+…$` accepted, are now
+  refused, because PEP 440 normalizes them away and `verify-release`'s `dist` globs would
+  then not match. `b0` is accepted, as PEP 440 allows.
+- **`verify-release` checks the tag form.** That goes slightly beyond adding `--prerelease`.
+  The trigger glob admits `rc`, alpha and `.dev` tags, which the prerelease test would have
+  published as full releases. The check fails them before any upload, and it accepts the
+  same forms as `release.sh`.
+
+**Review round 1** (findings on PR #53):
+1. should-fix: the failure cleanup did nothing if `git commit` itself failed. `git restore --
+   files` restores from the index, which `git add` had already updated. With a failing
+   pre-commit hook, `--no-check 0.4.0b1` exited 1 and left `pyproject.toml`, `__init__.py`,
+   `constants.py` and `tests/test_constants.py` staged with the beta type, against
+   `docs/DEVELOPMENT.md`, the script header and these notes. → The cleanup is now
+   `git restore --source=HEAD --staged --worktree -- <the five files>`. Commit `395e15b`.
+   Rehearsed in a fresh throwaway clone (local bare `origin`, guarded as before) at
+   `395e15b`:
+   - Before the fix (at `67ccca4`), the hook case reproduced the finding: `git status
+     --porcelain` showed `M ` for the four files, and `git diff --cached` held the beta
+     literals.
+   - After the fix, the hook case (`induced pre-commit hook failure`, exit 1) leaves
+     `git status --porcelain`, `git diff HEAD` and `git diff --cached` all empty, with HEAD
+     unchanged and no tag here or on `origin`.
+   - The induced `check.sh` failure: the failing test printed ` M` for all five files, then
+     `1 failed, 451 passed, 4 skipped`, exit 1. Afterwards `git status --porcelain`,
+     `git diff HEAD` and `git diff --cached` are all empty, and the five files hold their
+     `v1` / `0.3.20` values.
+2. nit: the `X.Y.0` branch turned the name key into the literal without checking that the
+   literal key was absent, so a stray `"application/vnd.asexec.v1+json": {...}` entry
+   became a duplicate key. → It now refuses if the literal key exists. Rehearsed on the
+   `0.4.0b2` tree with a stray `v1` entry committed: `--no-check 0.4.0` → `Error:
+   src/asexec/constants.py: an entry is already keyed by application/vnd.asexec.v1+json, so
+   releasing the entry under development would duplicate that key`, exit 1, clean tree,
+   index empty, no `v0.4.0` tag. At `67ccca4` the same run exited 0 and tagged `v0.4.0`.
+   Commit `395e15b`.
+3. nit: a beta of a patch was accepted (`--no-check 0.4.1b1` committed and tagged). → A beta
+   whose `Z` is not `0` is refused before anything is touched: `0.4.1b1` and `1.2.3b1` →
+   `Error: a beta must be of an X.Y.0 release (X.Y.0bN), not of a patch`, exit 2. Commit
+   `395e15b`. Version ordering is not checked, as was already the case before this PR, so
+   `0.5.0b1` before `0.4.0` still passes the version check. The script header and
+   `docs/DEVELOPMENT.md` say so.
+4. nit: two `docs/DEVELOPMENT.md` lines were not wrapped (131 and 143 characters), and one
+   had back-to-back parentheticals. → The parentheticals are merged and every touched line
+   is wrapped at 95. Only line 5, an earlier line, is longer. Commit `395e15b`.
+5. out of scope: no workable path to a `0.5.0b1` after `0.4.0`. → Recorded prominently in
+   the observations above, beside the patch-during-development one, as an open design
+   question for after 0.4.0. The `docs/DEVELOPMENT.md` wording is softened: a later line's
+   beta "must still read `v1`", and how those betas are released "is not designed yet".
+   Commit `395e15b`.
+6. The reviewer's assessment, recorded: the `X.Y.0` rule, the beta and patch guards and the
+   `verify-release` tag-form check are mild, documented, harmless creep, and the rest is
+   within scope. No code change.
+
+The rest of the fixed rehearsal at `395e15b` matches the first one:
+- `0.4.0b1`, `0.4.0b2` and `0.4.0` give the same 5-file commits, with 5, 5 and 6 lines.
+- `check.sh` gives `451 passed, 4 skipped` after b1 and `455 passed` after 0.4.0.
+- After `0.4.0`, `0.5.0b1` and `0.5.0` are refused and `0.4.1` passes.
+- The re-key case gives 5 failed.
+
+`scripts/check.sh` on `395e15b`: clean, 455 passed. `shellcheck scripts/release.sh`: clean.
+CI: run 44728436229 on `395e15b` and run 44728921686 on `0a3065b`, lint, python-matrix, test
+(3.12, 3.13, 3.14) and build pass.
