@@ -194,7 +194,7 @@ breaks any vector that hardcodes it. The options:
 - [x] 5. #44 (D2), then #42 and #43 (on feature/0321)
 - [x] 6. #32: DSSE envelope (on feature/0321)
 - [x] 7. #33 → #36 → #46 → #37 (on feature/0321)
-- [ ] 8. #34 and #38
+- [x] 8. #34 and #38 (on feature/0321)
 - [ ] 9. #45 (after #38)
 - [ ] 10. #39 → #40
 
@@ -3038,3 +3038,237 @@ and `verifier.py` docstrings.
   default, as anywhere in the file (checkpoint 6's `PYTHONINTMAXSTRDIGITS` observation).
 - `manifest.sign` still signs a hand-built body with an extra field (checkpoint 1's
   observation); verify now shows such a field as unknown.
+
+#### #38: `order`, and signing with a given floor round
+
+**Landed:** `fcd09a2`. `order` is in `TEST_CATALOG` (between `keyconsist` and `selfsig`).
+`verify_paths` now keeps, per commitment, the ceiling of each copy of its prereg (a prereg
+copy no longer overwrites the record of the one before: `setdefault`, the same body) and the
+floor of each counted postreg, and `verifier._order` gives each commitment an `order` record
+(`examined`, `ok`, `reason`, `ceiling`: `{status, no_later_than_us}`, and per counted postreg
+`{ref, status, no_earlier_than_us}`, status `after`, `not-after`, `no-floor`, `invalid-floor`
+or `not-compared`). A verified floor record gains `no_earlier_than_us`
+(`verifier._no_earlier_than`). **`verifier._ceiling_time` is now the one ceiling-time helper**:
+`_on_time` (timely, complete) and `_order` both call it. `drand.verified_floor` builds and
+verifies a floor from a saved round. CLI: `--floor-round` / `--floor-round-file` in a
+mutually exclusive group with `--floor` on `prereg` and `postreg`; with `order` requested, the
+commitments block marks a prereg whose ceiling gives no time and each counted postreg not
+shown after it. Docs: `docs/VERIFICATION.md` (an `order` section with two examples, the summary
+row, the *Output* row, `floor`'s *Does not establish*, *Commitment states*, *Not in this
+version*), `README.md` (*What asexec can prove*: the floor bullet and a new ordering bullet;
+*Usage*: saving a round and `--floor-round-file`; *Exit status* 64 and 1; *Network*),
+`ROADMAP.md` (done-ahead marks; the 0.4.x example of "passing in a drand round fetched
+earlier" removed, since it is done), the verifier docstring.
+
+**`order`'s items** (for each commitment with at least one counted postreg):
+1. the prereg has a `ceiling` (`the pre-registration has no ceiling`);
+2. that ceiling meets the `ceiling` conditions #1-#5 (`the pre-registration's ceiling does not
+   verify`);
+3. each counted postreg has a `body.anchor.floor`;
+4. that floor meets the `floor` conditions #1-#5;
+5. the ceiling's time Tc is strictly before the floor's time Tf (#3-#5: `a counted postreg is
+   not shown after the pre-registration`).
+
+**Settled (judgement calls):**
+- **The prereg's time** is its ceiling's upper bound, `MIDP + RADI` of the verified response
+  (integer microseconds), as for `timely`; never the file's unsigned `midpoint`/`radius`.
+  With several copies of the commitment's prereg, the earliest verified one counts (a copy
+  without a ceiling, or with a later one, does not undo it), the same any-copy rule `timely`
+  has for postregs. Only copies that are the commitment (meet `selfsig` with its keyid) are
+  read; a rejected copy's ceiling is not, though it binds the same body.
+- **The postreg's time** is its round's time on the pinned chain, `genesis_time + (round - 1)
+  × period` (`drand.time_of_round`; quicknet: `1692803367`, 3 s), times 10⁶. Both chain
+  parameters (and the key and the chain hash) are now pinned as literals in
+  `tests/test_drand.py::test_pinned_chains_are_quicknet_with_its_genesis_and_period`. A
+  floor's copies share it (it is in the body).
+- **"Precedes" is strict** (`Tc < Tf`): a ceiling time equal to the round's time, to the
+  microsecond, does not precede it. This is the conservative reading; Tf is whole seconds, so
+  equality needs a witness time on the second.
+- **A missing or failing anchor fails**, as D5a has it for `timely`: anyone can write either,
+  so one that fails its own test's conditions is no time at all. With the prereg's ceiling
+  missing or failing, the commitment fails on #1/#2 and each counted postreg with a verified
+  floor is `not-compared` (no mark); postregs without a valid floor are still marked.
+- **Commitments only:** a rejected pre-registration is never examined (D2), and a postreg
+  that does not count is not read. Empty: `requested but no commitment has a counted
+  postreg`.
+- **A postreg not shown after its prereg still counts**, the commitment stays `fulfilled` and
+  `order=FAIL` carries the verdict (D5b's reasoning: states say whether it was reported).
+- **Report marks only with `order` requested**, as for `timely`.
+- **`--floor-round`'s shape is drand's HTTP API response for a round**, exactly `round`
+  (an integer), `randomness` and `signature` (lowercase hex, as drand writes them), of the
+  chain `--floor` fetches from (`drand.DEFAULT_CHAIN`, quicknet). So a run can save `GET
+  /<chain hash>/public/latest` when it starts and sign with it unchanged. Not the
+  `anchor.floor` object asexec writes: one shape, the one a run has in hand. Any other key is
+  refused (`previous_signature`, which chained beacons return, and `chain_hash`: the chain is
+  not the caller's to choose), and so is a missing one, rather than silently dropped or
+  filled in.
+- **Verified at signing through verify's own floor conditions**: `drand.verified_floor`
+  builds the record with the strict writer model `Floor` (so `"1000"` and `true` are not
+  rounds) and runs `drand.verify_floor(FloorInput…)`, the function the `floor` test uses: the
+  pinned chain, `randomness == sha256(signature)`, BLS.
+- **Exit statuses (checkpoint 7's split):** the round depends on the argument and the pinned
+  constants alone, so an inline value that is not JSON, repeats a key, is not of the shape,
+  or **does not verify** is a usage error (64: the argument is wrong whatever the files hold).
+  The same from `--floor-round-file` is the file's content, exit 1, and so is a missing file.
+  `--floor` with either, or both, is argparse's mutual exclusion (64). An empty value is a
+  usage error (`must not be empty`), so `--floor-round ""` never signs without a floor.
+  `--best-effort` covers fetch failures only, so it does not sign without an unverifiable
+  round.
+- Error text reads `argument --floor-round: --floor-round: …` inline, the same doubling
+  `--plan`'s inline errors have (the shape's message names the flag for the file case).
+
+**Evidence:**
+- Red first: with only the tests changed, **116 failed, 904 passed**: `KeyError: 'order'` (68:
+  every `test_verify_order.py` test, the never-raises cases that now request `order`, the
+  untrusted tests whose test list is the catalog), `SystemExit: 64` and argparse usage text
+  where `--floor-round` was an unknown option (the CLI tests), `drand has no attribute
+  'verified_floor'` (8), the `--help` catalog list, and doc coverage (`('order', 1)` to `5`
+  had no doc item). With the code, 2 failed (doc coverage) until the section was written, plus
+  two test mistakes fixed on the way: a copy test that re-pinned the only witness (it now pins
+  a second one), and the file variant of the not-JSON case (`must contain valid JSON`, as
+  `--plan-file`'s).
+- `scripts/check.sh`: clean, **1020 passed** (933 after #34). The suite takes about 67 s
+  (32 s before this checkpoint): each verified floor costs about 0.9 s of BLS math, and
+  `order` needs one per counted postreg (observation below).
+- Tests (`tests/verify/test_verify_order.py`, new, 27 cases; the prereg's witness re-pinned to
+  sign MIDP ten seconds before round 1000, one counted postreg with round 1000's floor):
+  `test_order__pass__all` (the whole record: `ceiling` `{verified, 1692806355000000}`, the
+  postreg `after` at `1692806364000000`), `__pass__all_each_counted_postreg_of_a_chain`,
+  `__fail__1_prereg_has_a_ceiling` (a ceiling on the postreg does not stand in),
+  `__fail__2_prereg_ceiling_meets_the_ceiling_conditions` (6: unpinned witness, another
+  manifest's genuine ceiling, a genuine response for another nonce, not roughtime, an
+  unpinned `ceiling.pubkey`, junk), `__pass__2_any_copy_of_the_prereg_with_a_verified_ceiling_shows_it`
+  (an early copy, a bare copy and the original with a later witness: the earliest counts),
+  `__fail__3_counted_postreg_has_a_floor`, `__fail__4_floor_meets_the_floor_conditions` (7:
+  **forged later round** 5,000,000 and earlier round 999 with round 1000's signature, wrong
+  randomness, an unpinned chain, not drand, a non-hex signature, a string round),
+  **`__fail__5_a_floor_before_the_prereg_ceiling`** (the default witness, 2023-11-14: `not-after`,
+  still `fulfilled`), `__fail__5_precedes_is_strict` (Tc = Tf),
+  `__pass__5_one_microsecond_before_the_floor`,
+  `__fail__5_the_unsigned_midpoint_and_radius_are_not_read`,
+  `__pass__all_a_postreg_that_does_not_count_is_not_examined`,
+  `__pass__all_a_commitment_without_counted_postregs_is_not_examined`,
+  `__fail__empty_no_commitment_has_a_counted_postreg`,
+  `__fail__empty_a_rejected_preregistration_is_not_examined`,
+  `__fail__empty_a_malformed_postreg_is_not_examined`.
+  - Never raises (`tests/verify/test_verify_run_rules.py`):
+    `test_never_raises__junk_floor_on_a_counted_postreg` (8: a round past 8 bytes, negative,
+    zero, a bool; a non-string signature, a list randomness, chain hash, floor type),
+    `test_never_raises__junk_ceiling_on_a_prereg` (5), and `order` added to
+    `test_never_raises__validly_signed_junk_in_a_body_field` (41 cases) and
+    `test_never_raises__witness_time_past_year_9999` (now with a prereg ceiling).
+  - drand (`tests/test_drand.py`): `test_pinned_chains_are_quicknet_with_its_genesis_and_period`,
+    `test_verified_floor_of_a_saved_round_is_the_floor_fetch_floor_writes`,
+    `test_verified_floor_refuses_a_round_that_does_not_verify` (7).
+  - CLI (`tests/test_cli.py`): `test_floor_round_signs_with_a_round_fetched_earlier` (prereg
+    and postreg × inline and file; `drand.fetch_floor` and `fetch_round` patched to fail, so
+    nothing is fetched; the written floor is round 1000's record, and verify gives
+    `floor=PASS`), `test_floor_round_argument_errors_are_usage_errors` (13, with
+    `--best-effort`: exit 64, nothing written), `test_floor_round_file_content_errors_exit_EXIT_ERROR`
+    (13, exit 1), `test_floor_round_file_not_found_exits_EXIT_ERROR`,
+    `test_floor_round_excludes_floor` (3), `test_verify_marks_each_counted_postreg_not_shown_after_its_prereg`
+    (ordered, floor before the prereg's ceiling, no prereg ceiling, no floor; no mark without
+    `order`), and the pinned catalog in `test_verify_help_names_both_required_tests`.
+- CLI demonstrations, in a scratch dir. `round.json` is round 1000 as drand's HTTP API returns
+  it. A scratchpad wrapper (`tools/witness_cli.py`) runs `asexec` in-process with a pinned
+  synthetic Roughtime witness at a chosen MIDP (RADI 1 s), fixed keys, standing in for the
+  network for `--ceiling`; nothing else changes.
+  - **order PASS:** `prereg --target "model m via provider p" --ceiling` with the witness at
+    MIDP 1692806340 (2023-08-23T15:59:00Z); `postreg --fulfills prereg.json
+    --floor-round-file round.json`; `verify … --tests format,selfsig,ceiling,floor,order`:
+    `[FULFILLED] prereg sha-256:b17107d0…`, no mark, `✓ order=PASS (1/1 commitment(s) ok)`,
+    trust line `… so no later than 2023-08-23T15:59:01Z …`, `asexec-verify/1 ceiling=PASS
+    floor=PASS format=PASS order=PASS selfsig=PASS`.
+  - **order FAIL, the run's floor before the prereg's ceiling:** the prereg (with `--due
+    2099-01-01T00:00:00Z`) witnessed at MIDP 1700000000 (2023-11-14): `[FULFILLED] prereg
+    sha-256:b74ae2db…`, `✗ postreg sha-256:cf9877b8… is not shown after the pre-registration:
+    its floor (no earlier than 2023-08-23T15:59:24Z) is not after the pre-registration's
+    ceiling (no later than 2023-11-14T22:13:21Z)`, `asexec-verify/1 ceiling=PASS floor=PASS
+    format=PASS order=FAIL selfsig=PASS`. Both anchors verify on their own; only their order
+    fails.
+  - **Missing anchors:** a prereg without `--ceiling`: `✗ the pre-registration is not shown
+    before its postregs: it has no ceiling`, `format=PASS order=FAIL selfsig=PASS`. A postreg
+    without a floor: `✗ postreg sha-256:69412c3f… is not shown after the pre-registration: it
+    has no floor`, `order=FAIL`.
+  - **Forged floor:** the PASS postreg's body re-signed with its floor's round set to 5,000,000
+    (round 1000's signature kept), as anyone holding the key could: `✗ drand freshness floor
+    round 5000000` under the file, `✗ postreg sha-256:1ede25e2… is not shown after the
+    pre-registration: its floor does not verify`, `asexec-verify/1 floor=FAIL format=PASS
+    order=FAIL selfsig=PASS`.
+  - **Signing with a saved round:** `postreg --fulfills prereg.json --floor-round '{"round":
+    1000, "randomness": "fe290bec…", "signature": "b44679b9…"}'` → exit 0, and the body's
+    `anchor` is `{"floor": {"chain_hash": "52db9ba7…", "floor_type": "drand", "randomness":
+    "fe290bec…", "round": 1000, "signature": "b44679b9…"}}`.
+  - **Refusing a bad one:** the same with `"round": 1001` → `asexec postreg: error: argument
+    --floor-round: --floor-round: round 1001 does not verify against the pinned quicknet chain
+    (its BLS signature for that round, or randomness = sha256(signature))`, exit 64, nothing
+    written; with `--best-effort`, the same, exit 64. From `--floor-round-file` → `error:
+    --floor-round: round 1001 does not verify …`, exit 1. With a `previous_signature` key →
+    `… unknown field(s) 'previous_signature'; a round holds 'round', 'randomness' and
+    'signature', as drand's HTTP API returns it …`, exit 64. `--floor --floor-round …` →
+    `argument --floor-round: not allowed with argument --floor`, exit 64.
+  - The `docs/VERIFICATION.md` `order` examples use these refs (`b74ae2db…`, `cf9877b8…`, which
+    depend on the bodies only) with the doc's key, and the witness and its time elided.
+- `uv run python examples/adequacy-test/run.py`: exit 0, the same codes and caught/missed
+  results (it requests no `order`).
+- Nothing left behind: `git grep` for "`order` are planned", "signing needs a way" (now
+  marked done) and "passing in a drand round" outside this file finds only the ROADMAP betas
+  sentence, which now says it is done ahead.
+
+**Observations (out of scope):**
+- **Suite time doubled** (32 s → 67 s), from BLS math: each verified floor costs about 0.9 s,
+  and `order`'s tests, like `floor`'s, need a verified floor per counted postreg. A memo of
+  `drand.verify_round` (a pure function of its arguments and the pinned chain) would cut it;
+  not added, as it is a change to the crypto path for test speed alone.
+- `examples/adequacy-test/run.py:315` still labels the late-plants fault "missed: needs
+  `order` and a lab-side time bound". `order` alone does not catch it (the plants are
+  committed by the lab, after its run: ROADMAP's 0.6.0 `plantorder`), so the label is still
+  right; the release-gate port may want to say so.
+- The manifests block's floor line prints `created no earlier than <epoch seconds>` and the
+  ceiling line `created no later than <epoch seconds> ±…`, while the new marks print ISO times
+  (checkpoint 7 noted the same for the ceiling line).
+- A ceiling on a **rejected** copy of a prereg binds the same body bytes, so it is evidence
+  of when the body existed; `order` does not read it (only copies that are the commitment).
+  The conservative reading, consistent with D2; recorded in case the human gate wants it.
+- `--floor-round` accepts any verified round, however old: signing does not check that the
+  round is after the prereg's ceiling (it may have no ceiling yet, or not be given), so a
+  postreg can be signed that `order` will fail. `order` reports it.
+- One more pinned chain (a drand network rotation) would make `--floor-round`'s chain a
+  question: today it is the default chain only, as `--floor`'s is.
+
+#### Checkpoint 8 summary
+
+**Landed** (branch `feature/0321-checkpoint8`, each issue's change with its notes commit):
+- #34, `5b97649` (notes `7cce766`): the `untrusted` section (signing writes
+  `untrusted.asexec_version`), and the report shows it, any unknown key outside the body, and
+  any unknown body field, under headings saying nothing in them was checked, as escaped JSON.
+- #38, `fcd09a2` (notes: the commit that follows): `order`, and signing with a drand round
+  fetched earlier (`--floor-round` / `--floor-round-file`).
+
+**pytest counts:** 882 (baseline `bd82d93`) → 933 (#34) → 1020 (#38), `scripts/check.sh`
+clean after each, run in full and its exit status checked before every commit.
+`examples/adequacy-test/run.py` exits 0 after each.
+
+**Release-note entries** (for #40, in the `tests/test_constants.py` header format):
+
+```
+Identifier: the manifest file layout (no constant): {dsse, pubkey[, ceiling]} -> {dsse, pubkey, untrusted: {asexec_version}[, ceiling]}
+Impact: NEW_OUTPUT
+Affected: nothing published (untrusted is unsigned and read by no test; a file without it verifies as before); tools that compare the whole file
+Action: none
+
+Identifier: the verify report (no constant): new blocks "=== untrusted … ===" and "=== unknown fields … ===", and order's marks
+Impact: NEW_OUTPUT
+Affected: the report only (never part of the code); scripts that parse the report's blocks
+Action: none
+```
+
+**Judgement calls needing the human's eye** (each detailed in its issue's notes above):
+- #34: known fields are what the writer models can write (not the input models); unknown keys
+  nested in known objects are listed, in the body and out of it; the file's JSON rules hold
+  inside `untrusted` (a duplicate key there makes the file malformed); only files that pass
+  `format` are shown.
+- #38: "precedes" is strict; the prereg's time is the earliest verified ceiling of its
+  commitment copies; `--floor-round`'s shape is exactly drand's HTTP API response for a round
+  of the default chain, unknown keys refused; an inline round that does not verify is a usage
+  error (64).
