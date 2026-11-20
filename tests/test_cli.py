@@ -1159,3 +1159,29 @@ def test_verify_shows_a_witness_time_past_year_9999_as_epoch_seconds(
     out = capsys.readouterr().out
     assert "is late: its ceiling (no later than 4611686018429 (epoch seconds)) is after due" in out
     assert "so no later than 4611686018429 (epoch seconds)" in out
+
+
+@pytest.mark.parametrize(
+    "flag,content,key_name",
+    [
+        ("--plan-file", '{"name": "plan.md", "name": "k.key"}', "name"),
+        ("--items-file", '[{"id": "R1", "id": "R2"}]', "id"),
+        ("--evidence-file", '[{"name": "plan.md", "name": "k.key"}]', "name"),
+    ],
+    ids=["plan-file", "items-file", "evidence-file"],
+)
+def test_claim_record_file_with_a_duplicate_key_exits_EXIT_ERROR(
+    tmp_path, key, claim_dir, flag, content, key_name, capsys
+):
+    """A --plan-file, --items-file or --evidence-file whose JSON repeats a key is refused, as
+    an inline value is: parsers disagree on which value wins. It is the file's content, so
+    exit 1, and nothing is hashed or written."""
+    (claim_dir / "k.key").write_text("secret")
+    (tmp_path / "value.json").write_text(content)
+    cmd = "postreg" if flag == "--evidence-file" else "prereg"
+    link = ["--target", "t"] if cmd == "prereg" else ["--target", "t", "--fulfills", REF]
+    out = tmp_path / "out.json"
+    assert run(cmd, "--key", key, *link, flag, tmp_path / "value.json", "--out", out) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("error: ") and f"duplicate JSON key {key_name!r}" in err
+    assert not out.exists()

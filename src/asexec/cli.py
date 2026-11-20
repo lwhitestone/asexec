@@ -190,8 +190,16 @@ def _shaped_arg_or_file(args, name: str, shape: Callable):
     fails it is a usage error (64); a file's content that fails it exits 1."""
 
     def load_file(path: str):
+        with open(path) as f:
+            text = f.read()
+        try:  # the same JSON rules as an inline value: no duplicate key
+            value = json.loads(text, object_pairs_hook=_reject_duplicate_keys)
+        except json.JSONDecodeError as e:
+            raise ManifestError(f"{path} must contain valid JSON: {e}") from None
+        except ValueError as e:  # a duplicate key
+            raise ManifestError(f"{path}: {e}") from None
         try:
-            return shape(_load_json(path))
+            return shape(value)
         except ValueError as e:
             raise ManifestError(str(e)) from None
 
@@ -549,7 +557,7 @@ def _show_items(cp: dict) -> None:
 # Why a counted postreg is not shown on time (verifier._on_time), as the report says it.
 _NOT_ON_TIME: dict[str, Callable[[dict], str]] = {
     "late": lambda t: (
-        f"is late: its ceiling (no later than {verifier._utc_ceil(t['no_later_than'])}) "
+        f"is late: its ceiling (no later than {verifier._utc_ceil(t['no_later_than_us'])}) "
         "is after due"
     ),
     "no-ceiling": lambda t: "is not shown on time: it has no ceiling",
