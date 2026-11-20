@@ -14,6 +14,7 @@ import os
 import re
 import sys
 import uuid
+from collections import Counter
 from collections.abc import Callable
 from datetime import datetime
 
@@ -62,8 +63,9 @@ def _get_arg_or_file[T](
     """Load a value from ``--<arg>`` or ``--<file-arg>`` (argparse allows at most one).
 
     ``parse_value``, if given, parses the inline ``--<arg>`` value into ``T`` (for example
-    ``json.loads``), as ``load_file`` reads the file. A ``ValueError`` from it is a usage
-    error: only the argument is wrong, so it exits ``EXIT_USAGE`` and nothing runs."""
+    ``_strict_json`` and a shape check), as ``load_file`` reads the file. A ``ValueError``
+    from it is a usage error: only the argument is wrong, so it exits ``EXIT_USAGE`` and
+    nothing runs. What a file holds is not an argument: ``load_file`` fails with exit 1."""
     value = getattr(args, arg_name, None)
     file_path = getattr(args, file_arg_name, None)
     if value:
@@ -73,7 +75,7 @@ def _get_arg_or_file[T](
             return parse_value(value)
         except ValueError as e:
             flag = "--" + arg_name.replace("_", "-")
-            sys.stderr.write(f"asexec {args.cmd}: error: argument {flag}: not valid JSON: {e}\n")
+            sys.stderr.write(f"asexec {args.cmd}: error: argument {flag}: {e}\n")
             raise SystemExit(EXIT_USAGE) from None
     if file_path:
         try:
@@ -107,23 +109,100 @@ _PLAN_FIELDS = ("name", "media_type", "label")
 _EVIDENCE_FIELDS = ("name", "media_type", "uri")
 
 
-def _described_entries(specs: list, flag: str, allowed: tuple[str, ...], alg: str) -> list[dict]:
-    """Entries for files described as ``{"name": <path>, ...}``: each file hashed as a
-    subject file is (``hashing.build_entries``), with its declared fields kept."""
-    for spec in specs:
-        if not isinstance(spec, dict) or not isinstance(spec.get("name"), str):
-            raise ManifestError(f"{flag} needs a 'name' (a file path) in each entry: {spec!r}")
-        if "hash_alg" in spec or "digest" in spec:
-            raise ManifestError(
-                f"{flag}: asexec hashes the file and fills in hash_alg and digest "
-                "(choose the algorithm with --hash-alg)"
-            )
-        unknown = sorted(set(spec) - set(allowed))
+def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:
+    out: dict = {}
+    for key, value in pairs:
+        if key in out:  # parsers disagree on which value wins, so neither is taken
+            raise ValueError(f"duplicate JSON key {key!r}")
+        out[key] = value
+    return out
+
+
+def _strict_json(text: str):
+    """An inline JSON value: valid JSON with no duplicate key (``ValueError`` otherwise)."""
+    try:
+        return json.loads(text, object_pairs_hook=_reject_duplicate_keys)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"not valid JSON: {e}") from None
+
+
+def _spec_shape(spec, flag: str, allowed: tuple[str, ...]) -> dict:
+    """A file described as ``{"name": <path>, ...}``; ``ValueError`` if it is not one."""
+    if not isinstance(spec, dict) or not isinstance(spec.get("name"), str):
+        raise ValueError(f"{flag} needs a 'name' (a file path) in each entry: {spec!r}")
+    if "hash_alg" in spec or "digest" in spec:
+        raise ValueError(
+            f"{flag}: asexec hashes the file and fills in hash_alg and digest "
+            "(choose the algorithm with --hash-alg)"
+        )
+    unknown = sorted(set(spec) - set(allowed))
+    if unknown:
+        raise ValueError(
+            f"{flag}: unknown field(s) {', '.join(map(repr, unknown))}; "
+            f"an entry may hold {', '.join(map(repr, allowed))}"
+        )
+    for field in allowed[1:]:  # the declared fields: text, or absent
+        if spec.get(field) is not None and not isinstance(spec[field], str):
+            raise ValueError(f"{flag}: {field!r} must be a string: {spec[field]!r}")
+    return spec
+
+
+def _plan_shape(value) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError(f'--plan must be a JSON object, like {{"name": "plan.md"}}: {value!r}')
+    return _spec_shape(value, "--plan", _PLAN_FIELDS)
+
+
+def _items_shape(value) -> list:
+    """``--items``: an array of ``{"id": <string>, "kind": <string>}``, ids unique."""
+    if not isinstance(value, list):
+        raise ValueError(f'--items must be a JSON array, like [{{"id": "S1"}}]: {value!r}')
+    for item in value:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+            raise ValueError(f"--items: each item needs a string 'id': {item!r}")
+        unknown = sorted(set(item) - {"id", "kind"})
         if unknown:
-            raise ManifestError(
-                f"{flag}: unknown field(s) {', '.join(map(repr, unknown))}; "
-                f"an entry may hold {', '.join(map(repr, allowed))}"
+            raise ValueError(
+                f"--items: unknown field(s) {', '.join(map(repr, unknown))}; "
+                "an item may hold 'id' and 'kind'"
             )
+        if item.get("kind") is not None and not isinstance(item["kind"], str):
+            raise ValueError(f"--items: 'kind' must be a string: {item['kind']!r}")
+    counts = Counter(item["id"] for item in value)
+    repeated = sorted(i for i, n in counts.items() if n > 1)
+    if repeated:
+        raise ValueError(f"--items lists the id {', '.join(map(repr, repeated))} twice")
+    return value
+
+
+def _evidence_shape(value) -> list:
+    if not isinstance(value, list):
+        raise ValueError(
+            f'--evidence must be a JSON array, like [{{"name": "out.json"}}]: {value!r}'
+        )
+    if not value:
+        raise ValueError("--evidence must list at least one file")
+    return [_spec_shape(spec, "--evidence", _EVIDENCE_FIELDS) for spec in value]
+
+
+def _shaped_arg_or_file(args, name: str, shape: Callable):
+    """``--<name>`` (inline JSON) or ``--<name>-file``, held to ``shape``. An inline value that
+    fails it is a usage error (64); a file's content that fails it exits 1."""
+
+    def load_file(path: str):
+        try:
+            return shape(_load_json(path))
+        except ValueError as e:
+            raise ManifestError(str(e)) from None
+
+    return _get_arg_or_file(
+        args, name, f"{name}_file", load_file, lambda text: shape(_strict_json(text))
+    )
+
+
+def _described_entries(specs: list, alg: str) -> list[dict]:
+    """Entries for files described as ``{"name": <path>, ...}`` (already shaped): each file
+    hashed as a subject file is (``hashing.build_entries``), with its declared fields kept."""
     entries = hashing.build_entries([spec["name"] for spec in specs], alg)
     return [
         {**entry, **{k: v for k, v in spec.items() if k != "name"}}
@@ -133,37 +212,20 @@ def _described_entries(specs: list, flag: str, allowed: tuple[str, ...], alg: st
 
 def _get_plan(args) -> dict | None:
     """``body.plan`` from --plan / --plan-file: one described file."""
-    spec = _get_arg_or_file(args, "plan", "plan_file", _load_json, json.loads)
-    if spec is None:
-        return None
-    if not isinstance(spec, dict):
-        raise ManifestError(f'--plan must be a JSON object, like {{"name": "plan.md"}}: {spec!r}')
-    if "name" not in spec:
-        raise ManifestError("--plan needs a 'name': the plan document's path")
-    return _described_entries([spec], "--plan", _PLAN_FIELDS, args.hash_alg)[0]
+    spec = _shaped_arg_or_file(args, "plan", _plan_shape)
+    return None if spec is None else _described_entries([spec], args.hash_alg)[0]
 
 
 def _get_items(args) -> list | None:
     """``body.items`` from --items / --items-file: a list of ``{"id", "kind"}``, as given."""
-    items = _get_arg_or_file(args, "items", "items_file", _load_json, json.loads)
-    if items is not None and not isinstance(items, list):
-        raise ManifestError(f'--items must be a JSON array, like [{{"id": "S1"}}]: {items!r}')
-    return items
+    return _shaped_arg_or_file(args, "items", _items_shape)
 
 
 def _get_evidence(args) -> list | None:
     """``body.evidence`` from --evidence / --evidence-file: a non-empty list of described
     files."""
-    specs = _get_arg_or_file(args, "evidence", "evidence_file", _load_json, json.loads)
-    if specs is None:
-        return None
-    if not isinstance(specs, list):
-        raise ManifestError(
-            f'--evidence must be a JSON array, like [{{"name": "out.json"}}]: {specs!r}'
-        )
-    if not specs:
-        raise ManifestError("--evidence must list at least one file")
-    return _described_entries(specs, "--evidence", _EVIDENCE_FIELDS, args.hash_alg)
+    specs = _shaped_arg_or_file(args, "evidence", _evidence_shape)
+    return None if specs is None else _described_entries(specs, args.hash_alg)
 
 
 def _built(build: Callable[..., dict], *args, **kwargs) -> dict:

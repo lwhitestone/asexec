@@ -881,71 +881,110 @@ def test_postreg_writes_item_id_status_and_evidence(tmp_path, key, claim_dir, ca
     assert f"        {cli.NO} evidence results/s1.json: digest mismatch" in out
 
 
-@pytest.mark.parametrize(
-    "argv",
-    [
-        ("prereg", "--plan", "{nope"),
-        ("prereg", "--items", "[1,"),
-        ("postreg", "--evidence", "not json"),
-        ("postreg", "--status", "done"),
-        ("prereg", "--plan", "{}", "--plan-file", "p.json"),
-        ("prereg", "--items", "[]", "--items-file", "i.json"),
-        ("postreg", "--evidence", "[]", "--evidence-file", "e.json"),
-    ],
-    ids=[
-        "plan-not-json",
-        "items-not-json",
-        "evidence-not-json",
-        "status-unknown",
-        "plan-and-file",
-        "items-and-file",
-        "evidence-and-file",
-    ],
-)
-def test_claim_record_argument_errors_are_usage_errors(tmp_path, key, argv, capsys):
-    """Only the arguments are wrong: exit 64, and nothing is written."""
+# Inline values that are wrong on their own: the arguments themselves are wrong, exit 64.
+INLINE_USAGE_ERRORS = [
+    pytest.param(("prereg", "--plan", "{nope"), "not valid JSON", id="plan-not-json"),
+    pytest.param(("prereg", "--items", "[1,"), "not valid JSON", id="items-not-json"),
+    pytest.param(("postreg", "--evidence", "not json"), "not valid JSON", id="evidence-not-json"),
+    pytest.param(("postreg", "--status", "done"), "invalid choice", id="status-unknown"),
+    pytest.param(("prereg", "--plan", "{}", "--plan-file", "p.json"), "not allowed",
+                 id="plan-and-file"),
+    pytest.param(("prereg", "--items", "[]", "--items-file", "i.json"), "not allowed",
+                 id="items-and-file"),
+    pytest.param(("postreg", "--evidence", "[]", "--evidence-file", "e.json"), "not allowed",
+                 id="evidence-and-file"),
+    pytest.param(("prereg", "--plan", "[]"), "--plan must be a JSON object", id="plan-list"),
+    pytest.param(("prereg", "--plan", '"plan.md"'), "--plan must be a JSON object",
+                 id="plan-string"),
+    pytest.param(("prereg", "--plan", '{"label": "L"}'), "needs a 'name'", id="plan-no-name"),
+    pytest.param(("prereg", "--plan", '{"name": 5}'), "needs a 'name'", id="plan-name-number"),
+    pytest.param(("prereg", "--plan", '{"name": "plan.md", "digest": {}}'), "fills in",
+                 id="plan-digest-given"),
+    pytest.param(("prereg", "--plan", '{"name": "plan.md", "colour": 1}'), "colour",
+                 id="plan-unknown-field"),
+    pytest.param(("prereg", "--plan", '{"name": "plan.md", "label": 5}'), "'label'",
+                 id="plan-label-number"),
+    pytest.param(("prereg", "--plan", '{"name": "plan.md", "name": "k.key"}'),
+                 "duplicate JSON key 'name'", id="plan-duplicate-key"),
+    pytest.param(("prereg", "--items", '{"id": "R1"}'), "--items must be a JSON array",
+                 id="items-object"),
+    pytest.param(("prereg", "--items", '[{"id": 5}]'), "a string 'id'", id="item-id-number"),
+    pytest.param(("prereg", "--items", '[{"kind": "run"}]'), "a string 'id'", id="item-no-id"),
+    pytest.param(("prereg", "--items", '["R1"]'), "a string 'id'", id="item-not-object"),
+    pytest.param(("prereg", "--items", '[{"id": "R1"}, {"id": "R1"}]'), "'R1' twice",
+                 id="item-ids-repeat"),
+    pytest.param(("prereg", "--items", '[{"id": "R1", "foo": 1}]'), "'foo'",
+                 id="item-unknown-field"),
+    pytest.param(("prereg", "--items", '[{"id": "R1", "kind": 5}]'), "'kind'",
+                 id="item-kind-number"),
+    pytest.param(("prereg", "--items", '[{"id": "R1", "id": "R2"}]'), "duplicate JSON key 'id'",
+                 id="item-duplicate-key"),
+    pytest.param(("postreg", "--evidence", '{"name": "plan.md"}'),
+                 "--evidence must be a JSON array", id="evidence-object"),
+    pytest.param(("postreg", "--evidence", "[]"), "at least one", id="evidence-empty"),
+    pytest.param(("postreg", "--evidence", '[{"name": "plan.md", "hash_alg": "x"}]'), "fills in",
+                 id="evidence-hash_alg-given"),
+    pytest.param(("postreg", "--evidence", '[{"name": "plan.md", "uri": 5}]'), "'uri'",
+                 id="evidence-uri-number"),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize("argv,message", INLINE_USAGE_ERRORS)
+def test_claim_record_argument_errors_are_usage_errors(
+    tmp_path, key, claim_dir, argv, message, capsys
+):
+    """An inline value that is invalid on its own (whatever the files hold): exit 64, the
+    reason on stderr, and nothing written. Duplicate JSON keys are refused, as verify
+    refuses them in a manifest."""
     cmd, *rest = argv
     link = ["--target", "t"] if cmd == "prereg" else ["--target", "t", "--fulfills", REF]
     with pytest.raises(SystemExit) as e:
         run(cmd, "--key", key, *link, *rest, "--out", tmp_path / "out.json")
     assert e.value.code == cli.EXIT_USAGE
-    assert "error: argument" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "error: argument" in err and message in err
     assert not (tmp_path / "out.json").exists()
+
+
+_FILE_FLAGS = {"--plan": "--plan-file", "--items": "--items-file", "--evidence": "--evidence-file"}
+
+
+@pytest.mark.parametrize(
+    "argv,message",
+    [p for p in INLINE_USAGE_ERRORS if p.values[0][1] in _FILE_FLAGS
+     and "not allowed" not in p.values[1] and "duplicate JSON key" not in p.values[1]
+     and "not valid JSON" not in p.values[1]],
+)  # fmt: skip
+def test_claim_record_file_content_errors_exit_EXIT_ERROR(
+    tmp_path, key, claim_dir, argv, message, capsys
+):
+    """The same values from a --…-file are the file's content, not the arguments: exit 1,
+    one line, nothing written."""
+    cmd, flag, value = argv
+    (tmp_path / "value.json").write_text(value)
+    link = ["--target", "t"] if cmd == "prereg" else ["--target", "t", "--fulfills", REF]
+    out = tmp_path / "out.json"
+    code = run(cmd, "--key", key, *link, _FILE_FLAGS[flag], tmp_path / "value.json", "--out", out)
+    assert code == cli.EXIT_ERROR
+    err = capsys.readouterr().err
+    assert err.startswith("error: ") and "Traceback" not in err and message in err
+    assert not out.exists()
 
 
 @pytest.mark.parametrize(
     "argv,message",
     [
         (("prereg", "--plan", '{"name": "results"}'), "is a directory"),
-        (("prereg", "--plan", '"plan.md"'), "--plan must be a JSON object"),
-        (("prereg", "--plan", '{"label": "L"}'), "--plan needs a 'name'"),
-        (("prereg", "--plan", '{"name": "plan.md", "digest": {}}'), "fills in"),
-        (("prereg", "--plan", '{"name": "plan.md", "colour": 1}'), "colour"),
-        (("prereg", "--items", '{"id": "S1"}'), "--items must be a JSON array"),
-        (("prereg", "--items", '[{"id": "S1"}, {"id": "S1"}]'), "S1"),
         (("prereg", "--plan", '{"name": "absent.md"}'), "absent.md"),
-        (("postreg", "--evidence", '{"name": "plan.md"}'), "--evidence must be a JSON array"),
-        (("postreg", "--evidence", "[]"), "at least one"),
         (("postreg", "--evidence", '[{"name": "plan.md"}, {"name": "./plan.md"}]'), "twice"),
-        (("postreg", "--evidence", '[{"name": "plan.md", "hash_alg": "x"}]'), "fills in"),
+        (("postreg", "--evidence", '[{"name": "../plan.md"}]'), "'..'"),
     ],
-    ids=[
-        "plan-directory",
-        "plan-not-object",
-        "plan-no-name",
-        "plan-digest-given",
-        "plan-unknown-field",
-        "items-not-array",
-        "item-ids-repeat",
-        "plan-missing-file",
-        "evidence-not-array",
-        "evidence-empty",
-        "evidence-twice",
-        "evidence-hash_alg-given",
-    ],
+    ids=["plan-directory", "plan-missing-file", "evidence-twice", "evidence-dotdot"],
 )
 def test_claim_record_value_errors_exit_EXIT_ERROR(tmp_path, key, claim_dir, argv, message, capsys):
-    """A value that parses but cannot be signed: exit 1, one line, nothing written."""
+    """A file a value names that cannot be signed (a directory, a missing file, two paths
+    for one name, a path that is not a relative name), as for --subject: exit 1, one line,
+    nothing written."""
     cmd, *rest = argv
     link = ["--target", "t"] if cmd == "prereg" else ["--target", "t", "--fulfills", REF]
     assert run(cmd, "--key", key, *link, *rest, "--out", tmp_path / "out.json") == cli.EXIT_ERROR
