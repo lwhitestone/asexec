@@ -6,13 +6,16 @@ One file per catalog test, plus one per cross-cutting section of the doc::
 
     test_verify_ceiling.py           ## ceiling
     test_verify_chain.py             ## chain
+    test_verify_complete.py          ## complete
     test_verify_content.py           ## content
     test_verify_floor.py             ## floor
     test_verify_format.py            ## format
     test_verify_keyconsist.py        ## keyconsist
     test_verify_selfsig.py           ## selfsig
+    test_verify_timely.py            ## timely
     test_verify_matching.py          ## Matching postregs to commitments
     test_verify_commitment_states.py ## Commitment states
+    test_verify_untrusted.py         ## Untrusted
     test_verify_run_rules.py         ## Conventions (Result, Code, Run rules)
     test_verify_doc_coverage.py      every numbered item above has a fail test
     test_verify_planted_faults.py    inputs the writer cannot produce (no Scenario)

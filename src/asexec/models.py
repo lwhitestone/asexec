@@ -1,8 +1,10 @@
 """Pydantic models for asexec manifest bodies and the files around them, in two families.
 
 A file is a wrapper around a DSSE envelope: ``{"dsse": {"payloadType", "payload",
-"signatures": [{"keyid", "sig"}]}, "pubkey", "ceiling"}``, where ``dsse.payload`` is the
-base64 of the body bytes, and the body is the JSON object they hold.
+"signatures": [{"keyid", "sig"}]}, "pubkey", "ceiling", "untrusted"}``, where ``dsse.payload``
+is the base64 of the body bytes, and the body is the JSON object they hold. ``untrusted`` is
+metadata nothing checks; ``BODY_FIELDS`` and ``WRAPPER_FIELDS`` say what the format defines,
+so the report can show what it does not.
 
 **Writer models** (``ManifestBody``, ``Floor``, ``Ceiling``, ``Manifest``, ...) gate what
 this tool writes: ``strict`` (no coercion) and ``extra="forbid"`` (a stray field is a caller
@@ -31,8 +33,9 @@ optional (a commitment with no deadline can never elapse: its state is ``no-due`
 
 from __future__ import annotations
 
+import types
 from collections import Counter
-from typing import Annotated, Any, ClassVar, Literal
+from typing import Annotated, Any, ClassVar, Literal, Union, get_args, get_origin
 
 from pydantic import (
     BaseModel,
@@ -44,7 +47,7 @@ from pydantic import (
     model_validator,
 )
 
-from . import drand
+from . import __version__, drand
 from .constants import MANIFEST_PAYLOAD_TYPE, MANIFEST_PREDICATE_TYPE
 from .fields import (
     Base64,
@@ -366,11 +369,64 @@ class Dsse(DsseInput):
     signatures: Annotated[list[Signature], Field(min_length=1, max_length=1)]
 
 
+class Untrusted(BaseModel):
+    """The file's ``untrusted``: metadata nothing checks, in the wrapper, so neither signed nor
+    part of ``ref``. Signing writes the release that wrote the file, for diagnostics only. No
+    input model reads it: no test does (VERIFICATION.md, Untrusted)."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    asexec_version: str = __version__
+
+
 class Manifest(EnvelopeInput):
-    """The file: the envelope and the key that signed it. ``extra="allow"`` so a ceiling
-    witness can be attached beside them after signing without tripping validation."""
+    """The file: the envelope, the key that signed it, and the untrusted section.
+    ``extra="allow"`` so a ceiling witness can be attached beside them after signing without
+    tripping validation."""
 
     null_is_absent = False
 
     dsse: Dsse
     pubkey: LowerHex
+    untrusted: Untrusted = Field(default_factory=Untrusted)
+
+
+# --------------------------------------------------------------------------- #
+# the fields this format defines (VERIFICATION.md, Untrusted)
+# --------------------------------------------------------------------------- #
+# A field's shape, as the report reads it to list what this format does not define: ``None``
+# for a value (free-form, like ``target`` or a ``digest``, or a scalar), or ``("object",
+# fields)`` / ``("array", fields)`` for an object, or an array of objects, whose fields the
+# format defines.
+Fields = dict[str, Any]
+
+
+def _shape(annotation: Any) -> tuple[str, Fields] | None:
+    origin = get_origin(annotation)
+    if origin is Annotated:
+        return _shape(get_args(annotation)[0])
+    if origin in (Union, types.UnionType):
+        return next(filter(None, map(_shape, get_args(annotation))), None)
+    if origin is list:
+        inner = _shape(get_args(annotation)[0])
+        return ("array", inner[1]) if inner and inner[0] == "object" else None
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return ("object", known_fields(annotation))
+    return None
+
+
+def known_fields(model: type[BaseModel]) -> Fields:
+    """The fields a writer model can write, each with its shape (see ``Fields``)."""
+    return {name: _shape(info.annotation) for name, info in model.model_fields.items()}
+
+
+# What a body may hold that this format defines: every field the writer can write. Anything
+# else, at the top of the body or in an object the format defines, is an unknown field.
+BODY_FIELDS: Fields = known_fields(ManifestBody)
+# The same outside the body, in the file around it: the envelope, the key, the ceiling a
+# witness attaches, and ``untrusted``, which is shown whole (nothing in it is the format's).
+WRAPPER_FIELDS: Fields = {
+    **known_fields(Manifest),
+    "untrusted": None,
+    "ceiling": ("object", known_fields(Ceiling)),
+}

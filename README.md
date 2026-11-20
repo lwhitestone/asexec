@@ -182,8 +182,10 @@ For `verify`, malformed manifest input is a `FAIL`, never an error.
 What each test examines, its exact pass criteria, and what it does not establish are
 specified in the [verification catalog](./docs/VERIFICATION.md).
 
-`verify` runs the tests you name and prints a report for people to read (each manifest,
-each commitment with its state, any rejected pre-registrations, any notarization-only
+`verify` runs the tests you name and prints a report for people to read (each manifest; what
+nothing checked, under its own headings: each file's unsigned `untrusted` section and any
+key outside the body the format does not define, and any body field it does not define; each
+commitment with its state, any rejected pre-registrations, any notarization-only
 post-registrations, and each test's result with a short reason), then one canonical code,
 then `Checked at <time>` (UTC, the moment commitment states were judged against), e.g.:
 
@@ -250,6 +252,9 @@ and `sig`). Fields marked `always` are always written by `asexec prereg` or
     "midpoint": 1785911400.0,
     "radius": 1.0,
     "response": "0400000040…"
+  },
+  "untrusted": {                                        // always written; unsigned, never tested
+    "asexec_version": "0.4.0"                           // always: the release that wrote it
   }
 }
 ```
@@ -297,8 +302,9 @@ The body (`dsse.payload` decoded):
     "payload": "eyJhbmNob3IiOnsiZmxvb3IiOnsiY2hh…",     // base64 of the body bytes, below
     "signatures": [ { "keyid": "sha-256:8f3e0a91…", "sig": "XA9+IVq1…" } ]
   },
-  "pubkey": "d75a9801…"
+  "pubkey": "d75a9801…",
   // "ceiling": same shape as in the prereg
+  "untrusted": { "asexec_version": "0.4.0" }            // always written; unsigned, never tested
 }
 ```
 
@@ -356,6 +362,10 @@ postreg carries its prereg's `target`, `due` and `declaration`, links back with 
 `pubkey` sit outside the signed body: the ceiling's nonce is the body's own hash, and
 `selfsig` requires the signature's `keyid` to derive from `pubkey`, so a substituted key
 fails. The floor sits inside the body, because a value fixed before signing can be signed.
+`untrusted` is the one part of the file nothing checks: unsigned, read by no test and never
+part of `ref`, so anyone can edit it after signing. `verify` shows it, and any field the
+format does not define, under headings saying nothing in them was checked (see
+[Untrusted](./docs/VERIFICATION.md#untrusted)).
 
 ## Keys
 

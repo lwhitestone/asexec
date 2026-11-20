@@ -471,6 +471,9 @@ def cmd_verify(args) -> int:
                     what = "" if e["field"] == "subject" else f"{e['field']} "  # plan, evidence
                     _show(f"        {NO} {what}{e['name']}: {e.get('reason', 'digest mismatch')}")
 
+    _show_fields(report["manifests"], "untrusted", UNTRUSTED_HEADING)
+    _show_fields(report["manifests"], "unknown", UNKNOWN_HEADING)
+
     _show("\n=== commitments ===")
     if not report["commitments"] and report["rejected_preregs"]:
         _show("  (no commitments: no pre-registration provided is validly signed)")
@@ -528,6 +531,49 @@ def cmd_verify(args) -> int:
     _show(f"\n{report['code']}")
     _show(f"Checked at {report['checked_at']}")
     return EXIT_OK if report["ok"] else EXIT_FAIL
+
+
+UNTRUSTED_HEADING = "=== untrusted (unsigned, and read by no test: nothing here was checked) ==="
+UNKNOWN_HEADING = (
+    "=== unknown fields (signed, but this format does not define them: nothing here was "
+    "checked) ==="
+)
+# A key shown as ``.key`` in a path; any other is shown as JSON, ``["a b"]``.
+_PLAIN_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _json_text(value) -> str:
+    """``value`` as one line of ASCII JSON: a newline, a control character or any non-ASCII
+    character in it is escaped, so it cannot forge a line of the report."""
+    return json.dumps(value, ensure_ascii=True)
+
+
+def _path_text(path: list) -> str:
+    """A path of keys and indexes as the doc writes it (``body.subject[0].name``), each key that
+    is not plain shown as JSON (``body["a\\nb"]``)."""
+    text = ""
+    for part in path:
+        if isinstance(part, int):
+            text += f"[{part}]"
+        elif _PLAIN_KEY.fullmatch(part):
+            text += f".{part}" if text else part
+        else:
+            text += f"[{_json_text(part)}]"
+    return text
+
+
+def _show_fields(manifests: list, kind: str, heading: str) -> None:
+    """Under ``heading``, if any file has them: each file's ``untrusted`` or ``unknown``
+    entries (``verifier._untrusted``, ``_unknown_fields``), each path and value as JSON. These
+    are the file's least checked text, so none is printed raw."""
+    shown = [m for m in manifests if m[kind]]
+    if not shown:
+        return
+    _show(f"\n{heading}")
+    for m in shown:
+        _show(f"  {m['path']}")
+        for entry in m[kind]:
+            _show(f"    {_path_text(entry['path'])} = {_json_text(entry['value'])}")
 
 
 def _show_items(cp: dict) -> None:

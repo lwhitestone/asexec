@@ -142,9 +142,9 @@ manifest, even if that manifest happens to carry it; there, it stays an unknown 
   bytes and never re-canonicalizes. `ref` = digest of the payload bytes. (Done ahead of
   0.4.0.)
 - The file is an asexec wrapper around that standard envelope: `dsse`, plus the unsigned
-  `ceiling`, `pubkey` and `untrusted` (see *Wrapper* below). (Done ahead of 0.4.0, except
-  `untrusted`.)
-- `untrusted`: a section for metadata nothing checks, starting with `asexec_version`.
+  `ceiling`, `pubkey` and `untrusted` (see *Wrapper* below). (Done ahead of 0.4.0.)
+- `untrusted`: a section for metadata nothing checks, starting with `asexec_version`. (Done
+  ahead of 0.4.0.)
 - `payloadType` is `application/vnd.asexec.v1+json` (betas write their own; see
   *Versioning*), and `predicateType` is `https://asexec.org/manifest/v1`, on a domain the
   project controls. A later format N is `vN` in both. (Done ahead of 0.4.0.)
@@ -154,9 +154,8 @@ manifest, even if that manifest happens to carry it; there, it stays an unknown 
 - `dsse.payloadType` selects the format version, and unknown values fail `format`
   ([`docs/MULTIVERSION.md`](docs/MULTIVERSION.md)). (Done ahead of 0.4.0.)
 - `hash_alg` moves into each subject entry. A body-level `hash_alg` is no longer read, and is
-  shown as unknown and unchecked, like any unknown field. (Done ahead of 0.4.0, except the
-  showing, which is the unknown-field display below. An entry without its own `hash_alg`
-  fails `content`: no format supplies a default.)
+  shown as unknown and unchecked, like any unknown field. (Done ahead of 0.4.0. An entry
+  without its own `hash_alg` fails `content`: no format supplies a default.)
 - Subjects are an explicit list of files, each hashed exactly as listed, because directory
   hash v1 is ambiguous and skips what it can't encode.
   - An entry's `name` is the relative path as given (normalized, `/`-separated), not its
@@ -189,7 +188,7 @@ How the 0.4.0 envelope is built, compared with 0.3.x, is in
   wins, so two verifiers could read different fields from the same signed bytes. The
   decoded body is held to the same JSON rules as the file, nesting limit included.
 
-(All three done ahead of 0.4.0; `untrusted` is not built yet.)
+(All three done ahead of 0.4.0.)
 
 **Wrapper.** DSSE defines only `payloadType`, `payload` and `signatures`, so what asexec
 adds sits outside it, in the wrapper:
@@ -237,7 +236,10 @@ adds sits outside it, in the wrapper:
 - Unknown signed fields are shown as unknown and unchecked, never dropped. Unknown
   top-level keys are shown with `untrusted`.
 - `untrusted` is printed under its own heading saying nothing in it was checked. No test
-  reads it, and it never affects `ref` or the verify code.
+  reads it, and it never affects `ref` or the verify code. (Both done ahead of 0.4.0. An
+  unknown key nested in an object the format defines is shown too, in the body or out of
+  it, and the file's JSON rules still hold inside `untrusted`: a duplicate key there makes
+  the file malformed.)
 
 **Docs**, rewritten for the 0.4.0 format before release, since the release fixes what they
 describe:

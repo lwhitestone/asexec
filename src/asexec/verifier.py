@@ -69,6 +69,10 @@ under the rules of the format its dsse.payloadType names (``FORMATS``), never an
 body bytes are read exactly as stored: nothing is re-serialized, so ``ref`` and the
 signature are of the bytes the file holds.
 
+No test reads the file's unsigned ``untrusted`` section, a key outside the body that the
+format does not define, or a body field it does not define. The report shows them, for each
+file that passes ``format``, so that nothing unchecked is dropped or passes for checked.
+
 A requested test is ``PASS`` iff it holds everywhere it applies AND it applies
 somewhere; a requested test that applies **nowhere** is ``FAIL``
 (requested-but-absent), never a silent omission or a pass with nothing examined.
@@ -119,7 +123,9 @@ from .constants import FORMATS, VERIFY_CODE_VERSION
 from .errors import ManifestError, VerificationError
 from .fields import is_normal_name
 from .models import (
+    BODY_FIELDS,
     STATUSES,
+    WRAPPER_FIELDS,
     CeilingInput,
     DueInput,
     EnvelopeInput,
@@ -538,6 +544,11 @@ def verify_paths(
             "floor": floor,
             "ceiling": ceiling,
             "content": content,
+            # Shown, never read by a test (VERIFICATION.md, Untrusted): the unsigned untrusted
+            # section and any key outside the body this format does not define; and any body
+            # field it does not define. Only a file that passes format has either.
+            "untrusted": _untrusted(mani) if clean else [],
+            "unknown": _unknown_fields(body, BODY_FIELDS, ["body"]) if clean else [],
         }
         manifests_report.append(rec)
         if not clean:
@@ -667,6 +678,39 @@ def verify_paths(
         "ceiling_trust": ceiling_trust,
         "checked_at": _utc_timestamp(now),
     }
+
+
+def _unknown_fields(value: Any, fields: dict[str, Any], path: list) -> list[dict[str, Any]]:
+    """Each ``{path, value}`` under ``value`` that ``fields`` (``models.BODY_FIELDS`` or
+    ``WRAPPER_FIELDS``) does not define, in the order it holds them: a key of an object the
+    format defines, or of an object in an array of them, that is not one of its fields. A
+    null is absent (Run rules), so it is not listed, and a field of the wrong shape has no
+    fields to list. Display only: no verdict reads it. Never raises."""
+    if not isinstance(value, dict):
+        return []
+    found: list[dict[str, Any]] = []
+    for key, inner in value.items():
+        if inner is None:
+            continue
+        if key not in fields:
+            found.append({"path": [*path, key], "value": inner})
+            continue
+        kind, sub = fields[key] or (None, None)
+        if kind == "object":
+            found += _unknown_fields(inner, sub, [*path, key])
+        elif kind == "array" and isinstance(inner, list):
+            for i, entry in enumerate(inner):
+                found += _unknown_fields(entry, sub, [*path, key, i])
+    return found
+
+
+def _untrusted(mani: dict[str, Any]) -> list[dict[str, Any]]:
+    """What the report shows under *untrusted* for a file that passes format: its
+    ``untrusted`` section, as it is, then each key outside the body this format does not
+    define. Unsigned, and read by no test."""
+    present, value = _lookup(mani, "untrusted")
+    section = [{"path": ["untrusted"], "value": value}] if present else []
+    return section + _unknown_fields(mani, WRAPPER_FIELDS, [])
 
 
 def _no_later_than(ceiling: dict[str, Any]) -> int:

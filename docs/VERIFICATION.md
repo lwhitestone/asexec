@@ -16,7 +16,8 @@ asexec verify <manifest|dir>... --tests <name>[,<name>...] [--artifacts <dir>]
 top-level members: `dsse`, the envelope, which holds `dsse.payloadType` (the format),
 `dsse.payload` (the base64 of the signed body bytes) and `dsse.signatures` (a list of
 `{keyid, sig}`, `sig` the base64 of the signature, as DSSE has it); `pubkey`, the signing
-key, in hex; and optionally `ceiling`. The **body bytes** are
+key, in hex; and optionally `ceiling` and `untrusted` (see [Untrusted](#untrusted)). The
+**body bytes** are
 what `dsse.payload` decodes to, and the **body** is the JSON object they hold: the signed
 claim. Properties are written as dotted paths of two kinds:
 - `body.<path>` is inside the body, the decoded `dsse.payload`: `body.phase`,
@@ -120,6 +121,8 @@ report's wording may change, except for the reasons this document lists.
 | Block | Printed | Shows |
 |---|---|---|
 | `=== manifests ===` | always | One line per file: `✓` if it passes `format` and meets `selfsig`'s conditions (else `✗`), the path, `body.phase` and `dsse.signatures[0].keyid` (`None` for a file that fails `format`, whose body is not read). Indented beneath: why a file fails `format` (`format: malformed: …`, or the [reason](#format) for an unknown format), and one line each for a floor, a ceiling and content hashes when the manifest has them. |
+| `=== untrusted … ===` | if any | For each file that passes `format`: its [`untrusted`](#untrusted) section, and each key outside the body that this format does not define, each as its path and its value in JSON. The heading says nothing in it was checked. |
+| `=== unknown fields … ===` | if any | For each file that passes `format`: each body field this format does not define, as its path (`body.…`) and its value in JSON (see [Untrusted](#untrusted)). The heading says nothing in it was checked. |
 | `=== commitments ===` | always | One entry per [commitment](#matching-postregs-to-commitments) (a validly signed prereg's `ref` and signer): its [state](#commitment-states), `ref`, signer keyid, `due` (and a line if it is not parseable), the number of counted postregs, a chain problem if any, with [`timely`](#timely) requested each counted postreg not shown on time and why, if its prereg lists items each item with its status or why [`complete`](#complete) does not count it as accounted for (and each counted postreg whose `item_id` names no listed item), and each rejected postreg with its reason. |
 | `=== rejected pre-registrations ===` | if any | Each [rejected pre-registration](#matching-postregs-to-commitments) (a prereg that passes `format` but fails a `selfsig` condition, so is no commitment): its `ref` and its reason, `invalid signature`; the `dsse.signatures[0].keyid` it claims, which nothing authenticated; and each postreg rejected under it, with the reason `the pre-registration's signature is invalid`. It has no state. |
 | `=== notarization-only … ===` | if any | Each [notarization-only](#matching-postregs-to-commitments) postreg: one whose `body.fulfills` matches no provided prereg. |
@@ -141,6 +144,14 @@ $ asexec verify prereg.json postreg-1.json postreg-2.json --tests format,selfsig
 ✓ prereg.json  [prereg]  keyid=sha-256:bc562700…
 ✓ postreg-1.json  [postreg]  keyid=sha-256:bc562700…
 ✓ postreg-2.json  [postreg]  keyid=sha-256:bc562700…
+
+=== untrusted (unsigned, and read by no test: nothing here was checked) ===
+  prereg.json
+    untrusted = {"asexec_version": "0.4.0"}
+  postreg-1.json
+    untrusted = {"asexec_version": "0.4.0"}
+  postreg-2.json
+    untrusted = {"asexec_version": "0.4.0"}
 
 === commitments ===
   [FULFILLED] prereg sha-256:b17107d0…
@@ -721,6 +732,10 @@ $ asexec verify prereg.json postreg-v2.json --tests format,selfsig
 ✗ postreg-v2.json  [None]  keyid=None
     ✗ format: payloadType names a format newer than this release: upgrade asexec to read it
 
+=== untrusted (unsigned, and read by no test: nothing here was checked) ===
+  prereg.json
+    untrusted = {"asexec_version": "0.4.0"}
+
 === commitments ===
   [NO-DUE] prereg sha-256:b17107d0…
 …
@@ -1163,6 +1178,85 @@ The claim record's (ROADMAP, *New properties*):
 
 The claim record's `body.items[].id`, `body.item_id` and `body.status` are read by
 [`complete`](#complete).
+
+## Untrusted
+
+What a file holds that nothing checks, and how the report shows it.
+
+**`untrusted`** is an optional member of the file, beside `dsse`, `pubkey` and `ceiling`: a
+section for metadata that nothing checks. Signing writes `untrusted.asexec_version`, the
+asexec release that wrote the file, for diagnostics only. It is outside the body, so it is
+neither signed nor part of `ref` (the digest of the body bytes), and anyone can edit it after
+signing: that is what it is for. Unsigned is not the same as untrusted: `ceiling` and
+`pubkey` are unsigned too, but checked, by the witness's signature and by `selfsig` #4.
+`untrusted` is the one part of the file that nothing checks. Its tier is *Untrusted*
+(ROADMAP, *Three trust tiers*).
+- No test reads `untrusted`, and it is never part of `ref` or the code. It may hold any JSON
+  value, of any type and size: no value of it makes a file malformed or changes a result.
+- It is part of the file, so the file's [JSON](#conventions) rules hold inside it as
+  everywhere: a duplicate key in it, or nesting that takes the file past 64 deep, makes the
+  whole file malformed, as it would anywhere in the file. That is `format`'s rule about
+  reading the file, not a reading of `untrusted`.
+- An `untrusted` that is absent (missing or `null`) is not shown.
+
+**Unknown keys outside the body.** A key outside the body that this format does not define is
+treated like `untrusted`: unsigned, read by no test, and shown with it. The keys this format
+defines outside the body are `dsse` (`dsse.payloadType`, `dsse.payload` and
+`dsse.signatures`, each entry `keyid` and `sig`), `pubkey`, `ceiling` (`ceiling_type`,
+`witness_id`, `pubkey`, `nonce`, `midpoint`, `radius`, `response`) and `untrusted` (shown
+whole). Any other key, at the top level or inside `dsse`, a signature entry or `ceiling`, is
+an unknown key (for example a top-level `payloadType`, as asexec wrote before 0.4.0, or
+`dsse.signatures[0].alg`).
+
+**Unknown fields.** A body field this format does not define is shown as unknown and
+unchecked, never dropped. It is signed, so the signer is accountable for it, but no test
+reads it, and a passing code says nothing about it. The fields this format defines are those
+the asexec writer can write: `body.predicateType`, `phase`, `target`, `due`, `declaration`,
+`subject` (each entry `name`, `hash_alg`, `digest`), `fulfills`, `prev_hash`, `plan`
+(`name`, `hash_alg`, `digest`, `media_type`, `label`), `items` (each `id`, `kind`),
+`item_id`, `status`, `evidence` (each entry `name`, `hash_alg`, `digest`, `media_type`,
+`uri`), `anchor` (`anchor.floor`: `floor_type`, `chain_hash`, `round`, `signature`,
+`randomness`), `identity`, `provenance`, `repro_recipe` and `notes`.
+- An unknown field is listed at the top of the body or inside an object the format defines,
+  or an object in an array of them: an extra key in a subject entry (`body.subject[0].colour`),
+  in `body.anchor` or `body.anchor.floor`, in the plan, an item or an evidence entry. A
+  body-level `body.hash_alg` (where asexec before 0.4.0 wrote it) is an unknown field.
+- What a free-form field holds (`target`, `declaration`, `notes`, `identity`,
+  `repro_recipe`, and a `digest` object, keyed by algorithm) is its value, not fields: nothing
+  in it is listed.
+- A field the format defines that holds a value of the wrong shape (a `body.subject` that is
+  not an array, say) is judged by the tests that examine it, and nothing inside it is listed.
+- A field whose value is `null` is absent, and is not listed.
+
+Both are shown only for a file that passes [`format`](#format): no other file is read past
+`format`. Each is shown under its own heading after the manifests block (see
+[Output](#output)), one line per path, with the file's path above them. A path is written as
+this document writes paths (`body.subject[0].colour`), with any key that is not a plain name
+shown as JSON (`body["a b"]`). Each value is shown as one line of JSON in ASCII, every
+newline, control character and non-ASCII character escaped: `untrusted` and unknown fields
+are the least checked text in a file, and so cannot forge a line of the report.
+
+**Example.** `prereg.json` from the [`chain` example](#chain), re-signed with a body field
+`colour`, and edited after signing to add `untrusted.host` and a top-level `surprise`:
+
+```console
+$ asexec verify prereg.json --tests format,selfsig
+```
+
+Output (the two blocks), exit status `0`, with the code it gives without them:
+
+```
+=== untrusted (unsigned, and read by no test: nothing here was checked) ===
+  prereg.json
+    untrusted = {"asexec_version": "0.4.0", "host": "ci-7"}
+    surprise = [1, null]
+
+=== unknown fields (signed, but this format does not define them: nothing here was checked) ===
+  prereg.json
+    body.colour = "red"
+…
+asexec-verify/1 format=PASS selfsig=PASS
+```
 
 ## Not in this version
 

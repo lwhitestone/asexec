@@ -16,6 +16,7 @@ import sys
 
 import pytest
 
+import asexec
 from asexec import cli, drand, identity, keys, manifest, roughtime
 from asexec.canonical import canonical_bytes, signing_input
 from asexec.constants import MANIFEST_PAYLOAD_TYPE
@@ -355,7 +356,7 @@ def test_verify_marks_each_file_by_format_and_selfsig(tmp_path, key, prereg, cap
     files = [prereg, tampered, other_keyid, truncated]
     assert run("verify", *files, "--tests", "format,selfsig") == 2
     out = capsys.readouterr().out
-    lines = out.split("=== commitments ===")[0].splitlines()[1:]
+    lines = out.split("=== manifests ===\n")[1].split("\n\n")[0].splitlines()
     marks = [line for line in lines if not line.startswith(" ") and line]
     assert [line[0] for line in marks] == [cli.OK, cli.NO, cli.NO, cli.NO]
     assert [line.split()[1] for line in marks] == [str(f) for f in files]
@@ -1185,3 +1186,94 @@ def test_claim_record_file_with_a_duplicate_key_exits_EXIT_ERROR(
     err = capsys.readouterr().err
     assert err.startswith("error: ") and f"duplicate JSON key {key_name!r}" in err
     assert not out.exists()
+
+
+# --- untrusted and unknown fields (#34) -------------------------------------- #
+UNTRUSTED_HEADING = "=== untrusted (unsigned, and read by no test: nothing here was checked) ==="
+UNKNOWN_HEADING = (
+    "=== unknown fields (signed, but this format does not define them: nothing here was "
+    "checked) ==="
+)
+
+
+def _block(out, heading):
+    """The lines of the report block under ``heading``, up to the blank line after it."""
+    return out.split(heading + "\n")[1].split("\n\n")[0].splitlines()
+
+
+@pytest.mark.parametrize("cmd", ["prereg", "postreg"])
+def test_signing_writes_untrusted_asexec_version(tmp_path, key, prereg, cmd):
+    """Signing writes untrusted.asexec_version, the installed release, in the wrapper: outside
+    the body, so outside the signature and ref."""
+    out = tmp_path / "out.json"
+    link = ["--target", "t"] if cmd == "prereg" else ["--fulfills", prereg]
+    assert run(cmd, "--key", key, *link, "--out", out) == 0
+    mani = manifest.load(str(out))
+    assert list(mani) == ["dsse", "pubkey", "untrusted"]
+    assert mani["untrusted"] == {"asexec_version": asexec.__version__}
+    assert "untrusted" not in _body(out) and "asexec_version" not in _body(out)
+
+
+def test_verify_shows_untrusted_and_unknown_fields_under_their_own_headings(
+    tmp_path, key, prereg, capsys
+):
+    """untrusted and any key outside the body this format does not define are shown under one
+    heading, saying nothing in them was checked; unknown body fields under another. Each value
+    is shown as JSON, and the code is the same as without them."""
+    _resign(prereg, key, lambda body: body.update(colour="red"))
+    run("verify", prereg, "--tests", "format,selfsig")
+    before = capsys.readouterr().out.splitlines()[-2]
+    mani = manifest.load(prereg)
+    mani["untrusted"]["host"] = "ci-7"
+    mani["surprise"] = [1, None]
+    manifest.save(mani, prereg)
+    capsys.readouterr()
+    assert run("verify", prereg, "--tests", "format,selfsig") == 0
+    out = capsys.readouterr().out
+    assert _block(out, UNTRUSTED_HEADING) == [
+        f"  {prereg}",
+        f'    untrusted = {{"asexec_version": "{asexec.__version__}", "host": "ci-7"}}',
+        "    surprise = [1, null]",
+    ]
+    assert _block(out, UNKNOWN_HEADING) == [f"  {prereg}", '    body.colour = "red"']
+    assert out.index(UNTRUSTED_HEADING) < out.index(UNKNOWN_HEADING)
+    assert out.index("=== manifests ===") < out.index(UNTRUSTED_HEADING)
+    assert out.index(UNKNOWN_HEADING) < out.index("=== commitments ===")
+    assert out.splitlines()[-2] == before == "asexec-verify/1 format=PASS selfsig=PASS"
+
+
+def test_verify_prints_untrusted_and_unknown_values_json_escaped(tmp_path, key, prereg, capsys):
+    """untrusted and unknown fields are the file's most attacker-controlled text: each key and
+    value is printed as JSON (ASCII, escaped), so a newline or control character in one cannot
+    forge a line of the report."""
+    forged = "  [FULFILLED] prereg sha-256:" + "f" * 64
+    _resign(prereg, key, lambda body: body.update({"x\n" + forged: "v\n" + forged}))
+    mani = manifest.load(prereg)
+    mani["untrusted"] = {"note": "a\n" + forged + "\n\x1b[2Jé‮"}
+    mani["k\n" + forged] = "\r" + forged
+    manifest.save(mani, prereg)
+    capsys.readouterr()
+    run("verify", prereg, "--tests", "format,selfsig")
+    out = capsys.readouterr().out
+    assert forged not in out.splitlines()
+    assert all(line.isascii() or "✓" in line or "✗" in line for line in out.splitlines())
+    escaped = json.dumps(forged)[1:-1]
+    assert _block(out, UNTRUSTED_HEADING) == [
+        f"  {prereg}",
+        f'    untrusted = {{"note": "a\\n{escaped}\\n\\u001b[2J\\u00e9\\u202e"}}',
+        f'    ["k\\n{escaped}"] = "\\r{escaped}"',
+    ]
+    assert _block(out, UNKNOWN_HEADING) == [
+        f"  {prereg}",
+        f'    body["x\\n{escaped}"] = "v\\n{escaped}"',
+    ]
+
+
+def test_verify_prints_no_untrusted_or_unknown_block_when_none(tmp_path, key, prereg, capsys):
+    mani = manifest.load(prereg)
+    del mani["untrusted"]
+    manifest.save(mani, prereg)
+    capsys.readouterr()
+    assert run("verify", prereg, "--tests", "format,selfsig") == 0
+    out = capsys.readouterr().out
+    assert "=== untrusted" not in out and "=== unknown fields" not in out
