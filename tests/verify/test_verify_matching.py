@@ -393,3 +393,25 @@ def test_matching__rejected_preregs_do_not_depend_on_file_order(scenario):
     assert forwards["code"] == backwards["code"]
     assert _summary(forwards) == _summary(backwards)
     assert forwards["rejected_preregs"] == backwards["rejected_preregs"]
+
+
+def test_matching__rejected_preregs_with_json_distinct_keyids_are_not_merged(scenario):
+    """Matching (c): copies are the same only if their keyids are the same JSON value. A
+    prereg claiming keyid 1, one claiming 1.0 and one claiming true (equal in Python, not in
+    JSON) are three rejected pre-registrations, each with its own keyid, in either file
+    order."""
+    for name, keyid in (("one", 1), ("float", 1.0), ("true", True)):
+        copy = json.loads(scenario.read("prereg"))
+        copy["signature"]["keyid"] = keyid
+        scenario.add_raw(name, json.dumps(copy))
+    for name in ("prereg", "postreg0", "postreg1", "postreg2"):
+        scenario.drop(name)
+    paths = scenario.write()
+
+    def entries(order):
+        report = verify_paths(order, ["format", "selfsig"], str(scenario.artifacts))
+        return sorted(json.dumps(r, sort_keys=True) for r in report["rejected_preregs"])
+
+    forwards, backwards = entries(paths), entries(paths[::-1])
+    assert forwards == backwards
+    assert sorted(json.dumps(json.loads(e)["keyid"]) for e in forwards) == ["1", "1.0", "true"]

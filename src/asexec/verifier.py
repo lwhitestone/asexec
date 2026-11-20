@@ -87,6 +87,7 @@ belongs to no commitment, so it has no state, and is reported in its own list.
 from __future__ import annotations
 
 import datetime
+import json
 import os
 import re
 import time
@@ -402,7 +403,7 @@ def verify_paths(
     # one, so every keyid here is authenticated (and a string). One that passes format but
     # fails them is a rejected pre-registration: listed, with no state, never matched by key.
     preregs: dict[tuple[str, str], Any] = {}
-    rejected_preregs: list[dict[str, Any]] = []
+    rejected_preregs: dict[tuple[str, str], dict[str, Any]] = {}  # by (ref, keyid as JSON)
     postregs = []
     manifests_report = []
     ceiling_trust = []
@@ -459,9 +460,9 @@ def verify_paths(
                 "rejected_postregs": [],
                 "different_key": False,  # set by the matching loop; see key_checked below
             }
-        elif links.phase == "prereg":  # copies (same ref and keyid) are listed once
-            _add_once(
-                rejected_preregs,
+        elif links.phase == "prereg":  # copies (same ref, and keyid as JSON) are listed once
+            rejected_preregs.setdefault(
+                (rec["ref"], _json_value(rec["keyid"])),
                 {
                     "ref": rec["ref"],
                     "keyid": rec["keyid"],
@@ -478,7 +479,7 @@ def verify_paths(
     for (ref, _keyid), pr in preregs.items():
         commitments_by_ref.setdefault(ref, []).append(pr)
     rejected_by_ref: dict[str, list[dict[str, Any]]] = {}
-    for rp in rejected_preregs:
+    for rp in rejected_preregs.values():
         rejected_by_ref.setdefault(rp["ref"], []).append(rp)
 
     # A manifest is identified by its ref, so a copy (same ref and keyid) of one already
@@ -544,7 +545,7 @@ def verify_paths(
         "tests": tests,
         "manifests": manifests_report,
         "commitments": commitments,
-        "rejected_preregs": rejected_preregs,
+        "rejected_preregs": list(rejected_preregs.values()),
         "notarization_only": notarization_only,
         "results": results,
         "code": code,
@@ -552,6 +553,12 @@ def verify_paths(
         "ceiling_trust": ceiling_trust,
         "checked_at": _utc_timestamp(now),
     }
+
+
+def _json_value(value: Any) -> str:
+    """``value`` as JSON text: two values are the same JSON value iff these are equal (in
+    Python, ``1``, ``1.0`` and ``true`` are all equal, and ``NaN`` is not equal to itself)."""
+    return json.dumps(value, sort_keys=True)
 
 
 def _add_once(entries: list[dict[str, Any]], entry: dict[str, Any]) -> None:
