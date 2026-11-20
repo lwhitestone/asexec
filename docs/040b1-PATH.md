@@ -845,7 +845,8 @@ non-string `signature.keyid` crash, noted above, goes to checkpoint 5 (#44).
   payloadType-missing` outside `docs/040b1-PATH.md` finds only the three rows of
   `docs/MULTIVERSION.md`'s per-identifier table, which name the old identifiers on purpose
   and say where each now lives. `keys.py` keeps a private `_ALG` read from the signing entry.
-- CI: see the PR.
+- CI on PR #52 at `d8d8c80` (run 44679335086): lint, python-matrix, test (3.12, 3.13, 3.14)
+  and build pass.
 
 **Observations (out of scope):**
 - For #30:
