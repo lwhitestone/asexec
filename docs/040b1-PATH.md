@@ -2057,3 +2057,53 @@ Action: re-sign with this release; read the body by base64-decoding dsse.payload
   only `pubkey`'s hex and the deliberate hex-`sig` failure cases.
 - The two open items above (no reason line for a `selfsig` failure; forgeable report lines)
   stay as observations, as instructed.
+
+**Review round 1** (findings on PR #55; the reviewer also checked DSSE conformance with its
+own PyNaCl script and with securesystemslib's `dsse.Envelope.verify`, under which every
+CLI-made file verified unchanged, and caught 17 mutants):
+1. should-fix: nothing pinned that a ceiling binds to the stored-bytes `ref`. Every ceiling
+   test signed canonical bytes, so a mutant that computed the ceiling nonce as
+   `manifest.ref(canonical_bytes(body))`, falling back to `fmt["ref"]` when that raised,
+   passed all 638 tests. → Two tests in `tests/verify/test_verify_ceiling.py`, each with the
+   prereg's body stored validly signed with non-canonical spacing (`edit_body_bytes`):
+   - `test_ceiling__pass__2_nonce_is_ref_of_the_stored_bytes`: a ceiling for those bytes
+     passes (`verified`), and the reported `ref` is their sha-256.
+   - `test_ceiling__fail__2_nonce_is_not_ref_of_a_reserialized_body`: a genuine ceiling for
+     the canonical re-serialization of the same JSON value fails (`invalid`).
+
+   With the reviewer's mutant planted in `verify_paths`, the suite gave 2 failed and 638
+   passed, the two new tests. Reverted, it gave 640 passed. Commit `be12c3c`.
+2. should-fix (docs): `docs/VERIFICATION.md` (*Base64*) and the README read as if the
+   URL-safe alphabet were the only way asexec is stricter than DSSE (v1.0.2). → The same
+   four ways are now stated once each in VERIFICATION.md (*Base64*), the README (after the
+   examples), `ROADMAP.md` (*Wrapper*) and `docs/FORMAT.md` (the DSSE paragraph). No code
+   change. Commit `2d28e91`. The four ways:
+   - standard base64 only, a deliberate departure from DSSE's "verifiers MUST accept
+     either alphabet";
+   - padding required, where DSSE is silent;
+   - a required `keyid` that must be `sha-256:` of `pubkey`, where DSSE has it optional,
+     an unauthenticated hint;
+   - exactly one signature, where DSSE allows several with a threshold.
+3. nit: some docstrings still used the old notation. → `src/asexec/models.py` (the floor,
+   ceiling nonce, subject, link and due slices), `src/asexec/fields.py` (`Link`) and
+   `src/asexec/roughtime.py` (the module docstring and check 6) now say `body.*` and `ref`.
+   Commit `81fb889`.
+4. out of scope → observation below.
+
+`scripts/check.sh`: clean, 640 passed. CI: see the PR.
+
+**Observation added in review round 1 (out of scope):**
+- **One file, two codes on one machine:** a validly signed body with a 5000-digit integer
+  gives `format=FAIL` by default and `PASS` with `PYTHONINTMAXSTRDIGITS=0`.
+  - Reproduced: `sign_bytes(b'{"phase":"prereg","notes":' + b"1" * 5000 + b"}")` gives
+    `✗ format: malformed: body: Exceeds the limit (4300 digits) for integer string
+    conversion: value has 5000 digits; …` and `format=FAIL selfsig=FAIL`, and with
+    `PYTHONINTMAXSTRDIGITS=0`, `format=PASS selfsig=PASS`.
+  - This breaks the *JSON* convention's "every supported Python version reads a file the
+    same way": the verdict depends on an environment variable, and on interpreters that
+    have no such limit.
+  - It predates this PR at the file level (`manifest.load`, any number in the file), and
+    #32 extends it to the body.
+  - Suggested fix for later: a fixed rule checked before `json.loads`, beside the nesting
+    check, such as "a number of more than N digits is malformed". It would make the limit
+    asexec's own rather than the interpreter's. Not fixed here.
