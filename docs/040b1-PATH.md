@@ -2283,3 +2283,113 @@ directory with relative names.
   over files". `prd.md` is the original brief and no issue covers it.
 - `ROADMAP.md` says a body-level `hash_alg` is "shown as unknown and unchecked"; showing
   unknown fields is #34's (checkpoint 8). It is read by nothing now.
+
+#### #36: the claim record
+
+**Landed:** `5ac205f`. Body fields, all optional: a prereg's `plan` (`name`, `hash_alg`,
+`digest`, `media_type`, `label`) and `items[]` (`id`, `kind`); a postreg's `item_id`, `status`
+and `evidence[]` (`name`, `hash_alg`, `digest`, `media_type`, `uri`). Writer models `Plan`
+and `EvidenceItem` subclass `SubjectEntryInput`, and `Item` subclasses the new input model
+`ItemInput` (`id: str`, for #37); `ManifestBody` gains the five fields (`status` is
+`Literal["reported", "excluded", "blocked"]`, `models.STATUSES`; `evidence` has at least one
+entry). `content` examines `body.subject`, `body.plan` and `body.evidence`: each entry through
+the same nine items, each report entry tagged with its `field`. CLI: prereg `--plan` /
+`--plan-file` and `--items` / `--items-file`; postreg `--item-id`, `--status` (argparse
+`choices`) and `--evidence` / `--evidence-file`. `_get_arg_or_file` takes a `parse_value`
+callable (`json.loads` here) for the inline value. `hashing.build_entries` hashes each plan
+and evidence file as a subject file is, so the same refusals apply. `docs/VERIFICATION.md`:
+the `content` section and summary row, a new *TrustedDeclared* section. `README.md` (the two
+body examples, which say "every field filled in") and `ROADMAP.md` (done-ahead mark).
+
+**Judgement calls:**
+- **Signing validates `status` and item ids:** `status` must be `reported`, `excluded` or
+  `blocked` (a usage error at the CLI, a `ValidationError` in the writer), item ids are
+  strings and unique within a prereg (a repeated id would fail `complete`), and evidence is a
+  non-empty list with unique names (content #1, #4). Signing does **not** check `--item-id`
+  against the prereg's items: a postreg can be signed from a literal ref, with no prereg body
+  to check against, and `complete` (#37) reports an `item_id` that names no item.
+- **asexec fills in `hash_alg` and `digest`; the user may not.** A `--plan` or `--evidence`
+  entry holding either is refused (exit 1, "asexec hashes the file and fills in hash_alg and
+  digest (choose the algorithm with --hash-alg)"); the algorithm is `--hash-alg`, shared with
+  `--subject`. Unknown keys are refused, naming what an entry may hold.
+- **Exit statuses:** inline JSON that does not parse is a usage error (64: only the argument
+  is wrong); a value that parses but cannot be signed (wrong shape, a directory, a missing
+  file, repeated ids or names) exits 1 with `error: …`, wherever the JSON came from; a
+  `--…-file` that is not JSON exits 1, as `--target-file` already does. Writer-model
+  refusals reached from the CLI are turned into `ManifestError` (`cli._built`), so they print
+  one line rather than a traceback.
+- **Stage is not enforced by the writer:** the CLI offers `--plan` and `--items` on `prereg`
+  and the rest on `postreg`, and `content` checks a plan or evidence wherever it is. A
+  postreg does not inherit the prereg's `plan` or `items`.
+- **Duplicates are per list:** a file may be a subject and evidence at once.
+- **content's empty reason changes** to `requested but no content could be checked (need
+  --artifacts and a manifest with a subject, plan or evidence)`, since a plan or evidence
+  alone is examined. Its malformed reasons name the list: `malformed plan entry`,
+  `malformed evidence`, `malformed evidence entry`.
+- **`items`, `items[].id`, `item_id` and `status` are listed, at this commit, as read by no
+  test**; #37 moves them under `complete`'s *Examines*.
+- **`Scenario.set` deep-copies its value** (`tests/verify/conftest.py`): two new tests
+  shared `manifest_data.EVIDENCE` and a later path edit changed it for the next test.
+
+**Evidence:**
+- Red first: the tests were written first, but the first run was taken after the code; to
+  show red, `src/` was stashed (back to `18e63bf`'s code) and the new suite run against it:
+  **91 failed, 672 passed**. The failures: the CLI options did not exist (usage errors and
+  `unrecognized arguments`), the writer refused `plan`/`items`/`item_id`/`status`/`evidence`
+  as extra fields, the builder guard's two claim bodies, and every content test, which now
+  reads each entry's `field` (`KeyError`) or the new empty reason. With the code, 6 failed:
+  the CLI's `plan`/`evidence` prefix in the report (not yet printed), the never-raises
+  expectation without `field`, and the shared-fixture mutation above. All fixed.
+- `scripts/check.sh`: clean, **763 passed** (695 after #33).
+- Tests that pin each requirement:
+  - content (`tests/verify/test_verify_content.py`):
+    `test_content__pass__1_plan_and_evidence_are_checked_like_subject_entries` (fields
+    `evidence`, `plan`, `subject`, all `ok`), `__pass__1_a_plan_or_evidence_alone_is_examined`,
+    `__fail__1_plan_is_a_well_formed_entry` (string, list, no `hash_alg`, non-hex digest),
+    `__fail__1_evidence_is_a_non_empty_array_of_entries` (4),
+    `__fail__3_plan_and_evidence_names_are_normalized`,
+    `__fail__4_evidence_names_are_unique`,
+    `__pass__4_a_name_in_subject_and_evidence_is_not_a_duplicate`,
+    `__fail__7_plan_and_evidence_name_a_file`, `__fail__9_plan_and_evidence_digests`.
+  - Never raises: `SIGNED_JUNK` gains 13 cases: `plan` not an object, a list, junk fields;
+    `items` not a list, junk entries, an object; `item_id` an object, a list; `status` a
+    number, a list; `evidence` not a list, junk entry fields, an object. Each is set on the
+    prereg and a postreg and run with `ceiling,chain,content,floor,keyconsist`.
+  - Builder guard: `CLAIM_PREREG` and `CLAIM_POSTREG` (`tests/manifest_data.py`) are built
+    by the writer byte for byte, and verify alike (all `PASS`).
+  - Writer: `tests/test_manifest.py::test_claim_record_fields_are_written_as_given`,
+    `test_writer_refuses_a_claim_record_content_or_complete_would_fail` (11).
+  - CLI: `test_prereg_writes_plan_and_items`, `test_plan_items_and_evidence_from_files`,
+    `test_postreg_writes_item_id_status_and_evidence` (and verify `content=PASS`, then
+    `✗ plan plan.md: digest mismatch` and `✗ evidence results/s1.json: digest mismatch`
+    after both files change), `test_claim_record_argument_errors_are_usage_errors` (7),
+    `test_claim_record_value_errors_exit_EXIT_ERROR` (12).
+- CLI demonstrations (scratch `art/` with `plan.md` and `results/r1.json`, signing inside it):
+  - `prereg --due 2099-01-01T00:00:00Z --plan '{"name":"plan.md","media_type":"text/markdown",
+    "label":"the plan"}' --items '[{"id":"R1","kind":"run"},{"id":"R2","kind":"ablation"}]'`
+    → body `"items":[{"id":"R1","kind":"run"},{"id":"R2","kind":"ablation"}]`,
+    `"plan":{"digest":{"sha-256":"98acf32e…"},"hash_alg":"sha-256","label":"the plan",
+    "media_type":"text/markdown","name":"plan.md"}`.
+  - `postreg --fulfills pre.json --item-id R1 --status reported --evidence
+    '[{"name":"results/r1.json","media_type":"application/json","uri":"https://lab.example/r1"}]'`
+    → `"evidence":[{"digest":{"sha-256":"6a50a1d7…"},"hash_alg":"sha-256",
+    "media_type":"application/json","name":"results/r1.json","uri":"https://lab.example/r1"}]`,
+    `"item_id":"R1"`, `"status":"reported"`.
+  - `verify pre.json post.json --tests format,selfsig,content --artifacts art` → `content=PASS`;
+    with both files changed → `✗ plan plan.md: digest mismatch`, `✗ evidence
+    results/r1.json: digest mismatch`, `content=FAIL format=PASS selfsig=PASS`.
+  - `--plan '{nope'` → `asexec prereg: error: argument --plan: not valid JSON: Expecting
+    property name enclosed in double quotes: line 1 column 2 (char 1)`, exit 64. A plan with a
+    `digest` → `error: --plan: asexec hashes the file and fills in hash_alg and digest
+    (choose the algorithm with --hash-alg)`, exit 1. Repeated item ids → `error: body: Value
+    error, items list the id 'R1' twice`, exit 1. `--status done` → `argument --status:
+    invalid choice: 'done' (choose from 'reported', 'excluded', 'blocked')`, exit 64.
+- `examples/adequacy-test/run.py`: exit 0, unchanged output (not ported to the claim record,
+  as ROADMAP puts that at the release gate).
+
+**Observations (out of scope):**
+- `content`'s pass and fail counts say `subject(s)` (`2/2 subject(s) ok`), though the units
+  are manifests and now cover plan and evidence too. Kept, since the doc's examples and the
+  other tests use it.
+- The usage error for bad inline JSON prints no `usage:` line, unlike argparse's own; the
+  exit status is the same.
