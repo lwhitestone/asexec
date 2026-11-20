@@ -53,7 +53,7 @@ validly signed pre-registration and its signer):
 - **What was committed to.** The signature covers the whole body, the bytes `dsse.payload`
   stores, exactly as stored: its `target` (which `asexec prereg` and `postreg` always
   write) and, in a post-registration, the pre-registration it `fulfills`.
-- **Commitment state.** Each commitment is rendered as `fulfilled`, `open`,
+- **Commitment state.** Each commitment is rendered as `fulfilled`, `no-due`, `open`,
   `elapsed-no-postreg` or `invalid-due`. A post-registration that names a pre-registration
   counts toward fulfilling it only if validly signed by that pre-registration's private key;
   otherwise it is listed under it as *rejected*, with the reason. A pre-registration whose
@@ -62,9 +62,10 @@ validly signed pre-registration and its signer):
   it is listed beneath it as rejected. A post-registration whose pre-registration was not
   provided belongs to no commitment, so it has no state: it is listed as
   *notarization-only*. Silence is on the record too: a pre-registration with no
-  counted post-registration reads `elapsed-no-postreg` once its deadline (`due`) passes. But
-  `asexec` does **not** yet check that a post-registration was created before `due`, so a
-  late one still turns it `fulfilled`; that check (`timely`) arrives in 0.4.0.
+  counted post-registration reads `elapsed-no-postreg` once its deadline (`due`) passes, and
+  `no-due` if it declared none. A state says only whether it was reported: a late
+  post-registration still turns it `fulfilled`, and whether it came before `due` is the
+  [`timely`](./docs/VERIFICATION.md#timely) test's to say (below).
 
 ### What `asexec` can prove (optional fields and tests)
 
@@ -75,8 +76,14 @@ test:
   artifacts the verifier holds match the digests a manifest records.
 - **Chain** (`prev_hash`; [`chain`](./docs/VERIFICATION.md#chain)). The counted
   post-registrations of a commitment form a single linear chain: one root, no gaps, no
-  forks. *Dropping the last post-registration(s) of a chain is **not** detectable yet;
-  close-out manifests (`final`) are deferred to 0.7.0 or later.*
+  forks. *Dropping the last post-registration(s) of a chain is **not** detectable by
+  `chain`; close-out manifests (`final`) are deferred to 0.7.0 or later. A claim that lists
+  its items can use `complete` (below).*
+- **Every item accounted for** (`items` in the pre-registration, `item_id` and `status` in
+  each post-registration; [`complete`](./docs/VERIFICATION.md#complete)). Each item the
+  pre-registration lists has a counted post-registration with its `item_id` and a status of
+  `reported`, `excluded` or `blocked`, and, if the pre-registration has a `due`, one that is
+  on time as `timely` judges it. A dropped item fails it.
 - **Key consistency** ([`keyconsist`](./docs/VERIFICATION.md#keyconsist)). Every validly
   signed post-registration that names a commitment was signed with the key of a validly
   signed pre-registration with that body.
@@ -87,6 +94,11 @@ test:
   manifest existed by time T: a
   [Roughtime](https://datatracker.ietf.org/doc/draft-ietf-ntp-roughtime/) server signed its
   hash (a signature-witness, not proof-of-work).
+- **On time** (`due` and a `ceiling` on each post-registration;
+  [`timely`](./docs/VERIFICATION.md#timely)). Each counted post-registration existed by its
+  pre-registration's `due`: its ceiling verifies, and the latest time the witness allows
+  (`midpoint + radius`) is at or before `due`. A post-registration without a valid ceiling
+  is not shown on time. A pre-registration with no `due` is not examined.
 
 ### What `asexec` cannot prove
 
@@ -127,9 +139,10 @@ pip install 'asexec[blake3]'  # optional: blake3 as a content-hash algorithm
 # 1. Practitioner, one-time: generate a pseudonymous keypair (no CA, no registration)
 asexec keygen --out lab.key   # refuses to overwrite an existing key unless --force
 
-# 2. Practitioner, BEFORE the run: pre-register the target
+# 2. Practitioner, BEFORE the run: pre-register the target. A subject lists files (no
+#    directories), each named by its path relative to the current directory.
 asexec prereg --key lab.key \
-    --subject ./harness \
+    --subject harness/run.py harness/config.yaml \
     --target "claude-opus-4-8 via the anthropic API" \
     --due 2099-01-01T00:00:00Z \
     --declaration "all runs of this harness against this model, in full" \
@@ -137,12 +150,13 @@ asexec prereg --key lab.key \
 
 # 3. Practitioner, AFTER each run: post-register the run
 asexec postreg --key lab.key --fulfills preregistration.json \
-    --subject ./transcript.txt ./harness \
+    --subject transcript.txt harness/run.py harness/config.yaml \
     --out postregistration.json
 
 # 4. Any verifier, anytime: verify the cycle and render the commitment state.
 #    --tests names exactly which checks to run; 'format' (the file can be read) and
-#    'selfsig' (sig + keyid) are required.
+#    'selfsig' (sig + keyid) are required. --artifacts is the directory the subjects'
+#    names are relative to.
 asexec verify preregistration.json postregistration.json \
     --tests format,selfsig,content,chain,keyconsist --artifacts .
 ```
@@ -159,7 +173,7 @@ For a worked end-to-end run, with faults replayed against the verifier, see
 | `0` | Success. For `verify`, every requested test is `PASS`; for `identity match`, the key is bound to the domain. |
 | `1` | Error: the arguments are valid, but the command could not complete with the files or network they name, e.g. a missing or invalid key file, an unreadable `--subject` or `--target-file`, a key file it refuses to overwrite, a failed `identity match` fetch, or a failed `--floor`/`--ceiling` fetch without `--best-effort`. An `error: ...` line is printed; a few bad inputs still print a traceback instead ([#45](https://github.com/lwhitestone/asexec/issues/45)). |
 | `2` | `verify`: at least one requested test is `FAIL`. `identity match`: the key is not bound. |
-| `64` | Usage error: the arguments themselves are wrong, whatever the files hold. For example: an unknown command or option; a missing argument; two that exclude each other, such as `--target` and `--target-file`; a `--due` without an explicit offset; a `--tests` that names an unknown test, names none, or omits `format` or `selfsig`; or for `identity match`, not exactly one of `--keyid`, `--pubkey` and `--key`. Usage is printed and nothing runs (`verify` prints no code). A few argument mistakes, such as an empty value, are not caught yet ([#45](https://github.com/lwhitestone/asexec/issues/45)). |
+| `64` | Usage error: the arguments themselves are wrong, whatever the files hold. For example: an unknown command or option; a missing argument; two that exclude each other, such as `--target` and `--target-file`; a `--due` without an explicit offset; a `--tests` that names an unknown test, names none, or omits `format` or `selfsig`; an inline `--plan`, `--items` or `--evidence` value that is not JSON (or repeats a key) or not of its shape, or a `--status` other than `reported`, `excluded` or `blocked`; or for `identity match`, not exactly one of `--keyid`, `--pubkey` and `--key`. Usage is printed and nothing runs (`verify` prints no code). A few argument mistakes, such as an empty value, are not caught yet ([#45](https://github.com/lwhitestone/asexec/issues/45)). |
 
 For `verify`, malformed manifest input is a `FAIL`, never an error.
 
@@ -247,12 +261,19 @@ The body (`dsse.payload` decoded):
   "predicateType": "https://asexec.org/manifest/v1",    // always
   "phase": "prereg",                                    // always: prereg | postreg
   "target": "claude-opus-4-8 via the anthropic API",    // always: text or JSON
-  "due": "2099-01-01T00:00:00Z",                        // deadline; none = stays open
+  "due": "2099-01-01T00:00:00Z",                        // deadline; none = no-due
   "declaration": "all runs of this harness against this model, in full", // text or JSON
-  "subject": [                                          // artifacts, hashed
-    { "name": "harness/", "digest": { "sha-256": "2c26b46b…" } }
+  "subject": [                                          // files, each hashed as listed
+    { "name": "harness/run.py", "hash_alg": "sha-256", "digest": { "sha-256": "2c26b46b…" } }
   ],
-  "hash_alg": "sha-256",                                // always with subject
+  "plan": {                                             // the plan (--plan), hashed
+    "name": "plan.md", "hash_alg": "sha-256", "digest": { "sha-256": "5d41402a…" },
+    "media_type": "text/markdown", "label": "refusal study plan" // declared, never tested
+  },
+  "items": [                                            // what each postreg accounts for
+    { "id": "R1", "kind": "run" },                      // kind: declared, never tested
+    { "id": "R2", "kind": "ablation" }
+  ],
   "anchor": {
     "floor": {                                          // drand (--floor): not before
       "floor_type": "drand",
@@ -288,15 +309,20 @@ The body (`dsse.payload` decoded):
   "predicateType": "https://asexec.org/manifest/v1",    // always
   "phase": "postreg",                                   // always: prereg | postreg
   "target": "claude-opus-4-8 via the anthropic API",    // always: text or JSON
-  "due": "2099-01-01T00:00:00Z",                        // deadline; none = stays open
+  "due": "2099-01-01T00:00:00Z",                        // deadline; none = no-due
   "declaration": "all runs of this harness against this model, in full", // text or JSON
-  "subject": [                                          // artifacts, hashed
-    { "name": "transcript.txt", "digest": { "sha-256": "9f86d081…" } },
-    { "name": "harness/", "digest": { "sha-256": "2c26b46b…" } }
+  "subject": [                                          // files, each hashed as listed
+    { "name": "transcript.txt", "hash_alg": "sha-256", "digest": { "sha-256": "9f86d081…" } },
+    { "name": "harness/run.py", "hash_alg": "sha-256", "digest": { "sha-256": "2c26b46b…" } }
   ],
-  "hash_alg": "sha-256",                                // always with subject
   "fulfills": "sha-256:4be1c1f8…",                      // always in a postreg
   "prev_hash": "sha-256:07ad3b2e…",                     // previous postreg
+  "item_id": "R1",                                      // the prereg's item it accounts for
+  "status": "reported",                                 // reported | excluded | blocked
+  "evidence": [                                         // files that back it (--evidence)
+    { "name": "results/r1.json", "hash_alg": "sha-256", "digest": { "sha-256": "7c211433…" },
+      "media_type": "application/json", "uri": "https://lab.example/r1" } // declared
+  ],
   "anchor": {
     "floor": {                                          // drand (--floor): not before
       "floor_type": "drand",
@@ -345,8 +371,9 @@ fails. The floor sits inside the body, because a value fixed before signing can 
 A post-registration counts toward a pre-registration only if both were signed with the same
 private key. So:
 
-- **Lose the private key** and your open commitments can never be fulfilled: they stay `open`,
-  or turn `elapsed-no-postreg` once `due` passes. Back up `lab.key` offline (e.g. in an
+- **Lose the private key** and your unfulfilled commitments can never be fulfilled: they stay
+  `open` (or `no-due`, if they declared no `due`), or turn `elapsed-no-postreg` once `due`
+  passes. Back up `lab.key` offline (e.g. in an
   encrypted password manager or vault) before you pre-register.
 - **Leak the private key** and anyone can sign pre- and post-registrations as you, including
   post-registrations that count toward your commitments. `asexec` has no revocation: stop
@@ -436,16 +463,6 @@ explicitly not.
 > verifiable: a format change adds a new format version and keeps accepting the old ones.
 > Manifests from `0.3.x` are not supported. The verifier support for this is
 > [designed](./docs/MULTIVERSION.md) but not built yet.
-
-## Known issues
-
-Where `asexec` deviates from the [verification contract](./docs/VERIFICATION.md) (`0.4.0`
-closes this by accepting only files as subjects):
-
-- **Directory hashes (v1) are ambiguous**, so `content` can pass for a different tree: a
-  filename containing a newline can make two trees hash identically, and symlinks, empty
-  directories and executable bits inside a directory aren't covered. Use file subjects, such
-  as an archive of the directory, for anything that matters.
 
 ## License
 

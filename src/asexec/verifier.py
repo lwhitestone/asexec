@@ -31,10 +31,16 @@ Tests (the catalog - only verifiable claims, no self-declarations)
   - ``chain``      : prev_hash chain integrity (one root, no gaps, no forks: a
                      single linear chain). Applies to
                      commitments that have counted postregs.
-  - ``content``    : subject digests recomputed from --artifacts match. Subject
-                     names must resolve inside --artifacts (an escape is a
-                     mismatch). Applies where artifacts are provided and a
-                     subject is present.
+  - ``complete``   : each item a commitment's prereg lists (unique string ids)
+                     has a counted postreg with its item_id and a status of
+                     reported, excluded or blocked, and, if the prereg has a due,
+                     one on time (``_on_time``, as for timely). Applies to
+                     commitments whose prereg lists items.
+  - ``content``    : subject digests recomputed from --artifacts match. Each
+                     entry names one regular file by a normalized relative
+                     path, unique in its list, that resolves inside --artifacts,
+                     and carries its own hash_alg (no default). Applies where
+                     artifacts are provided and a subject is present.
   - ``floor``      : the drand freshness floor BLS-verifies. Applies to
                      manifests that carry an anchor.floor.
   - ``format``     : the file can be read: a JSON object (unique keys, nested at
@@ -53,6 +59,10 @@ Tests (the catalog - only verifiable claims, no self-declarations)
                      signature over the PAE of the body bytes verifies by pubkey,
                      and its keyid derives from pubkey. Applies to every manifest
                      that passes ``format``. **Required in every run.**
+  - ``timely``     : each counted postreg of a commitment whose prereg has a due
+                     carries a ceiling that meets the ceiling conditions, and its
+                     time (MIDP + RADI of the verified response) is at or before
+                     due. Applies to commitments with a due and a counted postreg.
 
 Only a file that passes ``format`` is examined by any other test, and every test reads it
 under the rules of the format its dsse.payloadType names (``FORMATS``), never another's. The
@@ -73,13 +83,15 @@ naming it is rejected under it.
 Rendered in the human report above the code; the verifier RENDERS these, it
 never adjudicates intent or whether a commitment was "good enough":
   - fulfilled          : >=1 postreg references this prereg AND is validly
-                         signed by the prereg's own key. Postregs that reference
+                         signed by the prereg's own key, on time or not (that is
+                         ``timely``'s). Postregs that reference
                          it but fail either condition are listed separately
                          (``rejected_postregs``) and never count; those
                          that count are ``counted_postregs``.
+  - no-due             : 0 counted postregs and no ``due`` declared (an
+                         open-ended commitment: it can never elapse)
   - open               : 0 counted postregs and the ``due`` deadline has not
-                         elapsed (or no ``due`` was declared - an open-ended
-                         commitment)
+                         elapsed
   - elapsed-no-postreg : 0 counted postregs and the ``due`` deadline has elapsed
   - invalid-due        : 0 counted postregs and ``due`` is present but is not a
                          parseable ISO-8601 timestamp (never silently rendered
@@ -96,6 +108,7 @@ import json
 import os
 import re
 import time
+from collections import Counter
 from typing import Any
 
 from pydantic import ValidationError
@@ -104,11 +117,15 @@ from . import drand, hashing, keys, manifest
 from .canonical import b64decode, signing_input
 from .constants import FORMATS, VERIFY_CODE_VERSION
 from .errors import ManifestError, VerificationError
+from .fields import is_normal_name
 from .models import (
+    STATUSES,
     CeilingInput,
     DueInput,
     EnvelopeInput,
     FloorInput,
+    ItemInput,
+    ItemsInput,
     KeyInput,
     LinkInput,
     SignatureInput,
@@ -120,11 +137,13 @@ from .models import (
 TEST_CATALOG: tuple[str, ...] = (
     "ceiling",
     "chain",
+    "complete",
     "content",
     "floor",
     "format",
     "keyconsist",
     "selfsig",
+    "timely",
 )
 
 # The mandatory minimum: a run that does not check both is not a meaningful asexec
@@ -161,27 +180,32 @@ def parse_tests(spec: str) -> list[str]:
     return [t for t in TEST_CATALOG if t in names]
 
 
-def _parse_due(raw: Any) -> tuple[bool, float | None, bool]:
-    """Parse a ``due`` value to ``(present, epoch_seconds, naive)``.
+_EPOCH = datetime.datetime(1970, 1, 1, tzinfo=datetime.UTC)
+_MICROSECOND = datetime.timedelta(microseconds=1)
+
+
+def _parse_due(raw: Any) -> tuple[bool, float | None, bool, int | None]:
+    """Parse a ``due`` value to ``(present, epoch_seconds, naive, epoch_microseconds)``.
 
     A timezone-less value is read as UTC so the result never depends on the
-    verifier's local timezone; ``naive`` flags it. ``epoch_seconds`` is None if
-    ``due`` is absent (missing or null) or not a parseable ISO-8601 string.
+    verifier's local timezone; ``naive`` flags it. ``epoch_seconds`` (for states) and
+    ``epoch_microseconds`` (exact, for comparing with a ceiling's signed integer time) are
+    None if ``due`` is absent (missing or null) or not a parseable ISO-8601 string.
     """
     try:
         due = DueInput.model_validate({"due": raw}).due
     except ValidationError:
-        return True, None, False
+        return True, None, False, None
     if due is None:
-        return False, None, False
+        return False, None, False, None
     try:
         dt = datetime.datetime.fromisoformat(due.replace("Z", "+00:00"))
     except ValueError:
-        return True, None, False
+        return True, None, False, None
     naive = dt.tzinfo is None
     if naive:
         dt = dt.replace(tzinfo=datetime.UTC)
-    return True, dt.timestamp(), naive
+    return True, dt.timestamp(), naive, (dt - _EPOCH) // _MICROSECOND
 
 
 def _lookup(obj: Any, *path: str) -> tuple[bool, Any]:
@@ -357,17 +381,17 @@ def verify_ceiling(
 
 
 # A subject name that no path on this system can have (it holds a NUL, or a lone surrogate
-# the filesystem encoding can't encode): it names no artifact (content #4).
+# the filesystem encoding can't encode): it names no artifact (content #6).
 _NO_SUCH_PATH = object()
 
 
 def _resolve_inside(artifacts_dir: str, name: str) -> Any:
-    """Resolve a subject ``name`` under ``artifacts_dir``; None if it escapes
-    (``..``, an absolute name, or a symlink pointing outside), ``_NO_SUCH_PATH`` if no path
-    can have it."""
+    """Resolve a normalized subject ``name`` under ``artifacts_dir``, following symlinks;
+    None if it escapes (a symlink pointing outside), ``_NO_SUCH_PATH`` if no path can have
+    it."""
     root = os.path.realpath(artifacts_dir)
     try:
-        path = os.path.realpath(os.path.join(root, name.rstrip("/")))
+        path = os.path.realpath(os.path.join(root, name))
     except ValueError:  # embedded NUL, or UnicodeEncodeError
         return _NO_SUCH_PATH
     if path != root and not path.startswith(root + os.sep):
@@ -375,50 +399,76 @@ def _resolve_inside(artifacts_dir: str, name: str) -> Any:
     return path
 
 
-def _verify_subject_item(item: Any, alg: Any, artifacts_dir: str) -> dict[str, Any]:
+def _verify_entry(item: Any, artifacts_dir: str, repeated: set[str], field: str) -> dict[str, Any]:
+    """content #1-#9 for one entry of ``field`` (subject, plan or evidence), in order; the
+    first that fails is its reason."""
+    return {"field": field, **_check_entry(item, artifacts_dir, repeated, field)}
+
+
+def _check_entry(item: Any, artifacts_dir: str, repeated: set[str], field: str) -> dict[str, Any]:
     label = str(item.get("name") if isinstance(item, dict) else item)[:80]
-    if not isinstance(alg, str):  # content #2: no install has a non-string algorithm
-        return {"name": label, "ok": False, "reason": f"algorithm unavailable: {alg!r}"}
     try:
-        entry = SubjectEntryInput.model_validate(item, context={"hash_alg": alg})  # content #1
+        entry = SubjectEntryInput.model_validate(item)  # content #1
     except ValidationError:
-        return {"name": label, "ok": False, "reason": "malformed subject entry"}
-    name, expected = entry.name, entry.digest[alg]
-    if alg not in hashing.available_algorithms():
+        return {"name": label, "ok": False, "reason": f"malformed {field} entry"}
+    name, alg = entry.name, entry.hash_alg
+    expected = entry.digest[alg]
+    if alg not in hashing.available_algorithms():  # content #2
         return {"name": name, "ok": False, "reason": f"algorithm unavailable: {alg!r}"}
+    if not is_normal_name(name):  # content #3
+        return {"name": name, "ok": False, "reason": "name is not a normalized relative path"}
+    if name in repeated:  # content #4
+        return {"name": name, "ok": False, "reason": "duplicate name"}
     path = _resolve_inside(artifacts_dir, name)
-    if path is None:
+    if path is None:  # content #5
         return {"name": name, "ok": False, "reason": "path resolves outside --artifacts"}
-    if path is _NO_SUCH_PATH or not os.path.exists(path):
+    if path is _NO_SUCH_PATH or not os.path.exists(path):  # content #6
         return {"name": name, "ok": False, "reason": "artifact not found"}
+    if not os.path.isfile(path):  # content #7: never read a directory, FIFO or device
+        return {"name": name, "ok": False, "reason": "artifact is not a file"}
     try:
-        actual = hashing.digest_path(path, alg)
-    except OSError as e:
+        actual = hashing.hash_file(path, alg)
+    except OSError as e:  # content #8
         return {"name": name, "ok": False, "reason": f"artifact unreadable: {e.strerror or e}"}
-    ok = bytes.fromhex(actual) == bytes.fromhex(expected)  # content #6: any hex spelling
+    ok = bytes.fromhex(actual) == bytes.fromhex(expected)  # content #9: any hex spelling
     return {"name": name, "ok": ok, **({} if ok else {"expected": expected, "actual": actual})}
 
 
-def verify_content(
-    body: dict[str, Any], artifacts_dir: str | None, payload_type: str
-) -> dict[str, Any]:
-    """``content`` for a manifest that passed ``format``, of format ``payload_type``: a
-    subject with no ``hash_alg`` is read with that format's default."""
+def _repeated_names(entries: list[Any]) -> set[str]:
+    """The names more than one entry of one list has (content #4)."""
+    names = (e.get("name") for e in entries if isinstance(e, dict))
+    counts = Counter(n for n in names if isinstance(n, str))  # a junk name may be unhashable
+    return {n for n, k in counts.items() if k > 1}
+
+
+def verify_content(body: dict[str, Any], artifacts_dir: str | None) -> dict[str, Any]:
+    """``content`` for a manifest that passed ``format``: each ``body.subject`` entry, the
+    ``body.plan`` entry and each ``body.evidence`` entry, each read under its own
+    ``hash_alg`` (there is no default). Names are unique within each list."""
     if not artifacts_dir:
         return {"status": "skipped", "reason": "no artifacts provided"}
-    present, subject = _lookup(body, "subject")
-    if not present:
-        return {"status": "skipped", "reason": "manifest has no subject"}
-    try:
-        SubjectInput.validate_python(subject)  # content #1 (an array of entries)
-    except ValidationError:
-        return {
-            "status": "mismatch",
-            "entries": [{"name": "(subject)", "ok": False, "reason": "malformed subject"}],
-        }
-    present, alg = _lookup(body, "hash_alg")
-    alg = alg if present else FORMATS[payload_type]["subject_default_hash_alg"]
-    entries = [_verify_subject_item(item, alg, artifacts_dir) for item in subject]
+    entries: list[dict[str, Any]] = []
+    examined = False
+    for field in ("subject", "plan", "evidence"):
+        present, value = _lookup(body, field)
+        if not present:
+            continue
+        examined = True
+        if field == "plan":  # one entry
+            entries.append(_verify_entry(value, artifacts_dir, set(), field))
+            continue
+        try:
+            SubjectInput.validate_python(value)  # content #1 (a non-empty array of entries)
+        except ValidationError:
+            name = f"({field})"
+            entries.append(
+                {"field": field, "name": name, "ok": False, "reason": f"malformed {field}"}
+            )
+            continue
+        repeated = _repeated_names(value)
+        entries += [_verify_entry(item, artifacts_dir, repeated, field) for item in value]
+    if not examined:
+        return {"status": "skipped", "reason": "manifest has no subject, plan or evidence"}
     return {"status": "ok" if all(e["ok"] for e in entries) else "mismatch", "entries": entries}
 
 
@@ -468,15 +518,13 @@ def verify_paths(
         )
         floor = verify_floor(body) if clean else {"status": "absent"}
         ceiling = verify_ceiling(mani, fmt["ref"], servers) if clean else {"status": "absent"}
-        content = (
-            verify_content(body, artifacts_dir, fmt["payload_type"])
-            if clean
-            else {"status": "skipped"}
-        )
+        content = verify_content(body, artifacts_dir) if clean else {"status": "skipped"}
         if ceiling.get("status") == "verified":
+            ceiling["no_later_than_us"] = _no_later_than(ceiling)
             ceiling_trust.append(
                 f"{p}: ceiling witnessed by {ceiling.get('witness_id')} at "
-                f"{ceiling.get('midpoint')} (±{ceiling.get('radius')}s) - you are "
+                f"{ceiling.get('midpoint')} (±{ceiling.get('radius')}s), so no later than "
+                f"{_utc_ceil(ceiling['no_later_than_us'])} - you are "
                 f"trusting {ceiling.get('witness_id')} to be honest about time "
                 f"(signature-witness trust class, distinct from the floor)."
             )
@@ -503,6 +551,9 @@ def verify_paths(
                 "counted_postregs": [],
                 "rejected_postregs": [],
                 "different_key": False,  # set by the matching loop; see key_checked below
+                "_ceilings": {},  # counted postreg ref -> the ceiling of each counted copy
+                "_claims": {},  # counted postreg ref -> its body's item_id and status
+                "_items": _lookup(body, "items"),  # (present, value): what complete reads
             }
         elif links.phase == "prereg":  # copies (same ref, and keyid as JSON) are listed once
             rejected_preregs.setdefault(
@@ -515,7 +566,8 @@ def verify_paths(
                 },
             )
         elif links.phase == "postreg":
-            postregs.append((links, rec))
+            claim = {"item_id": body.get("item_id"), "status": body.get("status")}
+            postregs.append((links, rec, claim))
 
     # The provided preregs by ref: the commitments (``preregs`` is them by (ref, keyid)), and
     # the rejected pre-registrations, which are never looked up by their unauthenticated keyid.
@@ -534,7 +586,7 @@ def verify_paths(
     # and every rejected pre-registration of that ref. Under a rejected pre-registration the
     # reason is always the prereg's invalid signature: its keyid is compared with nothing.
     notarization_only: list[dict[str, Any]] = []
-    for links, rec in postregs:
+    for links, rec, claim in postregs:
         candidates = commitments_by_ref.get(links.fulfills, [])
         rejected_named = rejected_by_ref.get(links.fulfills, [])
         if candidates or rejected_named:
@@ -543,7 +595,10 @@ def verify_paths(
             if not _selfsig_ok(rec):
                 reason = REASON_INVALID_SIGNATURE
             elif (links.fulfills, rec["keyid"]) in preregs:  # a keyid that passed selfsig: a str
-                _add_once(preregs[(links.fulfills, rec["keyid"])]["counted_postregs"], entry)
+                pr = preregs[(links.fulfills, rec["keyid"])]
+                _add_once(pr["counted_postregs"], entry)
+                pr["_ceilings"].setdefault(rec["ref"], []).append(rec["ceiling"])
+                pr["_claims"][rec["ref"]] = claim  # one ref, one body: copies agree
                 continue
             else:
                 reason, different_key = REASON_DIFFERENT_KEY, True
@@ -562,14 +617,29 @@ def verify_paths(
 
     commitments = []
     for pr in preregs.values():
-        due_present, due_ts, due_naive = _parse_due(pr.get("due"))
+        ceilings, claims, items = pr.pop("_ceilings"), pr.pop("_claims"), pr.pop("_items")
+        due_present, due_ts, due_naive, due_us = _parse_due(pr.get("due"))
         state = _commitment_state(pr, now, due_present, due_ts)
         chain_ok, chain_note = _check_chain(pr["counted_postregs"])
+        # Each counted postreg against due (timely #2-#4), when there is a due to compare with.
+        timeliness = (
+            [
+                {"ref": c["ref"], **_on_time(ceilings[c["ref"]], due_us)}
+                for c in pr["counted_postregs"]
+            ]
+            if due_ts is not None
+            else []
+        )
         commitments.append(
             {
                 **pr,
                 "state": state,
+                "due_present": due_present,
+                "due_invalid": due_present and due_ts is None,
                 "due_naive": due_naive,
+                "timeliness": timeliness,
+                "timely": _timely(pr, due_present, due_ts, timeliness),
+                "complete": _complete(pr, items, claims, due_present, due_ts, timeliness),
                 "chain_ok": chain_ok,
                 "chain_note": chain_note,
                 # keyconsist's scope, defined here only: a commitment is key-checked iff it
@@ -597,6 +667,153 @@ def verify_paths(
         "ceiling_trust": ceiling_trust,
         "checked_at": _utc_timestamp(now),
     }
+
+
+def _no_later_than(ceiling: dict[str, Any]) -> int:
+    """The time a verified ceiling shows its manifest existed by, in microseconds since the
+    epoch: the later end of the interval the witness signed, ``MIDP + RADI``, as the signed
+    integers (``roughtime.verify_ceiling`` reads both from the verified response, never from
+    the file's unsigned ``midpoint``/``radius``). Integers, so the comparison with ``due`` is
+    exact: seconds as floats can round a time equal to ``due`` above it."""
+    return ceiling["midpoint_us"] + ceiling["radius_us"]
+
+
+def _on_time(ceilings: list[dict[str, Any]], due_us: int) -> dict[str, Any]:
+    """One counted postreg against a parseable ``due`` in microseconds (timely #2-#4, and
+    complete's deadline part): its ceilings are those of every counted copy of it (one ref).
+
+    ``on-time`` if a ceiling meets the ceiling conditions and its time is at or before due;
+    else ``late`` if one does; else ``invalid-ceiling`` if it has a ceiling that fails them
+    (anyone can write a ceiling, so it is no time at all); else ``no-ceiling``. The earliest
+    verified time, in microseconds, is reported as ``no_later_than_us``."""
+    times = [_no_later_than(c) for c in ceilings if c.get("status") == "verified"]
+    if times:
+        earliest = min(times)
+        return {"status": "on-time" if earliest <= due_us else "late", "no_later_than_us": earliest}
+    if any(c.get("status") != "absent" for c in ceilings):
+        return {"status": "invalid-ceiling", "no_later_than_us": None}
+    return {"status": "no-ceiling", "no_later_than_us": None}
+
+
+# Why a commitment fails timely, as the report shows it (docs/VERIFICATION.md).
+REASON_DUE_INVALID = "due is not a parseable ISO-8601 timestamp"
+REASON_NOT_ON_TIME = "a counted postreg is not shown on time"
+
+
+def _timely(
+    pr: dict[str, Any], due_present: bool, due_ts: float | None, timeliness: list
+) -> dict[str, Any]:
+    """timely for one commitment: examined iff its prereg has a due and it has a counted
+    postreg; passes iff the due parses (#1) and every counted postreg is on time (#2-#4)."""
+    if not (due_present and pr["counted_postregs"]):
+        return {"examined": False, "ok": False, "reason": None}
+    if due_ts is None:
+        return {"examined": True, "ok": False, "reason": REASON_DUE_INVALID}
+    if any(t["status"] != "on-time" for t in timeliness):
+        return {"examined": True, "ok": False, "reason": REASON_NOT_ON_TIME}
+    return {"examined": True, "ok": True, "reason": None}
+
+
+# Why a commitment or an item fails complete, as the report shows it (docs/VERIFICATION.md).
+REASON_ITEMS_MALFORMED = "items is not an array of objects with a string id"
+REASON_ITEM_NOT_NAMED = "no counted postreg names it"
+REASON_ITEM_NO_STATUS = "no counted postreg for it has a status of reported, excluded or blocked"
+REASON_ITEM_NOT_ON_TIME = {
+    "late": "not shown on time: its postreg is late",
+    "invalid-ceiling": "not shown on time: its postreg's ceiling does not verify",
+    "no-ceiling": "not shown on time: its postreg has no ceiling",
+}
+
+
+def _complete(
+    pr: dict[str, Any],
+    items: tuple[bool, Any],
+    claims: dict[str, dict[str, Any]],
+    due_present: bool,
+    due_ts: float | None,
+    timeliness: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """complete for one commitment: examined iff its prereg has ``body.items`` present and
+    not ``[]``. Passes iff the items are objects with string ids (#1), unique (#2), each has a
+    counted postreg with its item_id and a known status (#3), and, if the prereg has a due,
+    the due parses (#4) and one such postreg is on time (#5, ``_on_time`` as for timely).
+    Any qualifying postreg accounts for an item; one whose item_id names no item is listed
+    as ``unlisted`` and fails nothing."""
+    present, value = items
+    if not present or value == []:
+        return {"examined": False, "ok": False, "reason": None, "items": [], "unlisted": []}
+    try:
+        parsed = [ItemInput.model_validate(i) for i in ItemsInput.validate_python(value)]  # #1
+    except ValidationError:
+        return {"examined": True, "ok": False, "reason": REASON_ITEMS_MALFORMED, "items": [],
+                "unlisted": []}  # fmt: skip
+    ids = [item.id for item in parsed]
+    on_time = {t["ref"]: t for t in timeliness}
+    order = [c["ref"] for c in pr["counted_postregs"]]
+    by_item: dict[str, list[str]] = {}  # item_id -> its counted postregs, in order
+    for r in order:
+        if isinstance(claims[r]["item_id"], str):
+            by_item.setdefault(claims[r]["item_id"], []).append(r)
+    listed = set(ids)
+    results = []
+    for item_id in ids:
+        named = by_item.get(item_id, [])
+        qualifying = [r for r in named if _known_status(claims[r]["status"])]
+        result: dict[str, Any] = {"id": item_id, "ok": False, "statuses": []}
+        if not named:
+            result["reason"] = REASON_ITEM_NOT_NAMED
+        elif not qualifying:
+            result["reason"] = REASON_ITEM_NO_STATUS
+        elif due_present and due_ts is not None:  # #5: the timely comparison, per item
+            shown = [r for r in qualifying if on_time[r]["status"] == "on-time"]
+            if shown:
+                result.update(ok=True, statuses=_statuses(claims, shown))
+            else:
+                worst = [on_time[r]["status"] for r in qualifying]
+                kind = next(k for k in ("late", "invalid-ceiling", "no-ceiling") if k in worst)
+                result.update(
+                    statuses=_statuses(claims, qualifying), reason=REASON_ITEM_NOT_ON_TIME[kind]
+                )
+        else:  # no due: a postreg and a status only (D5a); an unparseable due fails #4 below
+            result.update(ok=True, statuses=_statuses(claims, qualifying))
+        results.append(result)
+    unlisted = [
+        {"ref": r, "item_id": claims[r]["item_id"]}
+        for r in order
+        if claims[r]["item_id"] is not None
+        and not (isinstance(claims[r]["item_id"], str) and claims[r]["item_id"] in listed)
+    ]
+    repeated = sorted(i for i, n in Counter(ids).items() if n > 1)
+    if repeated:  # complete #2
+        reason = f"item ids repeat: {', '.join(map(repr, repeated))}"
+    elif due_present and due_ts is None:  # complete #4
+        reason = REASON_DUE_INVALID
+    elif not all(r["ok"] for r in results):  # complete #3, #5
+        reason = "an item is not accounted for"
+    else:
+        reason = None
+    return {"examined": True, "ok": reason is None, "reason": reason, "items": results,
+            "unlisted": unlisted}  # fmt: skip
+
+
+def _known_status(status: Any) -> bool:
+    return isinstance(status, str) and status in STATUSES
+
+
+def _statuses(claims: dict[str, dict[str, Any]], refs: list[str]) -> list[str]:
+    """The distinct statuses of ``refs``' postregs, in the order the postregs come."""
+    return list(dict.fromkeys(claims[r]["status"] for r in refs))
+
+
+def _utc_ceil(epoch_us: int) -> str:
+    """``epoch_us`` (microseconds) as ISO-8601 UTC, rounded up to the second: a "no later
+    than" time is never shown earlier than it is. A time with no ISO-8601 form (a witness
+    may sign one past year 9999) is shown as epoch seconds."""
+    seconds = -(-epoch_us // 1_000_000)
+    try:
+        return _utc_timestamp(seconds)
+    except (ValueError, OverflowError, OSError):
+        return f"{seconds} (epoch seconds)"
 
 
 def _json_value(value: Any) -> str:
@@ -672,7 +889,7 @@ def _evaluate(tests, manifests, commitments, artifacts_dir) -> dict[str, dict[st
         ]
         nowhere = (
             "requested but no content could be checked "
-            "(need --artifacts and a manifest with a subject)"
+            "(need --artifacts and a manifest with a subject, plan or evidence)"
         )
         res["content"] = _tally(units, nowhere, "subject(s)")
 
@@ -680,6 +897,16 @@ def _evaluate(tests, manifests, commitments, artifacts_dir) -> dict[str, dict[st
         units = [c["chain_ok"] for c in with_counted]
         res["chain"] = _tally(
             units, "requested but no commitment has counted postregs to chain-check", "chain(s)"
+        )
+
+    if "complete" in tests:
+        units = [c["complete"]["ok"] for c in commitments if c["complete"]["examined"]]
+        res["complete"] = _tally(units, "requested but no commitment lists items", "commitment(s)")
+
+    if "timely" in tests:
+        units = [c["timely"]["ok"] for c in commitments if c["timely"]["examined"]]
+        res["timely"] = _tally(
+            units, "requested but no commitment with a due has a counted postreg", "commitment(s)"
         )
 
     if "keyconsist" in tests:
@@ -711,9 +938,9 @@ def _commitment_state(
     pr: dict[str, Any], now: float, due_present: bool, due_ts: float | None
 ) -> str:
     if pr["counted_postregs"]:
-        return "fulfilled"
+        return "fulfilled"  # even if a counted postreg is late: timely says that (D5b)
     if not due_present:
-        return "open"  # no deadline declared -> cannot elapse
+        return "no-due"  # no deadline declared -> cannot elapse, so it is not open
     if due_ts is None:
         return "invalid-due"
     return "elapsed-no-postreg" if now >= due_ts else "open"

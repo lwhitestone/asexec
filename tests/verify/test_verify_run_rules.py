@@ -151,7 +151,7 @@ def test_run__malformed_file_fails_format_and_no_other_test_examines_it(scenario
 _JUNK_BODY = {
     "phase": "prereg",
     "anchor": {"floor": {"floor_type": "drand", "round": 1001, "signature": "00"}},
-    "subject": [{"name": "harness/", "digest": {"sha-256": "00"}}],
+    "subject": [{"name": "harness/eval.py", "hash_alg": "sha-256", "digest": {"sha-256": "00"}}],
 }
 
 
@@ -304,10 +304,28 @@ SIGNED_JUNK = [
     pytest.param("anchor", {"floor": {"round": "nope", "signature": 5}}, id="floor-fields"),
     pytest.param("subject", "x", id="subject-not-list"),
     pytest.param("subject", [{"name": 3}], id="subject-entry-fields"),
-    pytest.param("hash_alg", ["a"], id="hash_alg-not-string"),
+    pytest.param("hash_alg", ["a"], id="body-hash_alg-not-string"),
+    pytest.param("subject", [{"name": "a", "hash_alg": ["a"], "digest": {}}], id="entry-hash_alg"),
+    pytest.param("subject", [{"name": "a", "hash_alg": {}, "digest": []}], id="entry-hash_alg-obj"),
+    pytest.param("subject", [{"name": ["a"], "hash_alg": "sha-256"}], id="entry-name-list"),
     pytest.param("fulfills", {"a": 1}, id="fulfills-not-string"),
     pytest.param("prev_hash", ["a"], id="prev_hash-not-string"),
     pytest.param("due", ["a"], id="due-not-string"),
+    pytest.param("plan", "x", id="plan-not-object"),
+    pytest.param("plan", [1], id="plan-list"),
+    pytest.param("plan", {"name": {}, "hash_alg": [], "digest": "x"}, id="plan-fields"),
+    pytest.param("items", "x", id="items-not-list"),
+    pytest.param("items", [1, {"id": {}}, {"kind": 5}], id="items-entries"),
+    pytest.param("items", {"id": "S1"}, id="items-object"),
+    pytest.param("item_id", {"a": 1}, id="item_id-object"),
+    pytest.param("item_id", ["S1"], id="item_id-list"),
+    pytest.param("status", 5, id="status-number"),
+    pytest.param("status", ["reported"], id="status-list"),
+    pytest.param("items", [{"id": "S1"}, {"id": "S1"}, {"id": []}], id="items-repeat-and-junk"),
+    pytest.param("items", [{"id": "\x00"}], id="items-nul-id"),
+    pytest.param("evidence", "x", id="evidence-not-list"),
+    pytest.param("evidence", [{"name": None, "digest": 5}], id="evidence-entry-fields"),
+    pytest.param("evidence", {}, id="evidence-object"),
 ]
 
 
@@ -317,8 +335,43 @@ def test_never_raises__validly_signed_junk_in_a_body_field(scenario, field, valu
     scenario.set("postreg1", f"body.{field}", value)
     if field not in ("fulfills", "prev_hash"):
         scenario.set("prereg", f"body.{field}", value)
-    report = scenario.verify("ceiling", "chain", "content", "floor", "keyconsist")
+    tests = ("ceiling", "chain", "complete", "content", "floor", "keyconsist", "timely")
+    report = scenario.verify(*tests)
     assert {"format=PASS", "selfsig=PASS"} <= set(report["code"].split()[1:])
+
+
+@pytest.mark.parametrize(
+    "junk",
+    [
+        pytest.param("x", id="not-object"),
+        pytest.param([1], id="list"),
+        pytest.param({"ceiling_type": "roughtime", "witness_id": [], "nonce": 5}, id="fields"),
+        pytest.param({"ceiling_type": "roughtime", "response": "zz"}, id="response-not-hex"),
+        pytest.param({"midpoint": "soon", "radius": [1]}, id="unsigned-time-junk"),
+    ],
+)
+def test_never_raises__junk_ceiling_on_a_counted_postreg(scenario, junk):
+    """A counted postreg whose ceiling is junk is not shown on time (timely #3); it never
+    raises."""
+    scenario.with_ceiling("postreg0")
+    scenario.ceilings["postreg0"] = lambda nonce_hex: junk
+    report = scenario.verify("ceiling", "timely")
+    assert report["code"] == "asexec-verify/1 ceiling=FAIL format=PASS selfsig=PASS timely=FAIL"
+
+
+def test_never_raises__witness_time_past_year_9999(scenario, make_server):
+    """A witness-signed MIDP of 2**62 microseconds (year ~146,000) has no ISO-8601 form:
+    the time is still compared, and shown as epoch seconds, never raised on."""
+    pub, sign = make_server(midpoint_us=2**62, maxt=2**63)
+    scenario.server_pub, scenario.sign_response = pub, sign
+    scenario.pin_server(pub)
+    for name in ("postreg0", "postreg1", "postreg2"):
+        scenario.with_ceiling(name)
+    report = scenario.verify("ceiling", "complete", "timely")
+    assert report["code"] == (
+        "asexec-verify/1 ceiling=PASS complete=FAIL format=PASS selfsig=PASS timely=FAIL"
+    )
+    assert all("epoch seconds" in line for line in report["ceiling_trust"])
 
 
 @pytest.mark.parametrize(
@@ -399,7 +452,7 @@ def _lone(scenario, name, path):
         ("prereg", "body.declaration"),
         ("prereg", "body.notes"),
         ("prereg", "body.due"),
-        ("prereg", "body.hash_alg"),
+        ("prereg", "body.subject.0.hash_alg"),
         ("prereg", "body.subject.0.name"),
         ("prereg", "body.subject.0.digest.sha-256"),
         ("postreg0", "body.fulfills"),
@@ -415,9 +468,9 @@ def test_never_raises__lone_surrogate_escape_in_the_body(scenario, name, path):
     assert {"format=PASS", "selfsig=PASS", "ceiling=PASS"} <= set(report["code"].split()[1:])
 
 
-@pytest.mark.parametrize("name", ["\ud800", "harness\x00/"], ids=["lone-surrogate", "nul"])
+@pytest.mark.parametrize("name", ["\ud800", "harness\x00.py"], ids=["lone-surrogate", "nul"])
 def test_never_raises__subject_named_as_no_path_can_be(scenario, name):
-    """content #4: a subject name that no path on this system can have (a lone surrogate,
+    """content #6: a subject name that no path on this system can have (a lone surrogate,
     or a NUL) names no artifact: it is not found, and verify does not raise."""
     if name == "\ud800":
         _lone(scenario, "prereg", "body.subject.0.name")
@@ -427,7 +480,7 @@ def test_never_raises__subject_named_as_no_path_can_be(scenario, name):
     assert report["code"] == "asexec-verify/1 content=FAIL format=PASS selfsig=PASS"
     (prereg,) = [m for m in report["manifests"] if m["phase"] == "prereg"]
     assert prereg["content"]["entries"] == [
-        {"name": name, "ok": False, "reason": "artifact not found"}
+        {"field": "subject", "name": name, "ok": False, "reason": "artifact not found"}
     ]
 
 

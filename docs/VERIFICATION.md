@@ -32,9 +32,8 @@ claim. Properties are written as dotted paths of two kinds:
 under that format's rules only, never another format's. This release reads one format,
 `application/vnd.asexec.v1+json`, and this document gives its rules: the PAE signing input
 is DSSE's, `DSSEv1 SP len(type) SP type SP len(body) SP body` over `dsse.payloadType` and
-the body bytes; `ref` and `keyid` start `sha-256:`; and a subject with no `body.hash_alg` is
-read as `sha-256`. A file whose `dsse.payloadType` names any other format fails
-[`format`](#format) #3.
+the body bytes; and `ref` and `keyid` start `sha-256:`. A file whose `dsse.payloadType`
+names any other format fails [`format`](#format) #3.
 
 **Phases.** A manifest's phase is its `body.phase`. A *prereg* is a manifest with
 `body.phase == "prereg"`; a *postreg* has `body.phase == "postreg"`. `ref(m)` is
@@ -44,7 +43,7 @@ way (other spacing, other key order) is another body, with another `ref`.
 
 **Hex.** A value required to be hex is a string that `bytes.fromhex` accepts: an even number
 of hex digits in either case, with ASCII whitespace allowed around and between bytes.
-Content #6 compares the bytes a digest's hex decodes to, so any such spelling matches.
+Content #9 compares the bytes a digest's hex decodes to, so any such spelling matches.
 Ceiling #2 and floor #4 compare exactly against the lowercase hex of the digest.
 
 **Base64.** A value required to be strict base64 is a string in the standard alphabet
@@ -121,11 +120,11 @@ report's wording may change, except for the reasons this document lists.
 | Block | Printed | Shows |
 |---|---|---|
 | `=== manifests ===` | always | One line per file: `✓` if it passes `format` and meets `selfsig`'s conditions (else `✗`), the path, `body.phase` and `dsse.signatures[0].keyid` (`None` for a file that fails `format`, whose body is not read). Indented beneath: why a file fails `format` (`format: malformed: …`, or the [reason](#format) for an unknown format), and one line each for a floor, a ceiling and content hashes when the manifest has them. |
-| `=== commitments ===` | always | One entry per [commitment](#matching-postregs-to-commitments) (a validly signed prereg's `ref` and signer): its [state](#commitment-states), `ref`, signer keyid, `due`, the number of counted postregs, a chain problem if any, and each rejected postreg with its reason. |
+| `=== commitments ===` | always | One entry per [commitment](#matching-postregs-to-commitments) (a validly signed prereg's `ref` and signer): its [state](#commitment-states), `ref`, signer keyid, `due` (and a line if it is not parseable), the number of counted postregs, a chain problem if any, with [`timely`](#timely) requested each counted postreg not shown on time and why, if its prereg lists items each item with its status or why [`complete`](#complete) does not count it as accounted for (and each counted postreg whose `item_id` names no listed item), and each rejected postreg with its reason. |
 | `=== rejected pre-registrations ===` | if any | Each [rejected pre-registration](#matching-postregs-to-commitments) (a prereg that passes `format` but fails a `selfsig` condition, so is no commitment): its `ref` and its reason, `invalid signature`; the `dsse.signatures[0].keyid` it claims, which nothing authenticated; and each postreg rejected under it, with the reason `the pre-registration's signature is invalid`. It has no state. |
 | `=== notarization-only … ===` | if any | Each [notarization-only](#matching-postregs-to-commitments) postreg: one whose `body.fulfills` matches no provided prereg. |
 | `=== tests ===` | always | One line per requested test: its result and a short reason. |
-| `=== ceiling trust … ===` | if a ceiling verified | Which witness you are trusting, and for what time. |
+| `=== ceiling trust … ===` | if a ceiling verified | Which witness you are trusting, and for what time: the signed `midpoint ± radius`, and the "no later than" time, `midpoint + radius`, that [`timely`](#timely) compares. |
 | code | always | The [code](#conventions). |
 | `Checked at <time>` | always | When the run happened, in UTC to the second: the moment commitment states were judged against. Not part of the code. |
 
@@ -165,11 +164,13 @@ Checked at 2026-12-31T23:59:59Z
 |---|---|---|
 | [`ceiling`](#ceiling) | • `ceiling.ceiling_type`<br>• `ceiling.nonce`<br>• `ceiling.witness_id`<br>• `ceiling.pubkey`<br>• `ceiling.response`<br>• `dsse.payload` | 1. `ceiling.ceiling_type` is `roughtime`<br>2. `ceiling.nonce` equals `ref`<br>3. `ceiling.witness_id` has a pinned key<br>4. `ceiling.pubkey`, if present, equals the pinned key<br>5. `ceiling.response` verifies against the pinned key |
 | [`chain`](#chain) | • `body.phase`<br>• `body.fulfills`<br>• `body.prev_hash`<br>• `pubkey`<br>• `dsse.signatures`<br>• `dsse.signatures[0].sig`<br>• `dsse.signatures[0].keyid` | 1. exactly one counted postreg has no `body.prev_hash`<br>2. every other `body.prev_hash` is the `ref` of a counted postreg<br>3. no `ref` is the `body.prev_hash` of more than one counted postreg |
-| [`content`](#content) | • `body.subject`<br>• `body.subject[].name`<br>• `body.subject[].digest`<br>• `body.hash_alg`<br>• `dsse.payloadType`<br>• `--artifacts` | 1. `body.subject` is a non-empty array of well-formed entries<br>2. `body.hash_alg` is available<br>3. `name` resolves inside `--artifacts`<br>4. the artifact exists<br>5. the artifact is readable<br>6. recomputed digest equals `digest[hash_alg]` |
+| [`complete`](#complete) | • `body.items`<br>• `body.items[].id`<br>• `body.due` (of the prereg)<br>• `body.item_id` and `body.status`, of each counted postreg<br>• which postregs are counted, and their `ceiling` (as for `timely`) | (for each commitment whose prereg lists at least one item)<br>1. `body.items` is an array of objects with string ids<br>2. no two items have the same `id`<br>3. each item has a counted postreg with its `item_id` and a `status` of `reported`, `excluded` or `blocked`<br>4. a `body.due`, if present, is parseable<br>5. with a `due`, such a postreg is on time, as `timely` judges it |
+| [`content`](#content) | • `body.subject`<br>• `body.subject[].name`<br>• `body.subject[].hash_alg`<br>• `body.subject[].digest`<br>• `body.plan` and its `name`, `hash_alg`, `digest`<br>• `body.evidence` and each entry's `name`, `hash_alg`, `digest`<br>• `--artifacts` | 1. `body.subject` and `body.evidence` are non-empty arrays, and `body.plan` an object, of well-formed entries<br>2. the entry's `hash_alg` is available<br>3. `name` is a normalized relative path<br>4. no other entry of the list has the same `name`<br>5. `name` resolves inside `--artifacts`<br>6. the artifact exists<br>7. the artifact is a regular file<br>8. the artifact is readable<br>9. recomputed digest equals `digest[hash_alg]` |
 | [`floor`](#floor) | • `body.anchor.floor.floor_type`<br>• `body.anchor.floor.chain_hash`<br>• `body.anchor.floor.round`<br>• `body.anchor.floor.signature`<br>• `body.anchor.floor.randomness` | 1. `floor_type` is `drand`<br>2. `chain_hash` is pinned<br>3. `round` is an integer and `signature` is hex<br>4. `randomness`, if present, equals `sha256(signature)`<br>5. `signature` BLS-verifies for `round` under the pinned key |
 | [`format`](#format) | • the file<br>• `dsse`<br>• `dsse.payloadType`<br>• `dsse.signatures`<br>• `dsse.payload` | 1. file is a well-formed JSON object with the `dsse` frame<br>2. `dsse.payload` is strict base64 of a well-formed JSON object<br>3. `dsse.payloadType` names a format this release reads |
 | [`keyconsist`](#keyconsist) | • `body.phase`<br>• `body.fulfills`<br>• `pubkey`<br>• `dsse.signatures`<br>• `dsse.signatures[0].sig`<br>• `dsse.signatures[0].keyid` | 1. every validly signed postreg naming the commitment's `ref` has the `dsse.signatures[0].keyid` of a commitment with that `ref` |
 | [`selfsig`](#selfsig) | • `dsse.payloadType`<br>• `dsse.payload`<br>• `dsse.signatures`<br>• `dsse.signatures[0].sig`<br>• `dsse.signatures[0].keyid`<br>• `pubkey` | 1. `dsse.signatures` has exactly one entry, an object<br>2. `pubkey` is hex, and `dsse.signatures[0].sig` is strict base64 of 64 bytes<br>3. `dsse.signatures[0].sig` verifies over the PAE of the body bytes by `pubkey`<br>4. `dsse.signatures[0].keyid` derives from `pubkey` |
+| [`timely`](#timely) | • `body.due` (of the prereg)<br>• which postregs are counted (as for `chain`)<br>• `ceiling` and its fields, of each counted postreg | (for each commitment with a `body.due` and a counted postreg)<br>1. `body.due` is a parseable ISO-8601 string<br>2. each counted postreg has a `ceiling`<br>3. that ceiling meets the `ceiling` conditions<br>4. its time, `MIDP + RADI`, is at or before `due` |
 
 Condition numbers match each test's *Passes when all* list below; the table shortens them.
 `format` and `selfsig` are required in every run. `selfsig` examines only files that pass
@@ -285,7 +286,8 @@ chain-check`. A rejected pre-registration is no commitment, so its postregs are 
 chain-checked.
 
 **Does not establish:** completeness. Dropping the last postreg(s) of a chain is not
-detectable.
+detectable by `chain`; when the prereg lists its items, [`complete`](#complete) detects a
+dropped item.
 
 **Example** (all requirements pass)
 
@@ -319,41 +321,163 @@ asexec-verify/1 chain=PASS format=PASS selfsig=PASS
 Checked at 2026-12-31T23:59:59Z
 ```
 
+### `complete`
+
+Whether every item a commitment promised is accounted for by a postreg that counts toward it
+(and, if the prereg has a `due`, in time).
+
+A prereg's `body.items` lists what the claim commits to deliver, each with an `id`; a postreg
+accounts for one with its `body.item_id` and `body.status`. A postreg is **counted** for a
+prereg if it meets the [conditions for counting](#matching-postregs-to-commitments).
+
+**Examines (\*)**
+- `body.items`, `body.items[].id` and `body.due` (of the prereg)
+- `body.item_id` and `body.status` (of each counted postreg)
+- `body.phase`, `body.fulfills`, `pubkey`, `dsse.signatures`, `dsse.signatures[0].sig`,
+  `dsse.signatures[0].keyid` (which postregs are counted)
+- with a `body.due`: `ceiling` and its fields, of each counted postreg (as for
+  [`timely`](#timely))
+
+**Passes when all** (for each commitment whose prereg's `body.items` is present and not an
+empty array)
+1. `body.items` is an array of objects, each with a string `id`.
+2. No two items have the same `id`.
+3. Each item has a counted postreg whose `body.item_id` equals its `id` exactly and whose
+   `body.status` is `reported`, `excluded` or `blocked`.
+4. If `body.due` is present, it is a parseable ISO-8601 string (one without an offset is
+   read as UTC).
+5. If `body.due` is present, for each item one of the postregs that meet #3 for it is shown
+   on time, by [`timely`](#timely)'s comparison: it has a ceiling that meets the
+   [`ceiling`](#ceiling) conditions, and its ceiling time T is at or before `due`. A postreg
+   with no ceiling, or one that fails a ceiling condition, is not on time.
+
+Several counted postregs for one item: any one that meets #3 (and, with a `due`, #5)
+accounts for it, and the others neither help nor fail it. A counted postreg whose
+`body.item_id` names no listed item accounts for nothing and fails nothing; the report lists
+it. A counted postreg with no `body.item_id` is not read. A postreg that does not count (a
+rejected one, or one naming another prereg) accounts for no item. With no `body.due`, items
+are checked for a counted postreg and a status only (#4 and #5 do not apply), as `timely`
+does not examine such a prereg.
+
+**When empty:** if no commitment's prereg has a `body.items` with at least one entry (an
+absent, `null` or empty `body.items` is not examined; one that is present but not an array
+is, and fails #1), the test has nothing to examine and is `FAIL`, with the reason `requested
+but no commitment lists items`. A [rejected pre-registration](#matching-postregs-to-commitments)
+is no commitment, so its items are never read.
+
+**Failure reasons:** a commitment fails with `items is not an array of objects with a string
+id` (#1), `item ids repeat: '<id>'` (#2), `due is not a parseable ISO-8601 timestamp` (#4) or
+`an item is not accounted for` (#3, #5). Each item's line in the report gives its status, or
+`no counted postreg names it` or `no counted postreg for it has a status of reported, excluded
+or blocked` (#3), or its status and `but not shown on time: its postreg is late`, `… its
+postreg has no ceiling` or `… its postreg's ceiling does not verify` (#5).
+
+**Does not establish:** that an item was carried out, or that its status is true (`reported`
+and `excluded` are the signer's word); that the item list is the whole of what should have
+been promised; that a postreg's evidence backs its status ([`content`](#content) checks only
+that the evidence files are the ones named).
+
+**Example** (a dropped item). `prereg.json` is signed with `--due 2099-01-01T00:00:00Z
+--items '[{"id": "R1", "kind": "run"}, {"id": "R2", "kind": "run"}]'`, and `post-R1.json` with
+`--fulfills prereg.json --item-id R1 --status reported --ceiling` (both with `--target "model
+m via provider p"`); no postreg accounts for R2:
+
+```console
+$ asexec verify prereg.json post-R1.json --tests format,selfsig,chain,complete
+```
+
+Output (from `=== commitments ===` on), exit status `2`:
+
+```
+=== commitments ===
+  [FULFILLED] prereg sha-256:4c78c886…
+    signer       : sha-256:bc562700…
+    due          : 2099-01-01T00:00:00Z
+    postregs     : 1
+    items        : 2
+      ✓ R1: reported
+      ✗ R2: no counted postreg names it
+
+=== tests ===
+  ✓ chain=PASS  (1/1 chain(s) ok)
+  ✗ complete=FAIL  (1/1 commitment(s) failed)
+  ✓ format=PASS  (2/2 manifest(s) ok)
+  ✓ selfsig=PASS  (2/2 manifest(s) ok)
+…
+asexec-verify/1 chain=PASS complete=FAIL format=PASS selfsig=PASS
+```
+
+With a postreg for R2 as well (`--item-id R2 --status excluded --prev post-R1.json
+--ceiling`), the items read `✓ R1: reported` and `✓ R2: excluded`, and `complete=PASS`. Under
+a prereg whose `due` has passed when the ceilings were fetched, each item reads `✗ R1:
+reported, but not shown on time: its postreg is late`, and `complete=FAIL`.
+
 ---
 
 ### `content`
 
-Subject digests recomputed from the original artifacts.
+Digests recomputed from the original artifacts: a manifest's subject, and the claim record's
+plan and evidence.
+
+A subject is an explicit list of files. Each entry names one file by its relative path under
+`--artifacts` and carries its own `hash_alg`; there is no default algorithm, and a
+body-level `body.hash_alg` (where asexec before 0.4.0 wrote it) is not read. Nothing hashes
+a directory: to commit to a tree, list its files, or pack it (a tar, for example) and list
+the archive. A prereg's `body.plan` (the plan document) is one entry of the same shape, and
+a postreg's `body.evidence` a list of them, each checked the way a subject entry is. Their
+`media_type`, `label` and `uri` are declared and not read (see
+[TrustedDeclared](#trusteddeclared)). asexec never parses the plan or the evidence.
 
 **Examines (\*)**
 - `body.subject`
 - `body.subject[].name`
+- `body.subject[].hash_alg`
 - `body.subject[].digest`
-- `body.hash_alg` (if absent, the default of the format `dsse.payloadType` names: `sha-256`)
-- `dsse.payloadType` (only for that default)
+- `body.plan`
+- `body.plan.name`
+- `body.plan.hash_alg`
+- `body.plan.digest`
+- `body.evidence`
+- `body.evidence[].name`
+- `body.evidence[].hash_alg`
+- `body.evidence[].digest`
 - `--artifacts`
 
-**Passes when all** (for each manifest that has a `body.subject`, and each of its entries)
-1. `body.subject` is a non-empty array, and each entry's `name` is a string and
-   `digest[hash_alg]` is hex.
+**Passes when all** (for each manifest that has a `body.subject`, a `body.plan` or a
+`body.evidence`, and each entry: each entry of `body.subject` and of `body.evidence`, and
+`body.plan` itself)
+1. `body.subject` and `body.evidence`, where present, are non-empty arrays, `body.plan`,
+   where present, is an object, and each entry is an object whose `name` is a string, whose
+   own `hash_alg` is a string, and whose `digest[hash_alg]` is hex. An entry without a
+   `hash_alg` fails here.
 2. `hash_alg` is available in this install: `sha-256` always, `blake3` only if installed.
-3. `name` (trailing `/` removed) resolved with symlinks against `--artifacts` is the
-   `--artifacts` directory or beneath it. `..` components, absolute names, and symlinks
-   that point outside fail here.
-4. The resolved path exists. A `name` that no path on this system can have (one holding a
+3. `name` is a relative path in normal form: segments separated by `/`, none of them empty,
+   `.` or `..`, and no backslash. So an absolute name, `./a.txt`, `a//b.txt`, `a/`,
+   `a/../b.txt` and `a\b.txt` fail, and one file has exactly one name on every system.
+4. No other entry of the same list (`body.subject`, or `body.evidence`) has the same
+   `name`. Each entry that shares its name fails. A file may be both a subject and evidence.
+5. `name` resolved with symlinks against `--artifacts` is the `--artifacts` directory or
+   beneath it. A symlink that points outside fails here.
+6. The resolved path exists. A `name` that no path on this system can have (one holding a
    NUL, or a lone surrogate the filesystem cannot encode) names no artifact.
-5. The resolved path is readable.
-6. The recomputed digest of the file or directory under `hash_alg` equals the bytes of
+7. The resolved path is a regular file. A directory, or a FIFO, socket or device, fails and
+   is never read. A listed symlink to a file is hashed as the bytes read through it.
+8. The file is readable.
+9. The recomputed digest of the file under `hash_alg` equals the bytes of
    `digest[hash_alg]`, in either hex case.
 
 **When empty:** if `--artifacts` is not given or is empty (`--artifacts ""`), or no
-manifest that passes `format` has a `body.subject`, the test has nothing to examine and is
-`FAIL`, with the reason `requested but no content could be checked (need --artifacts and a
-manifest with a subject)`.
+manifest that passes `format` has a `body.subject`, a `body.plan` or a `body.evidence`, the
+test has nothing to examine and is `FAIL`, with the reason `requested but no content could
+be checked (need --artifacts and a manifest with a subject, plan or evidence)`.
 
-**Entry failure reasons** (shown per entry in the report): `malformed subject entry`,
-`algorithm unavailable: <alg>`, `path resolves outside --artifacts`, `artifact not found`,
-`artifact unreadable: <error>`, or a digest mismatch with `expected`/`actual`.
+**Entry failure reasons** (shown per entry in the report, after `plan` or `evidence` for
+those entries), by item: `malformed subject entry`, `malformed plan entry` or `malformed
+evidence entry` (or `malformed subject` or `malformed evidence` for a list that is no
+non-empty array) (#1), `algorithm unavailable: <alg>` (#2), `name is not a normalized
+relative path` (#3), `duplicate name` (#4), `path resolves outside --artifacts` (#5),
+`artifact not found` (#6), `artifact is not a file` (#7), `artifact unreadable: <error>`
+(#8), or a digest mismatch with `expected`/`actual` (#9).
 
 **Not examined:** a manifest that fails `format`; any manifest when `--artifacts` is absent.
 
@@ -366,18 +490,19 @@ is the output of the named harness and model.
 $ asexec verify prereg.json --tests format,selfsig,content --artifacts artifacts
 ```
 
-`artifacts/transcript.txt` contains `hello` and a newline. The body of `prereg.json`
-(unexamined fields elided):
+`artifacts/runs/transcript.txt` contains `hello` and a newline. `prereg.json` was signed
+from the directory `artifacts` stands for, with `asexec prereg --subject
+runs/transcript.txt …`. Its body (unexamined fields elided):
 
 ```jsonc
 {
   "subject": [
     {
-      "name": "transcript.txt",
+      "name": "runs/transcript.txt",
+      "hash_alg": "sha-256",
       "digest": { "sha-256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03" }
     }
   ],
-  "hash_alg": "sha-256",
   …
 }
 ```
@@ -583,7 +708,8 @@ Version skew: `postreg-v2.json` is `postreg-1.json` from the [`chain` example](#
 its `dsse.payloadType` changed to `application/vnd.asexec.v2+json`, as a later release would
 label its own files. It fails `format` with the upgrade reason, not as a bad signature, and
 `selfsig` still passes for `prereg.json`. Its body is not read, so it shows no phase, and it
-takes no part in the commitment, which stays open. Exit status `2`:
+takes no part in the commitment, which has no counted postreg (and, as its prereg has no
+`body.due`, is `no-due`). Exit status `2`:
 
 ```console
 $ asexec verify prereg.json postreg-v2.json --tests format,selfsig
@@ -596,7 +722,7 @@ $ asexec verify prereg.json postreg-v2.json --tests format,selfsig
     ✗ format: payloadType names a format newer than this release: upgrade asexec to read it
 
 === commitments ===
-  [OPEN] prereg sha-256:b17107d0…
+  [NO-DUE] prereg sha-256:b17107d0…
 …
 === tests ===
   ✗ format=FAIL  (1/2 manifest(s) failed)
@@ -733,6 +859,116 @@ Checked at 2026-12-31T23:59:59Z
 
 With every requirement holding, `selfsig` prints `✓ selfsig=PASS`, as in the
 [`format` example](#format).
+
+### `timely`
+
+Whether each postreg that counts toward a commitment is shown to have existed by the
+prereg's `due`.
+
+A postreg is **counted** for a prereg if it meets the
+[conditions for counting](#matching-postregs-to-commitments). Its **ceiling time** T is the
+later end of the interval its Roughtime witness signed: `SREP.MIDP + SREP.RADI` of the
+verified `ceiling.response`, the "no later than" time the ceiling trust block reports
+(`midpoint ± radius`). It is never taken from the file's own `ceiling.midpoint` and
+`ceiling.radius`, which nothing signs.
+
+**Examines (\*)**
+- `body.due` (of the prereg)
+- `body.phase`, `body.fulfills`, `pubkey`, `dsse.signatures`, `dsse.signatures[0].sig`,
+  `dsse.signatures[0].keyid` (which postregs are counted)
+- `ceiling.ceiling_type`, `ceiling.nonce`, `ceiling.witness_id`, `ceiling.pubkey`,
+  `ceiling.response` and `dsse.payload` (the [`ceiling`](#ceiling) conditions), of each
+  counted postreg
+
+**Passes when all** (for each commitment whose prereg has a `body.due` and that has at
+least one counted postreg)
+1. `body.due` is a parseable ISO-8601 string. One without a UTC offset or `Z` is read as
+   UTC, as for [commitment states](#commitment-states).
+2. Each counted postreg has a `ceiling`.
+3. That ceiling meets the [`ceiling`](#ceiling) conditions (#1 to #5): its type, a nonce
+   equal to the postreg's `ref`, a pinned witness and a response that verifies. A ceiling
+   that fails one is no time at all, since anyone can write one, so it is treated as no
+   ceiling: never as on time.
+4. Its ceiling time T is at or before `body.due`. Both are compared exactly, in whole
+   microseconds since the epoch (`MIDP` and `RADI` are signed integers in microseconds, and
+   `due` is read to the microsecond), so a `due` equal to T is on time.
+
+A postreg is identified by its `ref`: if several copies of one counted postreg are given, it
+is on time when any counted copy carries a ceiling that meets #3 and #4, and its time is the
+earliest such T.
+
+A late postreg still counts: its commitment stays `fulfilled` (see
+[Commitment states](#commitment-states)), and `timely=FAIL` carries the verdict. States say
+whether a commitment was reported, and `timely` says whether on time.
+
+**When empty:** if no commitment has both a `body.due` and a counted postreg, the test has
+nothing to examine and is `FAIL`, with the reason `requested but no commitment with a due
+has a counted postreg`. A commitment whose prereg has no `body.due` is not examined, so one
+open-ended claim does not fail `timely` for a whole run; one with a `due` and no counted
+postreg is not examined either (its state, `open`, `elapsed-no-postreg` or `invalid-due`,
+says it was not reported). A [rejected pre-registration](#matching-postregs-to-commitments) is no
+commitment, so its `due` is never read.
+
+**Failure reasons:** a commitment fails with `due is not a parseable ISO-8601 timestamp`
+(#1) or `a counted postreg is not shown on time` (#2 to #4). With `timely` requested, the
+report marks each counted postreg not shown on time, under its commitment: `is late: its
+ceiling (no later than <T>) is after due` (#4; T rounded up to the second, or as epoch
+seconds if it has no ISO-8601 form), `is not shown on time: it has no ceiling`
+(#2), or `is not shown on time: its ceiling does not verify` (#3). An unparseable `due` is
+flagged under its commitment in every state.
+
+**Does not establish:** when the postreg was created, only that it existed by T. A ceiling
+fetched after `due` for a postreg created before it fails, because the ceiling is the only
+evidence of time. Nor that every promised postreg was made: states show a commitment with
+none, and [`complete`](#complete) checks each item.
+
+**Example** (all requirements pass). `prereg.json` is signed with `--target "model m via
+provider p" --due 2099-01-01T00:00:00Z`, and `postreg.json` with `--fulfills prereg.json
+--ceiling`:
+
+```console
+$ asexec verify prereg.json postreg.json --tests format,selfsig,timely
+```
+
+Output (from `=== commitments ===` on), exit status `0`:
+
+```
+=== commitments ===
+  [FULFILLED] prereg sha-256:b74ae2db…
+    signer       : sha-256:bc562700…
+    due          : 2099-01-01T00:00:00Z
+    postregs     : 1
+
+=== tests ===
+  ✓ format=PASS  (2/2 manifest(s) ok)
+  ✓ selfsig=PASS  (2/2 manifest(s) ok)
+  ✓ timely=PASS  (1/1 commitment(s) ok)
+
+=== ceiling trust (what you are accepting) ===
+  - postreg.json: ceiling witnessed by … at … (±…s), so no later than … - you are trusting …
+
+asexec-verify/1 format=PASS selfsig=PASS timely=PASS
+Checked at 2026-12-31T23:59:59Z
+```
+
+Signed the same way but with `--due 2000-01-01T00:00:00Z`, the postreg is late. It still
+counts, so the commitment is `fulfilled`, and the report marks it. Exit status `2`:
+
+```
+=== commitments ===
+  [FULFILLED] prereg sha-256:daa96b3a…
+    signer       : sha-256:bc562700…
+    due          : 2000-01-01T00:00:00Z
+    postregs     : 1
+    ✗ postreg sha-256:5006f81b… is late: its ceiling (no later than …) is after due
+
+=== tests ===
+  ✓ format=PASS  (2/2 manifest(s) ok)
+  ✓ selfsig=PASS  (2/2 manifest(s) ok)
+  ✗ timely=FAIL  (1/1 commitment(s) failed)
+…
+asexec-verify/1 format=PASS selfsig=PASS timely=FAIL
+```
 
 ---
 
@@ -874,8 +1110,9 @@ One per commitment, shown in the `=== commitments ===` block of the report (see
 
 | State | Condition |
 |---|---|
-| `fulfilled` | at least one counted postreg |
-| `open` | no counted postreg, and `body.due` is absent or in the future |
+| `fulfilled` | at least one counted postreg, on time or not (that is [`timely`](#timely)'s) |
+| `no-due` | no counted postreg, and `body.due` is absent: it can never elapse |
+| `open` | no counted postreg, and `body.due` is present and in the future |
 | `elapsed-no-postreg` | no counted postreg, and `body.due` is at or before now |
 | `invalid-due` | no counted postreg, and `body.due` is present but not a parseable ISO-8601 string |
 
@@ -885,8 +1122,9 @@ so it has no state, and a
 none either.
 
 A `body.due` without a UTC offset or `Z` is read as UTC, never in the verifier's local
-timezone, and is flagged in the report. Timeliness (a postreg created before `due`) is not
-checked in this version.
+timezone, and is flagged in the report. Whether a counted postreg came before `due` is not a
+state: a late postreg still makes its commitment `fulfilled`, and [`timely`](#timely) is the
+test that judges it.
 
 **Example** (`fulfilled`). A prereg signed with `--due 2099-01-01T00:00:00Z`, and two
 chained postregs as in the [`chain` example](#chain):
@@ -901,14 +1139,34 @@ chained postregs as in the [`chain` example](#chain):
 
 Each entry is the state in capitals and the prereg's `ref`, then its signer's keyid, `due`
 (or `(none declared)`) and the number of counted postregs. Problems follow as `✗` lines: a
-`due` without a timezone, an unparseable `due`, a chain problem (on the `postregs` line), or
-a rejected postreg and why it does not count.
+`due` without a timezone, an unparseable `due` (in any state), a chain problem (on the
+`postregs` line), with `timely` requested each counted postreg not shown on time, or a
+rejected postreg and why it does not count. If the prereg lists items, an `items` line
+follows, with one line per item: `✓` and its status, or `✗` and why
+[`complete`](#complete) does not count it as accounted for.
 [`notarization-only`](#matching-postregs-to-commitments) postregs are listed in their own
 block, since they have no prereg to sit under.
 
+## TrustedDeclared
+
+Signed properties that the report may show but no test reads. "Trusted" means only that the
+signer is accountable for them, not that they are true; a passing code says nothing about
+them. A declaration that gains a test moves to that test's *Examines* list.
+
+The claim record's (ROADMAP, *New properties*):
+- `body.plan.media_type`: the plan document's media type.
+- `body.plan.label`: a human-readable name for the plan.
+- `body.items[].kind`: what kind of item it is (a run, an ablation, a search), free text.
+- `body.evidence[].media_type`: an evidence file's media type.
+- `body.evidence[].uri`: where an evidence file can be fetched, if anywhere. `content`
+  hashes the file at `name` under `--artifacts`, never what `uri` names.
+
+The claim record's `body.items[].id`, `body.item_id` and `body.status` are read by
+[`complete`](#complete).
+
 ## Not in this version
 
-`signer`, `timely`, `complete` and `order` are planned for 0.4.0, and `continuity` is
+`signer` and `order` are planned for 0.4.0, and `continuity` is
 deferred to 0.7.0 or later (see [`ROADMAP.md`](../ROADMAP.md)). Adding a test name never
 changes the meaning of an existing code. From 0.4.0, changing the documented meaning of an
 existing name bumps the code grammar (`asexec-verify/N`); 0.4.0 itself keeps `/1`.

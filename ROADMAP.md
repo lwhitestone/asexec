@@ -154,7 +154,9 @@ manifest, even if that manifest happens to carry it; there, it stays an unknown 
 - `dsse.payloadType` selects the format version, and unknown values fail `format`
   ([`docs/MULTIVERSION.md`](docs/MULTIVERSION.md)). (Done ahead of 0.4.0.)
 - `hash_alg` moves into each subject entry. A body-level `hash_alg` is no longer read, and is
-  shown as unknown and unchecked, like any unknown field.
+  shown as unknown and unchecked, like any unknown field. (Done ahead of 0.4.0, except the
+  showing, which is the unknown-field display below. An entry without its own `hash_alg`
+  fails `content`: no format supplies a default.)
 - Subjects are an explicit list of files, each hashed exactly as listed, because directory
   hash v1 is ambiguous and skips what it can't encode.
   - An entry's `name` is the relative path as given (normalized, `/`-separated), not its
@@ -167,8 +169,13 @@ manifest, even if that manifest happens to carry it; there, it stays an unknown 
     that resolves outside `--artifacts`.
   - The README examples change to match. Nothing is kept for compatibility with
     directory subjects.
+
+  (Done ahead of 0.4.0. The name is relative to the directory signing runs in, and verify
+  resolves it under `--artifacts`. Signing also refuses an absolute path, a `..` component
+  and a backslash, and `content` fails a name not in that normal form.)
 - The claim record: `plan`, `items`, and per-postreg `item_id`, `status` and `evidence`
-  (see *New properties*).
+  (see *New properties*). (Done ahead of 0.4.0: written by `--plan`, `--items`, `--item-id`,
+  `--status` and `--evidence`, and `content` checks `plan` and `evidence`.)
 - Convention: one prereg per commitment (a promise, or an assessment's plan). No
   list-level schema.
 
@@ -214,10 +221,13 @@ adds sits outside it, in the wrapper:
   With the unknown-`payloadType` failure above in `format`, version skew reads as
   `format=FAIL`, not as a bad signature.
 - `signer`: `--signer` / `--trusted-keys <file>`.
-- `timely`: postreg ceiling ≤ prereg `due`.
+- `timely`: postreg ceiling ≤ prereg `due`. (Done ahead of 0.4.0, with D5's edge cases in
+  `docs/040b1-PATH.md`: the ceiling's time is the later end of the signed interval, `MIDP +
+  RADI`, and a missing ceiling or one that fails the `ceiling` conditions is not on time.)
 - New commitment state `no-due`, separate from `open`. This changes what `open` means, but
-  the code grammar stays `asexec-verify/1`, because the bump rule starts at `0.4.0`.
-- `complete` and `order` (see *New properties*).
+  the code grammar stays `asexec-verify/1`, because the bump rule starts at `0.4.0`. (Done
+  ahead of 0.4.0.)
+- `complete` and `order` (see *New properties*). (`complete` done ahead of 0.4.0.)
 - Malformed means only what stops `verify` reading a manifest: not valid JSON, nested too
   deep, a duplicate key, or a missing frame (`dsse` with `payloadType`, a `payload` that
   decodes to a JSON object, and a `signatures` list). Everything else is judged by tests.

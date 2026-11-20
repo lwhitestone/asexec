@@ -26,11 +26,12 @@ Schema note (v3 term/type refactor): ``phase`` is ``prereg`` | ``postreg``;
 the commitment is expressed as a free-form ``target`` (what) plus an optional
 ``due`` deadline (by when) and an optional ``declaration`` (plain-language or
 structured description). Semantic bedrock is ``target`` alone. ``due`` is
-optional (a commitment with no deadline simply stays ``open`` forever).
+optional (a commitment with no deadline can never elapse: its state is ``no-due``).
 """
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import (
@@ -39,14 +40,22 @@ from pydantic import (
     Field,
     Strict,
     TypeAdapter,
-    ValidationInfo,
     field_validator,
     model_validator,
 )
 
 from . import drand
 from .constants import MANIFEST_PAYLOAD_TYPE, MANIFEST_PREDICATE_TYPE
-from .fields import Base64, Hex, Link, LowerHex, PinnedChain, SignatureBase64, StrictInt
+from .fields import (
+    Base64,
+    Hex,
+    Link,
+    LowerHex,
+    NormalName,
+    PinnedChain,
+    SignatureBase64,
+    StrictInt,
+)
 
 # A field the caller may express either as a plain string or as structured JSON.
 # "take what is provided and compile it" - more disclosure buys more trust, but
@@ -129,33 +138,36 @@ class CeilingInput(InputModel):
 
 
 class SubjectEntryInput(InputModel):
-    """One ``body.subject[]`` entry (content #1). Must be validated with
-    ``context={"hash_alg": ...}``: ``digest[hash_alg]`` must be hex."""
+    """One ``body.subject[]`` entry (content #1): a string ``name``, the entry's own string
+    ``hash_alg``, and ``digest[hash_alg]`` hex. There is no default ``hash_alg``. That the
+    name is in normal form (#3) and unique (#4) is code."""
 
     name: str  # content #1
+    hash_alg: str  # content #1 (that it is available, #2, is code)
     digest: dict[str, Any]  # content #1
 
-    # The writer subclass turns this off: it types every digest as a string, and
-    # ManifestBody pairs the subject with its hash_alg.
-    digest_needs_hash_alg: ClassVar[bool] = True
-
     @model_validator(mode="after")
-    def _digest_for_alg(self, info: ValidationInfo) -> SubjectEntryInput:
-        if not self.digest_needs_hash_alg:
-            return self
-        if info.context is None or "hash_alg" not in info.context:
-            # A caller bug, not a malformed entry: TypeError is not turned into a
-            # ValidationError, so it can never pass silently as a FAIL or a PASS.
-            raise TypeError('SubjectEntryInput needs context={"hash_alg": ...}')
-        alg = info.context["hash_alg"]
-        if not isinstance(alg, str) or not isinstance(self.digest.get(alg), str):
+    def _digest_for_alg(self) -> SubjectEntryInput:
+        if not isinstance(self.digest.get(self.hash_alg), str):
             raise ValueError("digest[hash_alg] is not a string")
-        bytes.fromhex(self.digest[alg])  # a ValueError here: digest[hash_alg] is not hex
+        bytes.fromhex(self.digest[self.hash_alg])  # a ValueError here: not hex
         return self
 
 
-# ``body.subject`` (content #1): a non-empty array; each entry is a ``SubjectEntryInput``.
+# ``body.subject`` and ``body.evidence`` (content #1): a non-empty array; each entry is a
+# ``SubjectEntryInput``. ``body.plan`` is one such entry.
 SubjectInput = TypeAdapter(Annotated[list[Any], Strict(), Field(min_length=1)])
+
+
+class ItemInput(InputModel):
+    """One ``body.items[]`` entry of a prereg: a string ``id`` (complete #1). Its ``kind`` is
+    declared and never tested, so it is not a field."""
+
+    id: str
+
+
+# ``body.items`` (complete #1): an array; each entry is an ``ItemInput``.
+ItemsInput = TypeAdapter(Annotated[list[Any], Strict()])
 
 
 class LinkInput(InputModel):
@@ -178,13 +190,55 @@ class DueInput(InputModel):
 # writer models (what this tool writes)
 # --------------------------------------------------------------------------- #
 class SubjectItem(SubjectEntryInput):
-    """One hashed artifact: ``{"name": ..., "digest": {alg: hexhash}}``."""
+    """One hashed file: ``{"name": <normalized relative path>, "hash_alg": alg,
+    "digest": {alg: hexhash}}``."""
 
     model_config = ConfigDict(extra="forbid")
     null_is_absent = False
-    digest_needs_hash_alg = False
 
+    name: NormalName
     digest: dict[str, str]
+
+
+class Plan(SubjectEntryInput):
+    """``body.plan``: the plan document, by digest, as a subject entry is, with its declared
+    (never tested) ``media_type`` and ``label``. asexec never parses the plan."""
+
+    model_config = ConfigDict(extra="forbid")
+    null_is_absent = False
+
+    name: NormalName
+    digest: dict[str, str]
+    media_type: str | None = None
+    label: str | None = None
+
+
+class EvidenceItem(SubjectEntryInput):
+    """One ``body.evidence[]`` entry: a file that backs a postreg, by digest, as a subject
+    entry is, with its declared (never tested) ``media_type`` and ``uri``."""
+
+    model_config = ConfigDict(extra="forbid")
+    null_is_absent = False
+
+    name: NormalName
+    digest: dict[str, str]
+    media_type: str | None = None
+    uri: str | None = None
+
+
+class Item(ItemInput):
+    """One committed item: an ``id`` a postreg's ``item_id`` names, and a declared ``kind``
+    (a run, an ablation, a search)."""
+
+    model_config = ConfigDict(extra="forbid")
+    null_is_absent = False
+
+    kind: str | None = None
+
+
+# What happened to an item (ROADMAP, New properties): the values a postreg's status may take.
+STATUSES = ("reported", "excluded", "blocked")
+Status = Literal["reported", "excluded", "blocked"]
 
 
 class Floor(FloorInput):
@@ -237,13 +291,19 @@ class ManifestBody(BaseModel):
     due: str | None = None
     declaration: Freeform | None = None
 
-    # optional content claim (subject requires its algorithm)
-    subject: list[SubjectItem] | None = None
-    hash_alg: str | None = None
+    # optional content claim: files, each with its own algorithm
+    subject: Annotated[list[SubjectItem], Field(min_length=1)] | None = None
 
     # postreg linkage
     fulfills: str | None = None
     prev_hash: str | None = None
+
+    # the claim record: a prereg's plan and items, a postreg's item_id, status and evidence
+    plan: Plan | None = None
+    items: list[Item] | None = None
+    item_id: str | None = None
+    status: Status | None = None
+    evidence: Annotated[list[EvidenceItem], Field(min_length=1)] | None = None
 
     # optional context
     anchor: Anchor | None = None
@@ -264,9 +324,17 @@ class ManifestBody(BaseModel):
         # semantic bedrock: target is the only mandatory claim (due is optional).
         if self.target in (None, "", {}, []):
             raise ValueError("manifest body missing mandatory 'target'")
-        # conditional: a content claim is meaningless without its algorithm.
-        if self.subject and not self.hash_alg:
-            raise ValueError("manifest body has a 'subject' but no 'hash_alg'")
+        # content #4: one file, one entry, in each list.
+        for field, entries in (("subject", self.subject), ("evidence", self.evidence)):
+            counts = Counter(entry.name for entry in entries or [])
+            repeated = sorted(name for name, n in counts.items() if n > 1)
+            if repeated:
+                raise ValueError(f"{field} lists {', '.join(map(repr, repeated))} twice")
+        # one id, one item: a prereg whose item ids repeat fails complete.
+        counts = Counter(item.id for item in self.items or [])
+        repeated = sorted(i for i, n in counts.items() if n > 1)
+        if repeated:
+            raise ValueError(f"items list the id {', '.join(map(repr, repeated))} twice")
         # a postreg without a link cannot be checked against any commitment.
         if self.phase == "postreg" and not self.fulfills:
             raise ValueError("postreg manifest missing mandatory 'fulfills'")

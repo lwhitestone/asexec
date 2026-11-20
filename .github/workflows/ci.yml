@@ -68,9 +68,10 @@ jobs:
         run: |
           uv run asexec --version
           uv run asexec keygen --out /tmp/ci.key
-          uv run asexec prereg --key /tmp/ci.key --subject src --due 2099-01-01T00:00:00Z \
+          uv run asexec prereg --key /tmp/ci.key --due 2099-01-01T00:00:00Z \
+            --subject src/asexec/__init__.py src/asexec/verifier.py \
             --target "model m via provider p" --out /tmp/pre.json
-          uv run asexec verify /tmp/pre.json --tests format,selfsig
+          uv run asexec verify /tmp/pre.json --tests format,selfsig,content --artifacts .
 
   build:
     needs: test

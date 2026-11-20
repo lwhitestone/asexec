@@ -313,7 +313,7 @@ def test_verify_shows_lone_surrogates_escaped(tmp_path, key, capsys):
         post,
         key,
         b'{"phase":"postreg","target":"t","fulfills":"\\udfff",'
-        b'"subject":[{"name":"\\ud801","digest":{"sha-256":"00"}}],"hash_alg":"sha-256"}',
+        b'"subject":[{"name":"\\ud801","hash_alg":"sha-256","digest":{"sha-256":"00"}}]}',
     )
     (tmp_path / "art").mkdir()
     capsys.readouterr()
@@ -385,7 +385,8 @@ def test_verify_version_skew_reads_as_format_not_signature(
 ):
     """A postreg of a format this release does not read, beside a good prereg: its reason
     is shown under it, attributed to format, and selfsig still passes for the prereg. The
-    postreg joins no commitment, so the prereg stays open."""
+    postreg joins no commitment, so the prereg has no counted postreg (no-due, as it has no
+    due)."""
     post = tmp_path / "post.json"
     assert run("postreg", "--key", key, "--fulfills", prereg, "--out", post) == 0
     mani = json.loads(post.read_text())
@@ -398,7 +399,7 @@ def test_verify_version_skew_reads_as_format_not_signature(
     i = lines.index(f"{cli.NO} {post}  [None]  keyid=None")  # a body it can't read: no phase
     assert lines[i + 1] == f"    {cli.NO} format: {reason}"
     assert lines[1].startswith(f"{cli.OK} {prereg}  [prereg]")
-    assert "  [OPEN] prereg " in out
+    assert "  [NO-DUE] prereg " in out
     assert "  ✗ format=FAIL  (1/2 manifest(s) failed)" in out
     assert "  ✓ selfsig=PASS  (1/1 manifest(s) ok)" in out
     assert "asexec-verify/1 format=FAIL selfsig=PASS" in out
@@ -462,7 +463,10 @@ def test_verify_help_names_both_required_tests(capsys):
     assert e.value.code == 0
     text = " ".join(capsys.readouterr().out.split())  # argparse wraps the help
     assert "MUST include 'format' and 'selfsig'" in text
-    assert "available: ceiling, chain, content, floor, format, keyconsist, selfsig" in text
+    assert (
+        "available: ceiling, chain, complete, content, floor, format, keyconsist, selfsig, timely"
+        in text
+    )
 
 
 @pytest.mark.parametrize(
@@ -516,13 +520,34 @@ def test_usage_errors_exit_EXIT_USAGE_not_the_FAIL_status(argv, capsys):
     [
         ("prereg", "--key", "{tmp}/absent.key", "--target", "t"),
         ("prereg", "--key", "{tmp}/bad.key", "--target", "t"),
-        ("prereg", "--key", "{key}", "--target", "t", "--subject", "{tmp}/absent"),
+        ("prereg", "--key", "{key}", "--target", "t", "--subject", "absent"),
+        ("prereg", "--key", "{key}", "--target", "t", "--subject", "d"),
+        ("prereg", "--key", "{key}", "--target", "t", "--subject", "{tmp}/c.txt"),
+        ("prereg", "--key", "{key}", "--target", "t", "--subject", "../c.txt"),
+        ("prereg", "--key", "{key}", "--target", "t", "--subject", "c.txt", "./c.txt"),
+        ("postreg", "--key", "{key}", "--target", "t", "--fulfills", REF, "--subject", "d"),
         ("identity", "emit", "--key", "{tmp}/absent.key"),
     ],
-    ids=["missing-key-file", "invalid-key-file", "missing-subject", "emit-missing-key"],
+    ids=[
+        "missing-key-file",
+        "invalid-key-file",
+        "missing-subject",
+        "subject-directory",
+        "subject-absolute",
+        "subject-dotdot",
+        "subject-twice",
+        "postreg-subject-directory",
+        "emit-missing-key",
+    ],
 )
-def test_errors_exit_EXIT_ERROR_with_a_message_not_a_traceback(tmp_path, key, argv, capsys):
-    """Valid arguments that name an input the command cannot use: exit 1, one line."""
+def test_errors_exit_EXIT_ERROR_with_a_message_not_a_traceback(
+    tmp_path, key, argv, capsys, monkeypatch
+):
+    """Valid arguments that name an input the command cannot use: exit 1, one line. A
+    subject is one file, named by its path relative to the current directory."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "d").mkdir()
+    (tmp_path / "c.txt").write_text("c")
     (tmp_path / "bad.key").write_text('{"alg": "ed25519", "private_key": "zz"}')
     argv = [a.format(tmp=tmp_path, key=key) for a in argv]
     assert run(*argv, "--out", tmp_path / "out.json") == cli.EXIT_ERROR
@@ -601,12 +626,13 @@ def test_verify_prints_invalid_ceiling_error(tmp_path, key, prereg, capsys):
     assert "ceiling trust" not in out
 
 
-def test_verify_prints_content_mismatch(tmp_path, key, capsys):
+def test_verify_prints_content_mismatch(tmp_path, key, capsys, monkeypatch):
     art = tmp_path / "art"
     art.mkdir()
     (art / "a.txt").write_text("one")
     out = tmp_path / "pre.json"
-    assert run("prereg", "--key", key, "--target", "t", "--subject", art / "a.txt",
+    monkeypatch.chdir(art)
+    assert run("prereg", "--key", key, "--target", "t", "--subject", "a.txt",
                "--out", out) == 0  # fmt: skip
     (art / "a.txt").write_text("two")
     capsys.readouterr()
@@ -617,15 +643,39 @@ def test_verify_prints_content_mismatch(tmp_path, key, capsys):
     assert "a.txt: digest mismatch" in text
 
 
-def test_verify_prints_content_ok(tmp_path, key, capsys):
+def test_verify_prints_content_ok(tmp_path, key, capsys, monkeypatch):
     art = tmp_path / "art"
     art.mkdir()
     (art / "a.txt").write_text("one")
     out = tmp_path / "pre.json"
-    run("prereg", "--key", key, "--target", "t", "--subject", art / "a.txt", "--out", out)
+    monkeypatch.chdir(art)
+    run("prereg", "--key", key, "--target", "t", "--subject", "a.txt", "--out", out)
     capsys.readouterr()
     assert run("verify", out, "--tests", "format,selfsig,content", "--artifacts", art) == 0
     assert "content hashes ok" in capsys.readouterr().out
+
+
+def test_subjects_are_files_named_by_their_relative_paths(tmp_path, key, monkeypatch):
+    """--subject names each file by its normalized relative path, with its own hash_alg, so
+    two files with one basename stay distinct, and verify finds each under --artifacts."""
+    art = tmp_path / "art"
+    for name in ("a/run.py", "b/run.py"):
+        (art / name).parent.mkdir(parents=True, exist_ok=True)
+        (art / name).write_text(name)
+    monkeypatch.chdir(art)
+    pre, post = tmp_path / "pre.json", tmp_path / "post.json"
+    assert run("prereg", "--key", key, "--target", "t", "--subject", "./a/run.py",
+               "--out", pre) == 0  # fmt: skip
+    assert run("postreg", "--key", key, "--fulfills", pre, "--subject", "a/run.py",
+               "b//run.py", "--out", post) == 0  # fmt: skip
+    sha = {n: hashlib.sha256(n.encode()).hexdigest() for n in ("a/run.py", "b/run.py")}
+    assert _body(pre)["subject"] == [
+        {"name": "a/run.py", "hash_alg": "sha-256", "digest": {"sha-256": sha["a/run.py"]}}
+    ]
+    assert [e["name"] for e in _body(post)["subject"]] == ["a/run.py", "b/run.py"]
+    assert "hash_alg" not in _body(pre) and "hash_alg" not in _body(post)
+    tests = "format,selfsig,content"
+    assert run("verify", pre, post, "--tests", tests, "--artifacts", art) == 0
 
 
 def test_verify_ends_with_code_then_time(prereg, capsys):
@@ -748,3 +798,390 @@ def test_version_flag(capsys):
         run("--version")
     assert e.value.code == 0
     assert capsys.readouterr().out.startswith("asexec ")
+
+
+# --- the claim record -------------------------------------------------------- #
+@pytest.fixture
+def claim_dir(tmp_path, monkeypatch):
+    """An artifacts directory with a plan and two evidence files, signing run inside it."""
+    art = tmp_path / "art"
+    (art / "results").mkdir(parents=True)
+    (art / "plan.md").write_text("# plan\n")
+    (art / "results" / "s1.json").write_text("{}\n")
+    (art / "results" / "s2.json").write_text("[]\n")
+    monkeypatch.chdir(art)
+    return art
+
+
+def _sha(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_prereg_writes_plan_and_items(tmp_path, key, claim_dir):
+    """--plan names a file (asexec hashes it and fills in hash_alg and digest), with its
+    declared media_type and label; --items is the list as given."""
+    pre = tmp_path / "pre.json"
+    plan = '{"name": "plan.md", "media_type": "text/markdown", "label": "the plan"}'
+    items = '[{"id": "S1", "kind": "run"}, {"id": "S2", "kind": "ablation"}]'
+    assert run("prereg", "--key", key, "--target", "t", "--plan", plan, "--items", items,
+               "--out", pre) == 0  # fmt: skip
+    body = _body(pre)
+    assert body["plan"] == {
+        "name": "plan.md",
+        "hash_alg": "sha-256",
+        "digest": {"sha-256": _sha(claim_dir / "plan.md")},
+        "media_type": "text/markdown",
+        "label": "the plan",
+    }
+    assert body["items"] == [{"id": "S1", "kind": "run"}, {"id": "S2", "kind": "ablation"}]
+
+
+def test_plan_items_and_evidence_from_files(tmp_path, key, claim_dir):
+    (tmp_path / "plan.json").write_text('{"name": "plan.md"}')
+    (tmp_path / "items.json").write_text('[{"id": "S1"}]')
+    (tmp_path / "evidence.json").write_text('[{"name": "results/s1.json"}]')
+    pre, post = tmp_path / "pre.json", tmp_path / "post.json"
+    assert run("prereg", "--key", key, "--target", "t", "--plan-file", tmp_path / "plan.json",
+               "--items-file", tmp_path / "items.json", "--out", pre) == 0  # fmt: skip
+    assert run("postreg", "--key", key, "--fulfills", pre, "--evidence-file",
+               tmp_path / "evidence.json", "--out", post) == 0  # fmt: skip
+    assert _body(pre)["plan"]["name"] == "plan.md" and _body(pre)["items"] == [{"id": "S1"}]
+    assert [e["name"] for e in _body(post)["evidence"]] == ["results/s1.json"]
+
+
+def test_postreg_writes_item_id_status_and_evidence(tmp_path, key, claim_dir, capsys):
+    pre, post = tmp_path / "pre.json", tmp_path / "post.json"
+    assert run("prereg", "--key", key, "--target", "t", "--plan", '{"name": "plan.md"}',
+               "--items", '[{"id": "S1"}]', "--out", pre) == 0  # fmt: skip
+    evidence = '[{"name": "results/s1.json", "media_type": "application/json", "uri": "https://e"}]'
+    assert run("postreg", "--key", key, "--fulfills", pre, "--item-id", "S1", "--status",
+               "excluded", "--evidence", evidence, "--hash-alg", "sha-256",
+               "--out", post) == 0  # fmt: skip
+    body = _body(post)
+    assert (body["item_id"], body["status"]) == ("S1", "excluded")
+    assert body["evidence"] == [
+        {
+            "name": "results/s1.json",
+            "hash_alg": "sha-256",
+            "digest": {"sha-256": _sha(claim_dir / "results" / "s1.json")},
+            "media_type": "application/json",
+            "uri": "https://e",
+        }
+    ]
+    assert "plan" not in body and "items" not in body  # prereg fields, not inherited
+    capsys.readouterr()
+    tests = "format,selfsig,content"
+    assert run("verify", pre, post, "--tests", tests, "--artifacts", claim_dir) == 0
+    (claim_dir / "plan.md").write_text("# another plan\n")
+    (claim_dir / "results" / "s1.json").write_text('{"x": 1}\n')
+    capsys.readouterr()
+    assert run("verify", pre, post, "--tests", tests, "--artifacts", claim_dir) == 2
+    out = capsys.readouterr().out
+    assert f"        {cli.NO} plan plan.md: digest mismatch" in out
+    assert f"        {cli.NO} evidence results/s1.json: digest mismatch" in out
+
+
+# Inline values that are wrong on their own: the arguments themselves are wrong, exit 64.
+INLINE_USAGE_ERRORS = [
+    pytest.param(("prereg", "--plan", "{nope"), "not valid JSON", id="plan-not-json"),
+    pytest.param(("prereg", "--items", "[1,"), "not valid JSON", id="items-not-json"),
+    pytest.param(("postreg", "--evidence", "not json"), "not valid JSON", id="evidence-not-json"),
+    pytest.param(("postreg", "--status", "done"), "invalid choice", id="status-unknown"),
+    pytest.param(("prereg", "--plan", "{}", "--plan-file", "p.json"), "not allowed",
+                 id="plan-and-file"),
+    pytest.param(("prereg", "--items", "[]", "--items-file", "i.json"), "not allowed",
+                 id="items-and-file"),
+    pytest.param(("postreg", "--evidence", "[]", "--evidence-file", "e.json"), "not allowed",
+                 id="evidence-and-file"),
+    pytest.param(("prereg", "--plan", "[]"), "--plan must be a JSON object", id="plan-list"),
+    pytest.param(("prereg", "--plan", '"plan.md"'), "--plan must be a JSON object",
+                 id="plan-string"),
+    pytest.param(("prereg", "--plan", '{"label": "L"}'), "needs a 'name'", id="plan-no-name"),
+    pytest.param(("prereg", "--plan", '{"name": 5}'), "needs a 'name'", id="plan-name-number"),
+    pytest.param(("prereg", "--plan", '{"name": "plan.md", "digest": {}}'), "fills in",
+                 id="plan-digest-given"),
+    pytest.param(("prereg", "--plan", '{"name": "plan.md", "colour": 1}'), "colour",
+                 id="plan-unknown-field"),
+    pytest.param(("prereg", "--plan", '{"name": "plan.md", "label": 5}'), "'label'",
+                 id="plan-label-number"),
+    pytest.param(("prereg", "--plan", '{"name": "plan.md", "name": "k.key"}'),
+                 "duplicate JSON key 'name'", id="plan-duplicate-key"),
+    pytest.param(("prereg", "--items", '{"id": "R1"}'), "--items must be a JSON array",
+                 id="items-object"),
+    pytest.param(("prereg", "--items", '[{"id": 5}]'), "a string 'id'", id="item-id-number"),
+    pytest.param(("prereg", "--items", '[{"kind": "run"}]'), "a string 'id'", id="item-no-id"),
+    pytest.param(("prereg", "--items", '["R1"]'), "a string 'id'", id="item-not-object"),
+    pytest.param(("prereg", "--items", '[{"id": "R1"}, {"id": "R1"}]'), "'R1' twice",
+                 id="item-ids-repeat"),
+    pytest.param(("prereg", "--items", '[{"id": "R1", "foo": 1}]'), "'foo'",
+                 id="item-unknown-field"),
+    pytest.param(("prereg", "--items", '[{"id": "R1", "kind": 5}]'), "'kind'",
+                 id="item-kind-number"),
+    pytest.param(("prereg", "--items", '[{"id": "R1", "id": "R2"}]'), "duplicate JSON key 'id'",
+                 id="item-duplicate-key"),
+    pytest.param(("postreg", "--evidence", '{"name": "plan.md"}'),
+                 "--evidence must be a JSON array", id="evidence-object"),
+    pytest.param(("postreg", "--evidence", "[]"), "at least one", id="evidence-empty"),
+    pytest.param(("postreg", "--evidence", '[{"name": "plan.md", "hash_alg": "x"}]'), "fills in",
+                 id="evidence-hash_alg-given"),
+    pytest.param(("postreg", "--evidence", '[{"name": "plan.md", "uri": 5}]'), "'uri'",
+                 id="evidence-uri-number"),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize("argv,message", INLINE_USAGE_ERRORS)
+def test_claim_record_argument_errors_are_usage_errors(
+    tmp_path, key, claim_dir, argv, message, capsys
+):
+    """An inline value that is invalid on its own (whatever the files hold): exit 64, the
+    reason on stderr, and nothing written. Duplicate JSON keys are refused, as verify
+    refuses them in a manifest."""
+    cmd, *rest = argv
+    link = ["--target", "t"] if cmd == "prereg" else ["--target", "t", "--fulfills", REF]
+    with pytest.raises(SystemExit) as e:
+        run(cmd, "--key", key, *link, *rest, "--out", tmp_path / "out.json")
+    assert e.value.code == cli.EXIT_USAGE
+    err = capsys.readouterr().err
+    assert "error: argument" in err and message in err
+    assert not (tmp_path / "out.json").exists()
+
+
+_FILE_FLAGS = {"--plan": "--plan-file", "--items": "--items-file", "--evidence": "--evidence-file"}
+
+
+@pytest.mark.parametrize(
+    "argv,message",
+    [p for p in INLINE_USAGE_ERRORS if p.values[0][1] in _FILE_FLAGS
+     and "not allowed" not in p.values[1] and "duplicate JSON key" not in p.values[1]
+     and "not valid JSON" not in p.values[1]],
+)  # fmt: skip
+def test_claim_record_file_content_errors_exit_EXIT_ERROR(
+    tmp_path, key, claim_dir, argv, message, capsys
+):
+    """The same values from a --…-file are the file's content, not the arguments: exit 1,
+    one line, nothing written."""
+    cmd, flag, value = argv
+    (tmp_path / "value.json").write_text(value)
+    link = ["--target", "t"] if cmd == "prereg" else ["--target", "t", "--fulfills", REF]
+    out = tmp_path / "out.json"
+    code = run(cmd, "--key", key, *link, _FILE_FLAGS[flag], tmp_path / "value.json", "--out", out)
+    assert code == cli.EXIT_ERROR
+    err = capsys.readouterr().err
+    assert err.startswith("error: ") and "Traceback" not in err and message in err
+    assert not out.exists()
+
+
+@pytest.mark.parametrize(
+    "argv,message",
+    [
+        (("prereg", "--plan", '{"name": "results"}'), "is a directory"),
+        (("prereg", "--plan", '{"name": "absent.md"}'), "absent.md"),
+        (("postreg", "--evidence", '[{"name": "plan.md"}, {"name": "./plan.md"}]'), "twice"),
+        (("postreg", "--evidence", '[{"name": "../plan.md"}]'), "'..'"),
+    ],
+    ids=["plan-directory", "plan-missing-file", "evidence-twice", "evidence-dotdot"],
+)
+def test_claim_record_value_errors_exit_EXIT_ERROR(tmp_path, key, claim_dir, argv, message, capsys):
+    """A file a value names that cannot be signed (a directory, a missing file, two paths
+    for one name, a path that is not a relative name), as for --subject: exit 1, one line,
+    nothing written."""
+    cmd, *rest = argv
+    link = ["--target", "t"] if cmd == "prereg" else ["--target", "t", "--fulfills", REF]
+    assert run(cmd, "--key", key, *link, *rest, "--out", tmp_path / "out.json") == cli.EXIT_ERROR
+    err = capsys.readouterr().err
+    assert err.startswith("error: ") and "Traceback" not in err and message in err
+    assert not (tmp_path / "out.json").exists()
+
+
+# --- timely and the no-due state --------------------------------------------- #
+@pytest.fixture
+def witness(monkeypatch, make_server, ceiling_for):
+    """Attach a ceiling from a pinned synthetic witness (MIDP 2023-11-14T22:13:20Z, RADI 1s)
+    to the manifest file at a path."""
+    lt_pub, sign_response = make_server()
+    monkeypatch.setitem(roughtime.SERVERS, "synthetic", {"pubkey": lt_pub})
+
+    def attach(path):
+        mani = manifest.load(str(path))
+        nonce_hex = _ref(path).split(":", 1)[-1]
+        manifest.attach_ceiling(mani, ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response))
+        manifest.save(mani, str(path))
+
+    return attach
+
+
+def _timely_run(tmp_path, key, due, *, ceiling, witness):
+    pre, post = tmp_path / "pre.json", tmp_path / "post.json"
+    assert run("prereg", "--key", key, "--target", "t", "--due", due, "--out", pre) == 0
+    assert run("postreg", "--key", key, "--fulfills", pre, "--out", post) == 0
+    if ceiling:
+        witness(post)
+    return pre, post
+
+
+@pytest.mark.parametrize(
+    "due,ceiling,code,line",
+    [
+        ("2099-01-01T00:00:00Z", True, 0, None),
+        (
+            "2023-11-14T22:13:20Z",
+            True,
+            2,
+            "is late: its ceiling (no later than 2023-11-14T22:13:21Z) is after due",
+        ),
+        ("2099-01-01T00:00:00Z", False, 2, "is not shown on time: it has no ceiling"),
+    ],
+    ids=["on-time", "late", "no-ceiling"],
+)
+def test_verify_marks_each_counted_postreg_not_shown_on_time(
+    tmp_path, key, capsys, witness, due, ceiling, code, line
+):
+    """With timely requested, the commitments block marks each counted postreg that is not
+    shown on time, and why; a late one still counts, and the commitment is fulfilled."""
+    pre, post = _timely_run(tmp_path, key, due, ceiling=ceiling, witness=witness)
+    capsys.readouterr()
+    assert run("verify", pre, post, "--tests", "format,selfsig,timely") == code
+    out = capsys.readouterr().out
+    assert "[FULFILLED]" in out and "    postregs     : 1\n" in out
+    marks = [ln for ln in out.splitlines() if ln.startswith(f"    {cli.NO} postreg ")]
+    if line is None:
+        assert marks == [] and "timely=PASS" in out
+    else:
+        assert marks == [f"    {cli.NO} postreg {_ref(post)} {line}"]
+        assert "timely=FAIL" in out
+    # not requested: no marks
+    capsys.readouterr()
+    run("verify", pre, post, "--tests", "format,selfsig")
+    assert f"{cli.NO} postreg" not in capsys.readouterr().out
+
+
+def test_verify_ceiling_trust_names_the_time_timely_compares(tmp_path, key, capsys, witness):
+    pre, post = _timely_run(tmp_path, key, "2099-01-01T00:00:00Z", ceiling=True, witness=witness)
+    capsys.readouterr()
+    run("verify", pre, post, "--tests", "format,selfsig,ceiling,timely")
+    out = capsys.readouterr().out
+    assert "(±1.0s), so no later than 2023-11-14T22:13:21Z - you are trusting synthetic" in out
+
+
+def test_verify_renders_no_due(prereg, capsys):
+    """A commitment with no due and no counted postreg is NO-DUE, not OPEN."""
+    run("verify", prereg, "--tests", "format,selfsig")
+    out = capsys.readouterr().out
+    assert "  [NO-DUE] prereg " in out and "[OPEN]" not in out
+
+
+def test_verify_flags_an_unparseable_due_on_a_fulfilled_commitment(tmp_path, key, capsys):
+    pre, post = tmp_path / "pre.json", tmp_path / "post.json"
+    assert run("prereg", "--key", key, "--target", "t", "--out", pre) == 0
+    _resign(pre, key, lambda body: body.update(due="someday"))
+    assert run("postreg", "--key", key, "--fulfills", pre, "--out", post) == 0
+    capsys.readouterr()
+    assert run("verify", pre, post, "--tests", "format,selfsig,timely") == 2
+    out = capsys.readouterr().out
+    assert "[FULFILLED]" in out
+    assert f"    {cli.NO} due is not a parseable ISO-8601 timestamp\n" in out
+
+
+# --- complete ---------------------------------------------------------------------- #
+def _claim(tmp_path, key, due, witness, *, items=("R1", "R2"), posts=("R1", "R2")):
+    """A prereg listing ``items``, and one chained, witnessed postreg per id in ``posts``."""
+    pre = tmp_path / "pre.json"
+    listed = json.dumps([{"id": i, "kind": "run"} for i in items])
+    assert run("prereg", "--key", key, "--target", "t", "--due", due, "--items", listed,
+               "--out", pre) == 0  # fmt: skip
+    prev, out = None, []
+    for i in posts:
+        post = tmp_path / f"post-{i}.json"
+        args = ["--prev", prev] if prev else []
+        assert run("postreg", "--key", key, "--fulfills", pre, "--item-id", i, "--status",
+                   "reported", *args, "--out", post) == 0  # fmt: skip
+        witness(post)
+        prev = post
+        out.append(post)
+    return pre, out
+
+
+_LATE = "reported, but not shown on time: its postreg is late"
+
+
+@pytest.mark.parametrize(
+    "due,posts,code,lines",
+    [
+        ("2099-01-01T00:00:00Z", ("R1", "R2"), 0, [f"{cli.OK} R1: reported",
+                                               f"{cli.OK} R2: reported"]),
+        ("2099-01-01T00:00:00Z", ("R1",), 2, [f"{cli.OK} R1: reported",
+                                          f"{cli.NO} R2: no counted postreg names it"]),
+        ("2023-11-14T22:13:20Z", ("R1", "R2"), 2, [f"{cli.NO} R1: {_LATE}",
+                                               f"{cli.NO} R2: {_LATE}"]),
+    ],
+    ids=["complete", "dropped-item", "late-items"],
+)  # fmt: skip
+def test_verify_shows_each_items_status(tmp_path, key, capsys, witness, due, posts, code, lines):
+    """The commitments block lists each item with its status, or why it is not accounted
+    for; complete passes only when every item is."""
+    pre, out = _claim(tmp_path, key, due, witness, posts=posts)
+    capsys.readouterr()
+    assert run("verify", pre, *out, "--tests", "format,selfsig,complete") == code
+    text = capsys.readouterr().out
+    assert "    items        : 2\n" in text
+    assert [ln.strip() for ln in text.splitlines() if ln.startswith("      ")] == lines
+    assert ("complete=PASS" if code == 0 else "complete=FAIL") in text
+
+
+def test_verify_shows_a_postreg_for_an_unlisted_item(tmp_path, key, capsys, witness):
+    pre, out = _claim(
+        tmp_path, key, "2099-01-01T00:00:00Z", witness, items=("R1",), posts=("R1", "Z9")
+    )
+    capsys.readouterr()
+    assert run("verify", pre, *out, "--tests", "format,selfsig,complete") == 0
+    text = capsys.readouterr().out
+    line = f"    {cli.NO} postreg {_ref(out[1])} names item 'Z9', which the prereg does not list\n"
+    assert line in text
+
+
+def test_verify_shows_a_witness_time_past_year_9999_as_epoch_seconds(
+    tmp_path, key, capsys, monkeypatch, make_server, ceiling_for
+):
+    """The report never fails to print a time: one with no ISO-8601 form (here 2**62 us)
+    is shown as epoch seconds."""
+    lt_pub, sign_response = make_server(midpoint_us=2**62, maxt=2**63)
+    monkeypatch.setitem(roughtime.SERVERS, "synthetic", {"pubkey": lt_pub})
+    pre, post = tmp_path / "pre.json", tmp_path / "post.json"
+    assert run("prereg", "--key", key, "--target", "t", "--due", "2099-01-01T00:00:00Z",
+               "--out", pre) == 0  # fmt: skip
+    assert run("postreg", "--key", key, "--fulfills", pre, "--out", post) == 0
+    mani = manifest.load(str(post))
+    nonce_hex = _ref(post).split(":", 1)[-1]
+    manifest.attach_ceiling(mani, ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response))
+    manifest.save(mani, str(post))
+    capsys.readouterr()
+    assert run("verify", pre, post, "--tests", "format,selfsig,ceiling,timely") == 2
+    out = capsys.readouterr().out
+    assert "is late: its ceiling (no later than 4611686018429 (epoch seconds)) is after due" in out
+    assert "so no later than 4611686018429 (epoch seconds)" in out
+
+
+@pytest.mark.parametrize(
+    "flag,content,key_name",
+    [
+        ("--plan-file", '{"name": "plan.md", "name": "k.key"}', "name"),
+        ("--items-file", '[{"id": "R1", "id": "R2"}]', "id"),
+        ("--evidence-file", '[{"name": "plan.md", "name": "k.key"}]', "name"),
+    ],
+    ids=["plan-file", "items-file", "evidence-file"],
+)
+def test_claim_record_file_with_a_duplicate_key_exits_EXIT_ERROR(
+    tmp_path, key, claim_dir, flag, content, key_name, capsys
+):
+    """A --plan-file, --items-file or --evidence-file whose JSON repeats a key is refused, as
+    an inline value is: parsers disagree on which value wins. It is the file's content, so
+    exit 1, and nothing is hashed or written."""
+    (claim_dir / "k.key").write_text("secret")
+    (tmp_path / "value.json").write_text(content)
+    cmd = "postreg" if flag == "--evidence-file" else "prereg"
+    link = ["--target", "t"] if cmd == "prereg" else ["--target", "t", "--fulfills", REF]
+    out = tmp_path / "out.json"
+    assert run(cmd, "--key", key, *link, flag, tmp_path / "value.json", "--out", out) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("error: ") and f"duplicate JSON key {key_name!r}" in err
+    assert not out.exists()

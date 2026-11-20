@@ -134,7 +134,7 @@ class Scenario:
 
     # --- declaring manifests ------------------------------------------------ #
     def add_prereg(self, name: str) -> None:
-        self.specs[name] = _Spec("prereg", self._subject(["harness/"]))
+        self.specs[name] = _Spec("prereg", self._subject(["harness/eval.py"]))
 
     def add_postreg(
         self,
@@ -143,7 +143,7 @@ class Scenario:
         prev: str | None = None,
         transcript: str = "transcript0.txt",
     ) -> None:
-        subject = self._subject([transcript, "harness/"])
+        subject = self._subject([transcript, "harness/eval.py"])
         self.specs[name] = _Spec("postreg", subject, fulfills=fulfills, prev=prev)
 
     def with_floor(self, name: str = "prereg") -> None:
@@ -165,6 +165,7 @@ class Scenario:
         ``ceiling.*``) is edited after signing. Missing objects on the way are created; a
         numeric segment or ``[N]`` indexes an array.
         """
+        value = copy.deepcopy(value)  # a body edit never reaches the caller's object
         self._edit(name, path, lambda root: data.set_path(root, path, value), after_signing)
 
     def unset(self, name: str, path: str, *, after_signing: bool = False) -> None:

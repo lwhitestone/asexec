@@ -234,10 +234,13 @@ def merkle_root(nonce: bytes, path: bytes, index: int) -> bytes:
 # --------------------------------------------------------------------------- #
 # verification
 # --------------------------------------------------------------------------- #
-def verify_response(response: bytes, nonce: bytes, long_term_pubkey: bytes) -> dict[str, float]:
+def verify_response(
+    response: bytes, nonce: bytes, long_term_pubkey: bytes
+) -> dict[str, float | int]:
     """Verify a raw Roughtime response against a nonce and a PINNED long-term key.
 
-    Returns ``{"midpoint": <unix seconds>, "radius": <seconds>}`` on success;
+    Returns ``{"midpoint": <unix seconds>, "radius": <seconds>, "midpoint_us": MIDP,
+    "radius_us": RADI}`` on success (the ``_us`` values are the signed integers, exact);
     raises ``VerificationError`` on any failed check (fail-safe - a parse or
     signature problem is a rejection, never a silent pass).
     """
@@ -281,7 +284,7 @@ def verify_response(response: bytes, nonce: bytes, long_term_pubkey: bytes) -> d
     if not (mint <= midp <= maxt):
         raise VerificationError("roughtime midpoint outside delegation validity window")
 
-    return {"midpoint": midp / 1e6, "radius": radi / 1e6}
+    return {"midpoint": midp / 1e6, "radius": radi / 1e6, "midpoint_us": midp, "radius_us": radi}
 
 
 def verify_ceiling(
@@ -334,6 +337,8 @@ def verify_ceiling(
     out["status"] = "verified"
     out["midpoint"] = info["midpoint"]
     out["radius"] = info["radius"]
+    out["midpoint_us"] = info["midpoint_us"]
+    out["radius_us"] = info["radius_us"]
     return out
 
 

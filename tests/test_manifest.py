@@ -19,8 +19,8 @@ def _target():
 DUE = "2099-01-01T00:00:00Z"
 
 
-def _subj():
-    return [{"name": "h/", "digest": {"sha-256": "00"}}]
+def _subj(name="h.py"):
+    return [{"name": name, "hash_alg": "sha-256", "digest": {"sha-256": "00"}}]
 
 
 def test_predicate_type_is_the_only_format_identifier_in_the_body():
@@ -116,13 +116,47 @@ def test_due_optional_at_prereg():
     assert "due" not in body
 
 
-def test_subject_requires_hash_alg():
-    # a subject present but its algorithm stripped -> conditional bedrock fails.
+def test_subject_entry_requires_its_own_hash_alg():
+    # Each entry carries its own hash_alg; one stripped from a hand-built body is refused.
     priv, pub = keys.generate()
     body = manifest.build_prereg(_target(), due=DUE, subject=_subj())
-    del body["hash_alg"]
-    with pytest.raises(ManifestError):
+    assert body["subject"][0]["hash_alg"] == "sha-256"
+    assert "hash_alg" not in body  # no body-level hash_alg is written
+    del body["subject"][0]["hash_alg"]
+    with pytest.raises(ManifestError, match="hash_alg"):
         manifest.sign(body, priv, pub)
+
+
+def test_builders_take_no_body_level_hash_alg():
+    with pytest.raises(TypeError):
+        manifest.build_prereg(_target(), subject=_subj(), hash_alg="sha-256")
+
+
+def test_writer_subject_entry_requires_hash_alg():
+    entry = {"name": "h.py", "digest": {"sha-256": "00"}}
+    with pytest.raises(ValidationError):
+        manifest.build_prereg(_target(), subject=[entry])
+
+
+def test_writer_refuses_duplicate_subject_names():
+    with pytest.raises(ValidationError, match="twice"):
+        manifest.build_prereg(_target(), subject=_subj() + _subj())
+
+
+def test_sign_refuses_a_hand_built_body_with_duplicate_subject_names():
+    priv, pub = keys.generate()
+    body = manifest.build_prereg(_target(), subject=_subj())
+    body["subject"].append(dict(body["subject"][0]))
+    with pytest.raises(ManifestError, match="twice"):
+        manifest.sign(body, priv, pub)
+
+
+@pytest.mark.parametrize(
+    "name", ["/abs.py", "./h.py", "a//h.py", "a/../h.py", "h/", "a\\h.py", "", "."]
+)
+def test_writer_refuses_a_name_that_is_not_a_normalized_relative_path(name):
+    with pytest.raises(ValidationError):
+        manifest.build_prereg(_target(), subject=_subj(name))
 
 
 def test_missing_semantic_bedrock_rejected():
@@ -239,3 +273,63 @@ def test_floor_lands_in_anchor_and_ref_stable_across_ceiling():
     manifest.attach_ceiling(signed, {"ceiling_type": "roughtime", "nonce": ref_before})
     assert manifest.ref(manifest.read_body(signed)[0]) == ref_before
     assert manifest.get_ceiling(signed)["nonce"] == ref_before
+
+
+# --- the claim record ------------------------------------------------------- #
+PLAN = {"name": "plan.md", "hash_alg": "sha-256", "digest": {"sha-256": "00"}}
+EVIDENCE = [{"name": "e.json", "hash_alg": "sha-256", "digest": {"sha-256": "00"}}]
+
+
+def test_claim_record_fields_are_written_as_given():
+    plan = {**PLAN, "media_type": "text/markdown", "label": "L"}
+    items = [{"id": "S1", "kind": "run"}, {"id": "S2"}]
+    pre = manifest.build_prereg(_target(), plan=plan, items=items)
+    assert pre["plan"] == plan and pre["items"] == items
+    evidence = [{**EVIDENCE[0], "media_type": "application/json", "uri": "https://e"}]
+    post = manifest.build_postreg(
+        _target(), fulfills="sha-256:00", item_id="S1", status="reported", evidence=evidence
+    )
+    assert (post["item_id"], post["status"], post["evidence"]) == ("S1", "reported", evidence)
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"plan": {**PLAN, "extra": 1}},
+        {"plan": {k: v for k, v in PLAN.items() if k != "hash_alg"}},
+        {"plan": {**PLAN, "name": "./plan.md"}},
+        {"items": [{"id": "S1"}, {"id": "S1", "kind": "again"}]},
+        {"items": [{"kind": "run"}]},
+        {"items": [{"id": 1}]},
+        {"status": "done"},
+        {"status": None, "item_id": 5},
+        {"evidence": []},
+        {"evidence": EVIDENCE * 2},
+        {"evidence": [{**EVIDENCE[0], "uri": 5}]},
+    ],
+    ids=[
+        "plan-extra-field",
+        "plan-no-hash_alg",
+        "plan-name-not-normalized",
+        "item-ids-repeat",
+        "item-without-id",
+        "item-id-not-string",
+        "status-unknown",
+        "item_id-not-string",
+        "evidence-empty",
+        "evidence-names-repeat",
+        "uri-not-string",
+    ],
+)
+def test_writer_refuses_a_claim_record_content_or_complete_would_fail(fields):
+    """Signing validates status (reported | excluded | blocked) and item ids (strings,
+    unique), and holds plan and evidence entries to the subject entry's rules."""
+    with pytest.raises(ValidationError):
+        manifest.build_postreg(_target(), fulfills="sha-256:00", **fields)
+
+
+@pytest.mark.parametrize("field", ["subject", "evidence"])
+def test_writer_refuses_an_empty_entry_list(field):
+    """content #1 fails an empty subject or evidence list, so the writer never writes one."""
+    with pytest.raises(ValidationError):
+        manifest.build_postreg(_target(), fulfills="sha-256:00", **{field: []})

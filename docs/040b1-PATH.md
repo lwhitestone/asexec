@@ -193,7 +193,7 @@ breaks any vector that hardcodes it. The options:
 - [x] 4. #30: beta release support (after #31, because it rewrites the `FORMATS` key) (on feature/0321)
 - [x] 5. #44 (D2), then #42 and #43 (on feature/0321)
 - [x] 6. #32: DSSE envelope (on feature/0321)
-- [ ] 7. #33 → #36 → #46 → #37
+- [x] 7. #33 → #36 → #46 → #37 (on feature/0321)
 - [ ] 8. #34 and #38
 - [ ] 9. #45 (after #38)
 - [ ] 10. #39 → #40
@@ -2123,3 +2123,711 @@ the last PR push (`aad9918`, run 44773957313): lint, build, test on 3.12, 3.13 a
 **Open for the human gate:** the orchestrator's choice of a base64 `sig`, to keep ROADMAP's
 standard-envelope promise; the four documented ways asexec is stricter than DSSE; and the
 verify result that depends on `PYTHONINTMAXSTRDIGITS` (see the observations above).
+
+### Checkpoint 7: #33, #36, #46, #37
+
+Written issue by issue as each landed (the brief asks for a log that is complete even if
+the work is interrupted). Baseline: `feature/0321-checkpoint7` at `18c0955`, `scripts/check.sh`
+clean, **640 passed**.
+
+#### #33: subjects as explicit file lists
+
+**Landed:** `18e63bf`. A subject entry is `{name, hash_alg, digest}`: `name` is the file's
+normalized relative path, `hash_alg` is the entry's own. `hashing.build_subject` (with the new
+`entry_name`, `build_entry`, `build_entries`, which #36 reuses) refuses a directory, anything
+else that is not a regular file, an absolute path, a `..` component, a backslash and two paths
+with one name (`ManifestError`, so the CLI exits 1 with `error: …`). `hash_dir`,
+`_iter_files` and `digest_path` are removed. `models.SubjectEntryInput` now has `hash_alg:
+str` (the `context={"hash_alg": …}` mechanism is gone), the writer's `SubjectItem.name` is
+`fields.NormalName`, `ManifestBody` has no body-level `hash_alg` and refuses repeated names,
+and `manifest.sign`'s dict gate refuses an entry without `hash_alg` or a repeated name.
+`build_prereg`/`build_postreg` take no `hash_alg`. `FORMATS[...]["subject_default_hash_alg"]`
+is removed. `content` has nine items. Docs: `docs/VERIFICATION.md` (*Formats*, the summary
+row, the `content` section and example, the *Hex* convention's item number), `README.md`
+(usage, both body examples, the *Known issues* section removed), `ROADMAP.md` (done-ahead
+marks), `docs/MULTIVERSION.md` (the entry, the known-format bullet, the per-identifier row),
+`docs/DEVELOPMENT.md` (the roundtrip). `examples/adequacy-test/run.py` signs in its artifacts
+directory with relative names.
+
+**What was settled (judgement calls):**
+- **Relative to what:** the directory signing runs in; the name is the path as given, so
+  verify's `--artifacts` must stand for that directory. Normalization is lexical: `.`
+  components, repeated and trailing separators are dropped (`./b//run.py` → `b/run.py`), and
+  on Windows `\` becomes `/`.
+- **Refused at signing:** an absolute path (also a Windows drive path), rather than made
+  relative to the current directory: there is no "relative path as given", and resolving it
+  against a possibly symlinked current directory could silently pick another name. Any `..`
+  component, even one that normalizes away (`d/../c.txt`): lexical collapse can name another
+  file than the OS does when `d` is a symlink. A backslash where it is not a separator: it is a
+  separator on Windows, so the same name would be two files. Two paths that normalize to one
+  name (`c.txt` and `./c.txt`, or the same path twice).
+- **`hash_alg` is required per entry, and has no default.** ROADMAP says "No property has a
+  default", gives `subject[].hash_alg` the default "none", and *Dependencies sit with what
+  they qualify* says each digest carries its own `hash_alg`. So the FORMATS field kept for the
+  fallback (checkpoint 3) is removed, consistently: from `constants.py`, the pinned literal
+  (`test_formats_has_one_entry_keyed_by_manifest_payload_type`), the selector test's second
+  format, `docs/MULTIVERSION.md` and `docs/VERIFICATION.md`. `SUBJECT_DEFAULT_HASH_ALG` stays
+  as the signing default (NEW_OUTPUT). An entry without its own `hash_alg` fails content #1
+  (`malformed subject entry`), and so does a non-string one (it was #2 before).
+- **content's items** (renumbered, since the section is rewritten; reasons in brackets):
+  1. a non-empty array of objects with a string `name`, a string `hash_alg` and a hex
+     `digest[hash_alg]` (`malformed subject entry`);
+  2. `hash_alg` available (`algorithm unavailable: <alg>`);
+  3. `name` in normal form: `/`-separated segments, none empty, `.` or `..`, no backslash
+     (`name is not a normalized relative path`), so `./a`, `a//b`, `a/`, `a/../b`, `/a`,
+     `a\b` fail, even when they would resolve to the right file;
+  4. no other entry of the same list has the same `name` (`duplicate name`, on each of them);
+  5. resolves inside `--artifacts` (symlinks followed);
+  6. exists;
+  7. **a regular file** (`artifact is not a file`): a directory, a symlink to one, a FIFO, a
+     socket or a device fails and is never opened. Before, verify opened a FIFO and blocked
+     forever (the red run below had to deselect that case);
+  8. readable;
+  9. digest equals.
+- **Duplicates are per list:** the same name in two manifests, or (from #36) in `subject` and
+  `evidence`, is not a duplicate.
+- **postreg no longer inherits the prereg's `hash_alg`:** there is no body-level one to
+  inherit. `postreg --hash-alg` now defaults to `sha-256`, like `prereg --hash-alg`.
+- **Frozen vectors (D6):** `FROZEN_NO_HASH_ALG_MANIFEST` is replaced by
+  `FROZEN_SUBJECT_MANIFEST` (an entry with its own `hash_alg`; sig `s/vhj6pty0QZTW…3ki7BQ==`),
+  regenerated by `manifest.sign` with only its bedrock gate stubbed (script in the session
+  scratchpad, `cp7/regen_vectors.py`). The same script printed `FROZEN_MANIFEST` and the old
+  no-`hash_alg` vector byte for byte as they were in the file, so it is the method that made
+  them. The old vector is kept as `NO_HASH_ALG_MANIFEST`, and
+  `test_subject_entry_hash_alg_has_no_fallback` pins that it now fails content #1 (as
+  `PRE_V1_MANIFEST` pins the payloadType change).
+
+**Evidence:**
+- Red first: with only the tests changed, the full suite hung on
+  `test_content__fail__7_artifact_is_a_file[fifo]` (the old `digest_path` opened the FIFO and
+  blocked). With the two FIFO tests deselected: **59 failed, 634 passed**. The failures were
+  the new refusals (`build_subject` accepting a directory, an absolute path, `..`, a backslash,
+  duplicates; the CLI exiting 0 for them), `pydantic ValidationError` from `ManifestBody`
+  (entries now carry `hash_alg`, which the old writer forbade), content still reading the
+  body-level `hash_alg`, content passing non-normal names, duplicates and directories, the
+  FORMATS literal, and the doc-coverage test (`content` #7-#9 had no doc item).
+- `scripts/check.sh` after: clean, **695 passed** (640 before).
+- Tests that pin each requirement:
+  - content: `test_content__pass__all`; `__fail__1_entry_is_well_formed` (11 cases, among
+    them `hash_alg-missing`, `hash_alg-null`, `hash_alg-number`, `hash_alg-list`,
+    `digest-not-object`); `__fail__1_subject_is_a_non_empty_array`;
+    `__pass__1_body_level_hash_alg_is_not_read` (`blake9`, a number, `null`);
+    `__fail__2_hash_alg_is_available`; `__fail__3_name_is_a_normalized_relative_path` (10:
+    absolute, `./`, `/./`, `//`, trailing `/`, `..` inside and first, backslash, empty, `.`);
+    `__fail__4_names_are_unique` (same and different digests: both entries fail);
+    `__pass__4_the_same_name_in_two_manifests_is_not_a_duplicate`;
+    `__fail__5_name_resolves_inside_artifacts` (an escaping symlink);
+    `__pass__5_symlink_inside_is_hashed_through_to_its_target`;
+    `__fail__6_artifact_exists` (deleted, dangling symlink); `__fail__7_artifact_is_a_file`
+    (a directory given its old v1 hash, a symlink to a directory, a FIFO);
+    `__fail__8_artifact_is_readable`; `__fail__9_digest_equals_recomputed`;
+    `__pass__9_digest_hex_accepts_either_case_and_whitespace`; the four empty cases.
+  - Planted: `test_fault__hash_alg_only_at_the_body_level` (0.3.x's layout fails content).
+  - Never raises: `SIGNED_JUNK` gains `entry-hash_alg`, `entry-hash_alg-obj`,
+    `entry-name-list`; the lone-surrogate case moves to `body.subject.0.hash_alg`;
+    `test_never_raises__subject_named_as_no_path_can_be` uses `harness\x00.py` (content #6).
+  - Writer: `tests/test_primitives.py::test_directory_hashing_is_gone`,
+    `test_build_subject_names_each_file_by_its_normalized_relative_path`,
+    `test_build_subject_hashes_a_symlink_through_to_its_target`,
+    `test_build_subject_refuses_what_content_would_fail` (8),
+    `test_build_subject_refuses_a_backslash_in_a_name`,
+    `test_build_subject_refuses_what_is_not_a_regular_file` (FIFO),
+    `test_build_subject_of_a_missing_file_raises_os_error`; `tests/test_manifest.py::
+    test_subject_entry_requires_its_own_hash_alg`, `test_builders_take_no_body_level_hash_alg`,
+    `test_writer_subject_entry_requires_hash_alg`, `test_writer_refuses_duplicate_subject_names`,
+    `test_sign_refuses_a_hand_built_body_with_duplicate_subject_names`,
+    `test_writer_refuses_a_name_that_is_not_a_normalized_relative_path` (8).
+  - CLI: `test_errors_exit_EXIT_ERROR_with_a_message_not_a_traceback` gains
+    `subject-directory`, `subject-absolute`, `subject-dotdot`, `subject-twice`,
+    `postreg-subject-directory`; `test_subjects_are_files_named_by_their_relative_paths`.
+  - Constants: the FORMATS literal (three fields), `test_frozen_manifests_still_verify`
+    (`FROZEN_SUBJECT_MANIFEST` decodes to `FROZEN_SUBJECT_BODY`, `content=PASS`),
+    `test_subject_entry_hash_alg_has_no_fallback`, the roundtrip (a writer file and a hand-signed
+    file, each entry under its own `hash_alg`).
+- CLI demonstrations (scratch dir `art/` with `a/run.py`, `b/run.py`, `harness/eval.py`; run
+  inside `art/`):
+  - `prereg --subject harness` → `error: 'harness' is a directory; list its files, or pack it
+    (a tar, say) and list that`, exit 1. An absolute path → `error: '…/art/a/run.py' is an
+    absolute path; name a file by its path relative to the current directory (verify looks it
+    up under --artifacts)`, exit 1. `../art/a/run.py` → `… has a '..' component; name the
+    file without it`, exit 1. `a/run.py ./a//run.py` → `'a/run.py' and './a//run.py' both
+    name 'a/run.py': a file is listed twice`, exit 1. Nothing written in each case.
+  - `prereg --subject a/run.py b/run.py harness/eval.py`: the body holds
+    `"subject":[{"digest":{"sha-256":"2c8b08da…"},"hash_alg":"sha-256","name":"a/run.py"},
+    {…"name":"b/run.py"},{…"name":"harness/eval.py"}]` and no body-level `hash_alg`; `verify
+    pre.json --tests format,selfsig,content --artifacts art` → `✓ content hashes ok`,
+    `content=PASS format=PASS selfsig=PASS`, exit 0.
+  - A hand-signed body (`cp7/handsign.py`, which signs any body as anyone with a key could)
+    naming `harness`, `a/run.py` twice, `harness/../a/run.py`, `a\\run.py`, and `b/run.py`
+    without `hash_alg`, beside a body-level `hash_alg`: `✗ harness: artifact is not a file`,
+    `✗ a/run.py: duplicate name` (twice), `✗ harness/../a/run.py: name is not a normalized
+    relative path`, `✗ a\\run.py: name is not a normalized relative path`, `✗ b/run.py:
+    malformed subject entry`, `content=FAIL format=PASS selfsig=PASS`.
+- `uv run python examples/adequacy-test/run.py`: exit 0, the same codes, states and
+  caught/missed results as before (`run.py` now runs signing with `cwd=<artifacts>` and
+  relative names, since an absolute `--subject` is refused).
+- Nothing left behind: `git grep -n -e hash_dir -e digest_path -e subject_default_hash_alg
+  -e 'body\.hash_alg' -e '"harness/"'` outside this file finds only `ROADMAP.md:167` (the
+  bullet saying to remove `hash_dir`), `docs/MULTIVERSION.md:105` and
+  `docs/VERIFICATION.md:329` (saying the field and the body-level `hash_alg` are gone),
+  `tests/test_constants.py` (`test_subject_default_hash_alg`, the constant that stays, and the
+  no-fallback test's comment) and `tests/test_primitives.py` (the assertions that both
+  functions are gone).
+
+**Observations (out of scope):**
+- On a case-insensitive filesystem, `A.txt` and `a.txt` are two names for one file: content #4
+  compares names exactly, so it does not see them as duplicates (each still hashes the one
+  file). A name holding `:` (`C:x`) is relative on POSIX but drive-relative on Windows, where
+  content #5 then fails it, so the verdict on such a name can differ between systems.
+- `prd.md:48` still describes the harness hash as "directory tree hash, e.g., a Merkle tree
+  over files". `prd.md` is the original brief and no issue covers it.
+- `ROADMAP.md` says a body-level `hash_alg` is "shown as unknown and unchecked"; showing
+  unknown fields is #34's (checkpoint 8). It is read by nothing now.
+
+#### #36: the claim record
+
+**Landed:** `5ac205f`. Body fields, all optional: a prereg's `plan` (`name`, `hash_alg`,
+`digest`, `media_type`, `label`) and `items[]` (`id`, `kind`); a postreg's `item_id`, `status`
+and `evidence[]` (`name`, `hash_alg`, `digest`, `media_type`, `uri`). Writer models `Plan`
+and `EvidenceItem` subclass `SubjectEntryInput`, and `Item` subclasses the new input model
+`ItemInput` (`id: str`, for #37); `ManifestBody` gains the five fields (`status` is
+`Literal["reported", "excluded", "blocked"]`, `models.STATUSES`; `evidence` has at least one
+entry). `content` examines `body.subject`, `body.plan` and `body.evidence`: each entry through
+the same nine items, each report entry tagged with its `field`. CLI: prereg `--plan` /
+`--plan-file` and `--items` / `--items-file`; postreg `--item-id`, `--status` (argparse
+`choices`) and `--evidence` / `--evidence-file`. `_get_arg_or_file` takes a `parse_value`
+callable (`json.loads` here) for the inline value. `hashing.build_entries` hashes each plan
+and evidence file as a subject file is, so the same refusals apply. `docs/VERIFICATION.md`:
+the `content` section and summary row, a new *TrustedDeclared* section. `README.md` (the two
+body examples, which say "every field filled in") and `ROADMAP.md` (done-ahead mark).
+
+**Judgement calls:**
+- **Signing validates `status` and item ids:** `status` must be `reported`, `excluded` or
+  `blocked` (a usage error at the CLI, a `ValidationError` in the writer), item ids are
+  strings and unique within a prereg (a repeated id would fail `complete`), and evidence is a
+  non-empty list with unique names (content #1, #4). Signing does **not** check `--item-id`
+  against the prereg's items: a postreg can be signed from a literal ref, with no prereg body
+  to check against, and `complete` (#37) reports an `item_id` that names no item.
+- **asexec fills in `hash_alg` and `digest`; the user may not.** A `--plan` or `--evidence`
+  entry holding either is refused (exit 1, "asexec hashes the file and fills in hash_alg and
+  digest (choose the algorithm with --hash-alg)"); the algorithm is `--hash-alg`, shared with
+  `--subject`. Unknown keys are refused, naming what an entry may hold.
+- **Exit statuses:** inline JSON that does not parse is a usage error (64: only the argument
+  is wrong); a value that parses but cannot be signed (wrong shape, a directory, a missing
+  file, repeated ids or names) exits 1 with `error: …`, wherever the JSON came from; a
+  `--…-file` that is not JSON exits 1, as `--target-file` already does. Writer-model
+  refusals reached from the CLI are turned into `ManifestError` (`cli._built`), so they print
+  one line rather than a traceback.
+- **Stage is not enforced by the writer:** the CLI offers `--plan` and `--items` on `prereg`
+  and the rest on `postreg`, and `content` checks a plan or evidence wherever it is. A
+  postreg does not inherit the prereg's `plan` or `items`.
+- **Duplicates are per list:** a file may be a subject and evidence at once.
+- **content's empty reason changes** to `requested but no content could be checked (need
+  --artifacts and a manifest with a subject, plan or evidence)`, since a plan or evidence
+  alone is examined. Its malformed reasons name the list: `malformed plan entry`,
+  `malformed evidence`, `malformed evidence entry`.
+- **`items`, `items[].id`, `item_id` and `status` are listed, at this commit, as read by no
+  test**; #37 moves them under `complete`'s *Examines*.
+- **`Scenario.set` deep-copies its value** (`tests/verify/conftest.py`): two new tests
+  shared `manifest_data.EVIDENCE` and a later path edit changed it for the next test.
+
+**Evidence:**
+- Red first: the tests were written first, but the first run was taken after the code; to
+  show red, `src/` was stashed (back to `18e63bf`'s code) and the new suite run against it:
+  **91 failed, 672 passed**. The failures: the CLI options did not exist (usage errors and
+  `unrecognized arguments`), the writer refused `plan`/`items`/`item_id`/`status`/`evidence`
+  as extra fields, the builder guard's two claim bodies, and every content test, which now
+  reads each entry's `field` (`KeyError`) or the new empty reason. With the code, 6 failed:
+  the CLI's `plan`/`evidence` prefix in the report (not yet printed), the never-raises
+  expectation without `field`, and the shared-fixture mutation above. All fixed.
+- `scripts/check.sh`: clean, **763 passed** (695 after #33).
+- Tests that pin each requirement:
+  - content (`tests/verify/test_verify_content.py`):
+    `test_content__pass__1_plan_and_evidence_are_checked_like_subject_entries` (fields
+    `evidence`, `plan`, `subject`, all `ok`), `__pass__1_a_plan_or_evidence_alone_is_examined`,
+    `__fail__1_plan_is_a_well_formed_entry` (string, list, no `hash_alg`, non-hex digest),
+    `__fail__1_evidence_is_a_non_empty_array_of_entries` (4),
+    `__fail__3_plan_and_evidence_names_are_normalized`,
+    `__fail__4_evidence_names_are_unique`,
+    `__pass__4_a_name_in_subject_and_evidence_is_not_a_duplicate`,
+    `__fail__7_plan_and_evidence_name_a_file`, `__fail__9_plan_and_evidence_digests`.
+  - Never raises: `SIGNED_JUNK` gains 13 cases: `plan` not an object, a list, junk fields;
+    `items` not a list, junk entries, an object; `item_id` an object, a list; `status` a
+    number, a list; `evidence` not a list, junk entry fields, an object. Each is set on the
+    prereg and a postreg and run with `ceiling,chain,content,floor,keyconsist`.
+  - Builder guard: `CLAIM_PREREG` and `CLAIM_POSTREG` (`tests/manifest_data.py`) are built
+    by the writer byte for byte, and verify alike (all `PASS`).
+  - Writer: `tests/test_manifest.py::test_claim_record_fields_are_written_as_given`,
+    `test_writer_refuses_a_claim_record_content_or_complete_would_fail` (11).
+  - CLI: `test_prereg_writes_plan_and_items`, `test_plan_items_and_evidence_from_files`,
+    `test_postreg_writes_item_id_status_and_evidence` (and verify `content=PASS`, then
+    `✗ plan plan.md: digest mismatch` and `✗ evidence results/s1.json: digest mismatch`
+    after both files change), `test_claim_record_argument_errors_are_usage_errors` (7),
+    `test_claim_record_value_errors_exit_EXIT_ERROR` (12).
+- CLI demonstrations (scratch `art/` with `plan.md` and `results/r1.json`, signing inside it):
+  - `prereg --due 2099-01-01T00:00:00Z --plan '{"name":"plan.md","media_type":"text/markdown",
+    "label":"the plan"}' --items '[{"id":"R1","kind":"run"},{"id":"R2","kind":"ablation"}]'`
+    → body `"items":[{"id":"R1","kind":"run"},{"id":"R2","kind":"ablation"}]`,
+    `"plan":{"digest":{"sha-256":"98acf32e…"},"hash_alg":"sha-256","label":"the plan",
+    "media_type":"text/markdown","name":"plan.md"}`.
+  - `postreg --fulfills pre.json --item-id R1 --status reported --evidence
+    '[{"name":"results/r1.json","media_type":"application/json","uri":"https://lab.example/r1"}]'`
+    → `"evidence":[{"digest":{"sha-256":"6a50a1d7…"},"hash_alg":"sha-256",
+    "media_type":"application/json","name":"results/r1.json","uri":"https://lab.example/r1"}]`,
+    `"item_id":"R1"`, `"status":"reported"`.
+  - `verify pre.json post.json --tests format,selfsig,content --artifacts art` → `content=PASS`;
+    with both files changed → `✗ plan plan.md: digest mismatch`, `✗ evidence
+    results/r1.json: digest mismatch`, `content=FAIL format=PASS selfsig=PASS`.
+  - `--plan '{nope'` → `asexec prereg: error: argument --plan: not valid JSON: Expecting
+    property name enclosed in double quotes: line 1 column 2 (char 1)`, exit 64. A plan with a
+    `digest` → `error: --plan: asexec hashes the file and fills in hash_alg and digest
+    (choose the algorithm with --hash-alg)`, exit 1. Repeated item ids → `error: body: Value
+    error, items list the id 'R1' twice`, exit 1. `--status done` → `argument --status:
+    invalid choice: 'done' (choose from 'reported', 'excluded', 'blocked')`, exit 64.
+- `examples/adequacy-test/run.py`: exit 0, unchanged output (not ported to the claim record,
+  as ROADMAP puts that at the release gate).
+
+**Observations (out of scope):**
+- `content`'s pass and fail counts say `subject(s)` (`2/2 subject(s) ok`), though the units
+  are manifests and now cover plan and evidence too. Kept, since the doc's examples and the
+  other tests use it.
+- The usage error for bad inline JSON prints no `usage:` line, unlike argparse's own; the
+  exit status is the same.
+
+#### #46: `timely` and the `no-due` state
+
+**Landed:** `c101617`. `timely` is in `TEST_CATALOG`. Per commitment, `verify_paths` collects
+the ceiling of every counted copy of each counted postreg and, when the prereg's `due`
+parses, gives each counted postreg a `timeliness` entry (`ref`, `status`: `on-time`, `late`,
+`no-ceiling` or `invalid-ceiling`, and `no_later_than`) from **`verifier._on_time`, the one
+ceiling-to-`due` comparison** (#37 reuses it). Each commitment gets a `timely` record
+(`examined`, `ok`, `reason`), `due_present` and `due_invalid`. A verified ceiling record gains
+`no_later_than` (`_no_later_than`: `midpoint + radius` from the verified response). State
+`no-due` replaces `open` for a commitment with no counted postreg and no `due`. CLI: `[NO-DUE]`;
+with `timely` requested, one `✗ postreg <ref> …` line under its commitment per counted postreg
+not shown on time; the unparseable-`due` line in every state; the ceiling trust line adds `so
+no later than <T>`. Docs: `docs/VERIFICATION.md` (a `timely` section with example, the summary
+row, *Output*, *Commitment states*, the version-skew example's `[NO-DUE]`, *Not in this
+version*), `README.md` (the state list and the timeliness caveat, a new *On time* bullet),
+`ROADMAP.md` (done-ahead marks), the verifier docstring.
+
+**`timely`'s items** (for each commitment with a `body.due` and a counted postreg):
+1. `body.due` parses (naive read as UTC), else the commitment fails with `due is not a
+   parseable ISO-8601 timestamp` (D5a);
+2. each counted postreg has a `ceiling` (D5a: no ceiling fails);
+3. that ceiling meets the `ceiling` conditions #1-#5;
+4. its time T is at or before `due`.
+
+**The two settled points (as the brief asked):**
+- **Which time a ceiling gives:** T = `SREP.MIDP + SREP.RADI`, the later end of the interval
+  the witness signed, read from the verified response by `roughtime.verify_ceiling`, never
+  from the file's unsigned `ceiling.midpoint`/`ceiling.radius`. This is the conservative
+  "existed no later than" time, and the ceiling trust block now prints it beside `midpoint ±
+  radius`. Pinned by `test_timely__fail__4_ceiling_at_or_before_due[2023-11-14T22:13:20Z]`
+  (a due at the midpoint, one radius before T, fails), `test_timely__pass__4_ceiling_exactly_at_due`
+  (T itself passes) and `test_timely__fail__4_the_unsigned_midpoint_and_radius_are_not_read`.
+- **A ceiling that fails the `ceiling` conditions is not on time:** it is treated like a
+  missing one (`invalid-ceiling`), whatever time it claims. Pinned by
+  `test_timely__fail__3_ceiling_meets_the_ceiling_conditions` (an unpinned witness, a genuine
+  ceiling of another body, a genuine response for another nonce, a non-roughtime type, a
+  `ceiling.pubkey` that is not the pinned key, a junk string).
+
+**Judgement calls:**
+- **Commitments only** (checkpoint 5's note): a rejected pre-registration's `due` is never
+  read (`test_timely__fail__empty_a_rejected_preregistration_is_not_examined`). D5a's "no
+  prereg has a due" is read as "no commitment with a due has a counted postreg", which is
+  also the empty reason: `requested but no commitment with a due has a counted postreg`. A
+  commitment with a `due` and no counted postreg is not examined either (the issue's
+  *Examines*: "at least one counted postreg"); its state says it was not reported.
+- **Copies:** a postreg is its `ref`. With several counted copies, it is on time when any
+  counted copy carries a ceiling that meets the conditions and is on time, and its time is the
+  earliest such T. A ceiling binds the body, not the copy, so any genuine witness of the body
+  shows it existed. The counted entries are unchanged (still deduplicated), so `chain` and
+  `keyconsist` see exactly what they saw before.
+- **Report marks are shown with `timely` requested only**, so a run that never asks about
+  timeliness (and has no ceilings) gets no `✗` lines for it; the report dict has the
+  `timeliness` entries either way. The unparseable-`due` line is now shown in every state (it
+  was shown for `invalid-due` only), since `timely` fails on it.
+- A late or unwitnessed postreg is reported as "not shown on time", not as "created after
+  due": the ceiling is the only evidence of time, and one fetched late shows only that.
+
+**Evidence:**
+- Red first: with only the tests changed, **63 failed, 737 passed**: `timely` was no test
+  (`KeyError: 'timely'` through `verify_paths`; every `test_verify_timely.py` test, the
+  never-raises cases that now request `timely`), `[OPEN]` where `[NO-DUE]` was expected (the
+  states tests, the CLI), the CLI's missing marks and trust-block time, and doc coverage
+  (`timely` #1-#4). With the code, 5 failed: the version-skew test's `[OPEN]` (now `[NO-DUE]`,
+  intended), doc coverage until the section was written, and one test whose tampering (the
+  response's last byte to `00`) changed nothing; it now uses a genuine response for another
+  nonce.
+- `scripts/check.sh`: clean, **800 passed** (763 after #36).
+- Tests (`tests/verify/test_verify_timely.py`, new): `test_timely__pass__all` (3 on time,
+  `no_later_than` = 2023-11-14T22:13:21Z), `__pass__1_due_without_offset_is_read_as_utc`,
+  `__fail__1_due_is_parseable` (5: text, number, list, empty, zero; still `fulfilled`),
+  `__fail__2_counted_postreg_has_a_ceiling`, `__fail__3_ceiling_meets_the_ceiling_conditions`
+  (6), `__fail__4_ceiling_at_or_before_due` (2: well before, and at the midpoint; still
+  `fulfilled` with 3 counted, each `late`), `__pass__4_ceiling_exactly_at_due`,
+  `__fail__4_the_unsigned_midpoint_and_radius_are_not_read`,
+  `__pass__2_any_counted_copy_with_a_verified_ceiling_shows_it`,
+  `__pass__all_a_prereg_without_due_is_not_examined` (a mixed run, applicable 1),
+  `__fail__empty_no_prereg_has_a_due` (missing, null),
+  `__fail__empty_due_but_no_counted_postreg`,
+  `__fail__empty_a_rejected_preregistration_is_not_examined`.
+  States: `test_state__open__no_counted_postreg_and_due_in_the_future`,
+  `test_state__no_due__no_counted_postreg_and_no_due` (absent, null),
+  `test_state__fulfilled__with_no_due`, `test_state__fulfilled__a_late_postreg_still_fulfills`.
+  Never raises: `test_never_raises__junk_ceiling_on_a_counted_postreg` (5, with `ceiling` and
+  `timely`), and `test_never_raises__validly_signed_junk_in_a_body_field` (now 39 cases, among
+  them `due-not-string`) runs with `timely`. CLI:
+  `test_verify_marks_each_counted_postreg_not_shown_on_time` (on time, late, no ceiling; no
+  marks without `timely`), `test_verify_ceiling_trust_names_the_time_timely_compares`,
+  `test_verify_renders_no_due`, `test_verify_flags_an_unparseable_due_on_a_fulfilled_commitment`.
+- CLI demonstrations, in a scratch dir, through `cp7/witness_cli.py` (session scratchpad): it
+  runs `asexec` in-process with a pinned synthetic Roughtime witness (MIDP
+  2023-11-14T22:13:20Z, RADI 1 s) standing in for the network for `--ceiling`; nothing else
+  changes. `prereg --target "model m via provider p" --due …`, `postreg --fulfills … [--ceiling]`:
+  - **On time** (`--due 2099-01-01T00:00:00Z`, postreg with `--ceiling`): `[FULFILLED] prereg
+    sha-256:b74ae2db…`, `postregs : 1`, no mark, `✓ timely=PASS (1/1 commitment(s) ok)`, trust
+    line `ceiling witnessed by synthetic at 1700000000.0 (±1.0s), so no later than
+    2023-11-14T22:13:21Z - you are trusting synthetic …`, `asexec-verify/1 format=PASS
+    selfsig=PASS timely=PASS`, exit 0.
+  - **Late but fulfilled** (`--due 2000-01-01T00:00:00Z`): `[FULFILLED] prereg
+    sha-256:daa96b3a…`, `postregs : 1`, `✗ postreg sha-256:5006f81b… is late: its ceiling (no
+    later than 2023-11-14T22:13:21Z) is after due`, `✗ timely=FAIL (1/1 commitment(s)
+    failed)`, exit 2.
+  - **No ceiling**: `[FULFILLED]`, `✗ postreg sha-256:6d17348b… is not shown on time: it has no
+    ceiling`, `timely=FAIL`.
+  - **Forged ceilings:** the late postreg with its unsigned `ceiling.midpoint` edited to
+    2020-01-01 and `radius` to 0 still reads `is late: … (no later than 2023-11-14T22:13:21Z)`;
+    with `witness_id` changed to `made-up`: `✗ ceiling witness (no pinned long-term key for
+    witness 'made-up'; …)` and `✗ postreg sha-256:5006f81b… is not shown on time: its ceiling
+    does not verify`, `ceiling=FAIL … timely=FAIL`; the on-time postreg's genuine ceiling
+    copied onto another postreg: `✗ ceiling witness (ceiling nonce does not bind to this
+    manifest (nonce != ref))`, `its ceiling does not verify`, `ceiling=FAIL … timely=FAIL`.
+  - **No-due**: a prereg with no `--due`: `[NO-DUE] prereg sha-256:b17107d0…`, `due : (none
+    declared)`, `postregs : 0`, `✗ timely=FAIL (requested but no commitment with a due has a
+    counted postreg)`.
+  - The `docs/VERIFICATION.md` `timely` examples use these refs (b74ae2db…, daa96b3a…,
+    5006f81b…), which depend only on the bodies, with the witness and times elided.
+- `examples/adequacy-test/run.py`: exit 0, unchanged (it does not request `timely`; its
+  prereg has a `due` but its postregs have no ceiling, so `timely` would fail every run).
+- Nothing left behind: `git grep -n "Timeliness (a postreg created before"` and `git grep -n
+  "arrives in 0.4.0"` find nothing; `timely` is gone from *Not in this version*.
+
+**Observations (out of scope):**
+- The manifests block's ceiling line still prints `created no later than 1700000000.0
+  ±1.0s` (epoch seconds), while the new marks and the trust block print ISO times.
+- `examples/adequacy-test` signs a `due` but no ceiling, so once ported it will need
+  `--ceiling` on each postreg for `timely` (and `complete`'s deadline part) to pass.
+
+#### #37: `complete`
+
+**Landed:** `d10957d`. `complete` is in `TEST_CATALOG`. `verify_paths` keeps, per commitment,
+the prereg's `body.items` and each counted postreg's `body.item_id` and `body.status`, and
+`verifier._complete` gives each commitment a `complete` record (`examined`, `ok`, `reason`,
+`items`: per item `id`, `ok`, `statuses`, `reason`; `unlisted`: counted postregs whose
+`item_id` names no listed item). The deadline part calls `_on_time`, the function `timely`
+uses. `models.ItemsInput` (a strict array) is new beside `ItemInput`. The CLI prints, under a
+commitment whose prereg lists items, `items : N` and one `✓ <id>: <statuses>` or `✗ <id>: …`
+line per item, a `✗` line for repeated or malformed items, and `✗ postreg <ref> names item
+'<id>', which the prereg does not list`. Docs: `docs/VERIFICATION.md` (a `complete` section
+with an example, the summary row, *Output*, *Commitment states*, `chain`'s *Does not
+establish*, `timely`'s link, *TrustedDeclared*'s last line, *Not in this version*), `README.md`
+(an *Every item accounted for* bullet, the `chain` caveat), `ROADMAP.md` (done-ahead mark), the
+verifier docstring.
+
+**`complete`'s items** (for each commitment whose prereg's `body.items` is present and not
+`[]`):
+1. `body.items` is an array of objects with a string `id` (`items is not an array of objects
+   with a string id`);
+2. no two ids repeat (`item ids repeat: '<id>'`), even if every item is accounted for;
+3. each item has a counted postreg with `body.item_id` equal to its id and `body.status` one
+   of `reported`, `excluded`, `blocked` (item reasons `no counted postreg names it`, `no
+   counted postreg for it has a status of reported, excluded or blocked`);
+4. a present `body.due` parses (`due is not a parseable ISO-8601 timestamp`);
+5. with a `due`, one postreg meeting #3 is on time by `_on_time` (item reasons `not shown on
+   time: its postreg is late` / `has no ceiling` / `'s ceiling does not verify`).
+
+**Settled and pinned (judgement calls):**
+- **Several counted postregs for one item: any qualifying one satisfies it**
+  (`test_complete__pass__3_any_qualifying_postreg_accounts_for_an_item`: S2 with an unknown
+  status and a `reported` one passes; `__pass__5_any_qualifying_postreg_on_time_accounts_for_an_item`:
+  one without a ceiling and one on time passes). `complete` asks whether each item was
+  accounted for; a second, worse postreg for an item does not undo that, and a late one still
+  fails `timely`. The item line lists the statuses of the postregs that satisfy it.
+- **A postreg whose `item_id` is not in `items` accounts for nothing and fails nothing**; it is
+  listed (`unlisted`, and the `✗ … names item 'Z9', which the prereg does not list` line)
+  (`test_complete__pass__3_a_postreg_for_an_unlisted_item_is_shown_not_failed`,
+  `tests/test_cli.py::test_verify_shows_a_postreg_for_an_unlisted_item`). `complete` judges
+  the promised list; an extra postreg is visible, but no promise is broken by it.
+- **A postreg with an `item_id` but a missing or unknown status** does not account for the
+  item, which fails #3 unless another postreg does
+  (`test_complete__fail__3_each_item_has_a_counted_postreg_with_its_id_and_a_status`:
+  missing, `done`, `Reported` (case matters), a list; and an `item_id` of another case or a
+  list names no item). A counted postreg with no `item_id` is not read (the `summary`
+  postreg in the unlisted test).
+- **`items: []` is not examined** ("a prereg without items"), like an absent or `null` one;
+  a present non-array is examined and fails #1.
+- **Commitments only** (checkpoint 5's note): a rejected pre-registration's items are never
+  read (`test_complete__fail__empty_a_rejected_preregistration_is_not_examined`); a postreg
+  that does not count (signed by another key) accounts for no item
+  (`test_complete__fail__3_a_postreg_that_does_not_count_accounts_for_nothing`).
+- **The item lines are always shown** (the issue: "The commitments block shows each item's
+  status"), with the deadline part when the prereg has a parseable `due`. The per-postreg
+  timeliness marks stay with `timely` requested only, since an item line already says when
+  its postreg is late.
+- An unparseable `due` fails the commitment (#4) but leaves each item's line judged on #3
+  alone; the `due` line under the commitment says why.
+
+**Evidence:**
+- Red first: with only the tests changed, **68 failed, 774 passed**: every
+  `tests/verify/test_verify_complete.py` test (`complete` was no test: `KeyError`), the
+  never-raises cases that now request `complete` (27), the CLI item lines (4) and doc coverage
+  (`complete` #1-#5). With the code, 3 failed: doc coverage until the section was written and
+  the `--help` catalog list, now pinned in full (it had been passing on a prefix since #46
+  appended `timely`).
+- `scripts/check.sh`: clean, **842 passed** (800 after #46).
+- Tests (`tests/verify/test_verify_complete.py`, new; the scenario lists S1-S3 with due 2099
+  and one witnessed `reported` postreg each): `test_complete__pass__all`,
+  `__pass__3_each_status_accounts_for_an_item` (excluded, blocked),
+  `__fail__1_items_is_an_array_of_objects_with_string_ids` (6), `__pass__1_kind_is_not_read`,
+  `__fail__2_item_ids_are_unique`, **`__fail__3_a_dropped_item`** (`chain=PASS complete=FAIL`,
+  still `fulfilled`), `__fail__3_each_item_has_a_counted_postreg_with_its_id_and_a_status` (6),
+  `__fail__3_a_postreg_that_does_not_count_accounts_for_nothing`,
+  `__pass__3_any_qualifying_postreg_accounts_for_an_item`,
+  `__pass__3_a_postreg_for_an_unlisted_item_is_shown_not_failed`, `__fail__4_due_is_parseable`
+  (3), **`__fail__5_each_item_is_accounted_for_on_time`** (late, no ceiling, invalid ceiling;
+  still `fulfilled`), `__pass__5_any_qualifying_postreg_on_time_accounts_for_an_item`,
+  **`__pass__4_items_under_a_prereg_without_due`** (missing, null; no ceilings needed),
+  `__fail__3_a_dropped_item_under_a_prereg_without_due`,
+  `__pass__all_a_prereg_without_items_is_not_examined`,
+  `__fail__empty_no_commitment_lists_items` (missing, null, `[]`),
+  `__fail__empty_a_rejected_preregistration_is_not_examined`. Never raises: `SIGNED_JUNK`
+  gains `items-repeat-and-junk` and `items-nul-id`, and the whole list (41 cases) now runs
+  with `complete` and `timely`. CLI: `test_verify_shows_each_items_status` (complete,
+  dropped item, late items), `test_verify_shows_a_postreg_for_an_unlisted_item`,
+  `test_verify_help_names_both_required_tests` (the full catalog).
+- CLI demonstrations (scratch dir, `cp7/witness_cli.py` for `--ceiling`; `prereg --target
+  "model m via provider p" --due … --items '[{"id": "R1", "kind": "run"}, {"id": "R2",
+  "kind": "run"}]'`; `postreg --fulfills … --item-id … --status … [--prev …] --ceiling`):
+  - **Dropped item** (only R1's postreg): `[FULFILLED] prereg sha-256:4c78c886…`, `postregs :
+    1`, `items : 2`, `✓ R1: reported`, `✗ R2: no counted postreg names it`, `✓ chain=PASS`,
+    `✗ complete=FAIL (1/1 commitment(s) failed)`, `asexec-verify/1 chain=PASS complete=FAIL
+    format=PASS selfsig=PASS`.
+  - **Complete claim** (R1 `reported`, R2 `excluded`, chained): `✓ R1: reported`, `✓ R2:
+    excluded`, `asexec-verify/1 chain=PASS complete=PASS format=PASS selfsig=PASS
+    timely=PASS`.
+  - **Late items** (`--due 2000-01-01T00:00:00Z`): `[FULFILLED]`, the two `is late` marks
+    (with `timely` requested), `✗ R1: reported, but not shown on time: its postreg is late`,
+    the same for R2, `asexec-verify/1 complete=FAIL format=PASS selfsig=PASS timely=FAIL`.
+  - **No due, no ceilings**, R1 `blocked` plus a postreg for `Z9`: `due : (none declared)`,
+    `✓ R1: blocked`, `✗ postreg sha-256:cfa32c49… names item 'Z9', which the prereg does not
+    list`, `asexec-verify/1 complete=PASS format=PASS selfsig=PASS`.
+- **`examples/adequacy-test`'s "dropped S2" under `complete`.** `run.py` itself is unchanged
+  and exits 0 (it is ported to the claim record at the release gate, ROADMAP). A scratch port
+  (`cp7/run_ported.py`: `--items` on the prereg, `--item-id`/`--status` on each postreg,
+  `complete` added to its tests) shows:
+  - As the example is today, with `--due 2099-01-01T00:00:00Z` and no ceilings, `complete`
+    fails **every** run, the baseline included: each item reads `✗ S1: reported, but not shown
+    on time: its postreg has no ceiling`. With a `due`, the deadline part needs a ceiling on
+    every postreg, so the ported example must add `--ceiling` (network) or drop `--due`.
+  - Without `--due` (`cp7/run_ported_nodue.py`): the baseline is `chain=PASS complete=PASS
+    content=PASS …`, and **dropping S2 reads `✓ S1: reported`, `✗ S2: no counted postreg names
+    it`, `✓ A1: reported`, `chain=PASS complete=FAIL`**, still `[FULFILLED]`: caught, where
+    today's run reports "missed: needs `items` and `complete`". The swapped plants are still
+    caught by `content` only, and the late plants still missed (needs `order`).
+- Nothing left behind: `git grep` for `timely`, `complete` and "planned" finds no claim that
+  either is unbuilt outside this file; *Not in this version* now names `signer` and `order`.
+  `ROADMAP.md:459,462` (`due` and `ceiling` TrustedTested by `timely` and `complete`) are now
+  true.
+
+**Observations (out of scope):**
+- **For the release-gate port of `examples/adequacy-test`:** with a `due`, every postreg needs
+  a ceiling for `complete` and `timely` to pass (see above). Its README's *Results* table and
+  its "missed: needs `items` and `complete`" label will change.
+- `--item-id` is not checked against the prereg's items at signing (#36's call), so a typo is
+  only seen at verify, as an unlisted item and a missing one.
+- An item id is compared exactly, as a string (`S2` ≠ `s2`); ids that differ only by Unicode
+  normalization are different ids.
+
+#### Checkpoint 7 summary
+
+**Landed** (branch `feature/0321-checkpoint7`, each issue's change with its notes commit):
+- #33, `18e63bf` (notes `8c474e9`): subjects are explicit file lists, named by normalized
+  relative path, each entry with its own `hash_alg`; no directory hash, no default algorithm.
+- #36, `5ac205f` (notes `fcd60da`): the claim record (`plan`, `items`, `item_id`, `status`,
+  `evidence`), its CLI options, and `content` over `plan` and `evidence`.
+- #46, `c101617` (notes `990ba8f`): `timely` and the `no-due` state; `verifier._on_time` is the
+  one ceiling-to-`due` comparison.
+- #37, `d10957d` (notes `9daf183`): `complete`, reusing `_on_time`.
+
+**pytest counts:** 640 (baseline `18c0955`) → 695 (#33) → 763 (#36) → 800 (#46) → 842 (#37),
+`scripts/check.sh` clean after each. `examples/adequacy-test/run.py` exits 0 after each.
+
+**Release-note entries** (for #40, in the `tests/test_constants.py` header format):
+
+```
+Identifier: FORMATS[MANIFEST_PAYLOAD_TYPE]["subject_default_hash_alg"], sha-256 -> removed
+Impact: BREAKS_USERS
+Affected: a manifest whose subject entry has no hash_alg of its own (every manifest written before this change: hash_alg was body-level) now fails content as "malformed subject entry"; a tool that reads the field (KeyError)
+Action: re-sign; each subject, plan and evidence entry carries its own hash_alg
+
+Identifier: the subject entry (no constant): {name: <basename, "/" for a directory>, digest} + body-level hash_alg -> {name: <normalized relative path of one file>, hash_alg, digest}
+Impact: BREAKS_USERS
+Affected: every manifest with a subject written before this change (see above); directory subjects fail content ("artifact is not a file"); the Python API (hashing.hash_dir and digest_path removed; build_prereg/build_postreg take no hash_alg)
+Action: re-sign, listing files (or an archive) instead of directories, named relative to where you sign and verified with --artifacts at that directory
+
+Identifier: the commitment state "open" (no constant): no counted postreg and no due -> the new state "no-due"; "open" now means a due in the future
+Impact: NEW_OUTPUT
+Affected: the report only (states are never part of the code); scripts that read "[OPEN]" for a commitment with no due
+Action: none
+```
+
+**Judgement calls needing the human's eye** (each detailed in its issue's notes above):
+- #33: absolute paths and any `..` are refused at signing (not made relative); `hash_alg` is
+  required per entry and the FORMATS fallback is removed; content #7 requires a regular
+  file (a FIFO used to hang verify).
+- #36: signing validates `status` and unique item ids, not `--item-id` against the prereg;
+  bad inline JSON is a usage error (64), a parsed value that cannot be signed exits 1.
+- #46: T is `MIDP + RADI`; a ceiling failing the `ceiling` conditions counts as none; marks are
+  shown with `timely` requested only; any counted copy's valid ceiling counts.
+- #37: any qualifying postreg satisfies an item; unlisted `item_id`s are shown, not failed;
+  `items: []` is not examined.
+
+**CI round 1** (PR #56, run 44782181471): lint passed, and pytest passed on 3.12, 3.13 and
+3.14 (842 each), but each `test` job's CLI smoke failed: `.github/workflows/ci.yml` ran
+`asexec prereg --subject src`, a directory, and #33 refuses it (`error: 'src' is a directory;
+list its files, or pack it (a tar, say) and list that`, exit 1). #33's leftover grep had
+covered `src`, `tests`, `docs`, `examples` and the READMEs but not `.github`. → The smoke now
+signs two files (`--subject src/asexec/__init__.py src/asexec/verifier.py`) and verifies them
+with `--tests format,selfsig,content --artifacts .`, and `docs/DEVELOPMENT.md` says so.
+Rehearsed locally (`content=PASS format=PASS selfsig=PASS`); `actionlint` clean.
+`publish.yml`'s release smoke already signs a file (`ci.key.pub`). `git grep -n -- '--subject'
+.github scripts` finds no other directory subject.
+CI on PR #56 at `ea3afa2` (run 44793807989): lint, python-matrix, test (3.12, 3.13, 3.14,
+each with the new CLI smoke) and build pass. `scripts/check.sh` locally: clean, 842 passed.
+
+**Review round 1** (findings on PR #56; the reviewer found the forged-ceiling attacks,
+D5a/D5b, about 30 junk `complete` cases, the #33 refusals and a differential of base-CLI
+manifests all correct):
+1. **OPEN FOR THE HUMAN GATE (decision, no behaviour change).** From 0.4.0, changing any of
+   these changes a test's documented meaning, so it needs a code-grammar bump
+   (`asexec-verify/2`):
+   - (a) Under `complete`, a counted postreg whose `item_id` names no listed item fails
+     nothing: items S1, S2 and postregs for S1, S2 and S3 give `complete=PASS`, with S3 shown
+     as unlisted.
+   - (b) Contradictory statuses for one item pass: S1 with one postreg `reported` and another
+     `excluded` gives `complete=PASS`, shown as `✓ S1: reported, excluded`. It follows from
+     "any qualifying postreg satisfies an item".
+   - (c) D5b's "the report marks the postreg as late" holds only when `timely` is requested
+     (the report dict has the `timeliness` entries in every run).
+
+   All three follow the spec text as written and are kept. `ROADMAP.md`'s sentence that
+   presented (a) and the "any qualifying postreg" rule as settled is removed; it now reads
+   "(`complete` done ahead of 0.4.0.)". Commit `6962caa`.
+2. should-fix (#46): `T ≤ due` compared floats (`MIDP / 1e6 + RADI / 1e6` against
+   `datetime.timestamp()`), so a `due` equal to T to the microsecond read as late in about
+   one case in eight. Example: MIDP 2553427865607787, RADI 4273949, due
+   `2050-11-30T13:31:09.881736Z`. → `roughtime.verify_response` and `verify_ceiling` also return
+   the signed integers (`midpoint_us`, `radius_us`); `_no_later_than` is `midpoint_us +
+   radius_us`; `_parse_due` also returns the due as integer microseconds since the epoch
+   (`(dt - epoch) // 1 µs`); `_on_time` compares those. `no_later_than` in the report is now
+   microseconds. `docs/VERIFICATION.md` `timely` #4 says the comparison is exact, in whole
+   microseconds. Tests first: `test_timely__pass__4_compared_in_whole_microseconds` (the
+   reviewer's exact case; it also asserts the float sum exceeds the due's float) failed on
+   the old code (`timely=FAIL`), and `test_timely__fail__4_one_microsecond_after_due_is_late`
+   (MIDP + 1 µs) passes either way. Commit `ab1bd9f`.
+3. should-fix (#36): inline values that are wrong on their own exited 1, against README's
+   *Exit status* (64: the arguments themselves are wrong), while `--status done` exited 64. →
+   Each of `--plan`, `--items`, `--evidence` is parsed and held to its shape inside
+   `_get_arg_or_file`'s inline parser (`cli._shaped_arg_or_file`): an inline value that fails
+   it exits 64 with `asexec <cmd>: error: argument --<flag>: <reason>`; the same value from a
+   `--…-file` exits 1 (`error: <reason>`); what the named files are (a directory, missing, two
+   paths for one name, a `..` path) exits 1, as for `--subject`. The shape now also requires
+   string `media_type`, `label`, `uri` and `kind` (or none), and refuses unknown item fields
+   in the CLI rather than through the writer model. Tests first:
+   `test_claim_record_argument_errors_are_usage_errors` (now 28 cases, among them the
+   reviewer's five: `--items '{"id":"R1"}'`, `'[{"id":5}]'`, repeated ids, `'[{"id":"R1",
+   "foo":1}]'`, `--plan '[]'`), `test_claim_record_file_content_errors_exit_EXIT_ERROR` (19:
+   the same shapes from a file, exit 1), `test_claim_record_value_errors_exit_EXIT_ERROR` (4).
+   Red: 27 failed. README's *Exit status* row for 64 names these. Commit `0d2df7f`.
+4. should-fix (#46): "a commitment with no due stays open" left in `README.md:264`, `:312`
+   (`// deadline; none = stays open` → `none = no-due`), `:374` (the lose-the-key bullet now
+   names `no-due`), `src/asexec/manifest.py:45`, `src/asexec/models.py:29` and the
+   `tests/test_cli.py:388` docstring; `docs/VERIFICATION.md:906` now lists `open`,
+   `elapsed-no-postreg` or `invalid-due`. `git grep` for "stays open" / "stays `open`" now
+   finds nothing outside this file. Commit `ab1bd9f`.
+5. nit (#46): a witness-signed time past year 9999 (MIDP 2^62) raised `ValueError: year must
+   be in 1..9999` in `_utc_ceil`. → `_utc_ceil` falls back to `<seconds> (epoch seconds)`.
+   Tests first: `test_never_raises__witness_time_past_year_9999` (through `verify_paths`, with
+   `ceiling`, `complete`, `timely`) and `tests/test_cli.py::
+   test_verify_shows_a_witness_time_past_year_9999_as_epoch_seconds` (the late mark and the
+   trust line show `4611686018429 (epoch seconds)`); both raised before. Commit `ab1bd9f`.
+6. nit: quadratic `.count()` in `_complete`, `_repeated_names`, the `ManifestBody` validator
+   and `manifest._check_entries`, and `_complete` matched each item against every counted
+   postreg. → `collections.Counter`, and `_complete` indexes counted postregs by `item_id` and
+   the ids by a set. Timed with 20,000 items, 20,000 subject names and 20 postregs
+   (`cp7/perf.py`): `build_prereg` 6.9 s → 0.11 s, `sign` 3.44 s → 0.04 s, `verify_paths`
+   7.97 s → 0.98 s, the same code. Commit `70b606e`, which was committed with one failing test
+   (my mistake: the commit was chained after `check.sh | tail`, which hid its status). A
+   validly signed entry whose `name` is a list is unhashable for `Counter`, and
+   `test_never_raises__validly_signed_junk_in_a_body_field[entry-name-list]` caught it. Fixed
+   in `720efc3` (count string names only), pushed straight after; `check.sh` clean since.
+7. nit (#46): the `timely` doc example named `int08h-Roughtime` and `±1.0s`, but was made with a
+   synthetic witness. → The trust line now reads `ceiling witnessed by … at … (±…s), so no
+   later than … - you are trusting …`. Commit `ab1bd9f`.
+8. nit (#33): `hashing.py`'s docstring said signing refuses what `content` would fail, but a
+   symlink resolving outside `--artifacts` is signed. → The docstring says signing refuses what
+   `content` fails in any manifest, and that such a symlink is signed and fails content #5
+   there. No refusal added. Commit `70b606e`.
+9. nit (#36): `--plan '{"name":"plan.md","name":"k.key"}'` hashed `k.key`. → Inline JSON with a
+   duplicate key is refused, exit 64 (`duplicate JSON key 'name'`; cases `plan-duplicate-key`,
+   `item-duplicate-key`). Commit `0d2df7f`. `cli._load_json` (every `--…-file`, `--target-file`
+   included) has the same gap and predates this PR: observation below.
+10. nit (#33): `build_prereg(subject=[])` wrote `"subject": []`, which content #1 fails. →
+    `ManifestBody.subject` has `min_length=1`, like `evidence`. Test first:
+    `tests/test_manifest.py::test_writer_refuses_an_empty_entry_list[subject|evidence]` (the
+    `subject` case failed). Commit `70b606e`.
+11. The README plan label "refusal study plan" is generic: kept.
+
+`scripts/check.sh`: clean, 878 passed (842 before the round).
+
+**Observations added in review round 1 (out of scope):**
+- `asexec verify <fifo>` and any `--…-file <fifo>` block forever (`open` on a FIFO); the same on
+  the base. content #7 covers FIFOs named as artifacts only.
+- Item ids are printed raw in the commitments block (`✓ <id>: …`, `names item '<id>'`), so an
+  id holding a newline can fake report lines: the same class as checkpoint 5's unauthenticated
+  keyid. The code line and exit status are unaffected.
+- `cli._load_json` accepts duplicate JSON keys in `--…-file` contents (`--target-file`,
+  `--declaration-file`, `--notes-file`, and now `--plan-file`, `--items-file`,
+  `--evidence-file`); predates this PR.
+- `test_timely__pass__1_due_without_offset_is_read_as_utc` does not pin a local timezone. Low
+  risk, since `_parse_due` is TZ-pinned by `test_due__without_offset_is_read_as_utc_and_flagged`.
+
+**Review round 2** (PR #56; the reviewer re-checked round 1's fixes and found them correct):
+1. nit (#36): `--plan-file`, `--items-file` and `--evidence-file` content still accepted
+   duplicate JSON keys (`{"name":"plan.md","name":"k.key"}` hashed `k.key`, and
+   `[{"id":"R1","id":"R2"}]` wrote `R2`). → `_shaped_arg_or_file`'s file loader now parses with
+   the same duplicate-key hook as the inline value, so such a file exits 1 (`error:
+   <path>: duplicate JSON key 'name'`), its content being no argument. Bad JSON in those files
+   still exits 1 (`<path> must contain valid JSON: …`). Test first:
+   `tests/test_cli.py::test_claim_record_file_with_a_duplicate_key_exits_EXIT_ERROR`
+   (`plan-file`, `items-file`, `evidence-file`; all three failed, exit 0). Commit `c8a03e1`.
+   **Remaining pre-existing gap:** `cli._load_json`, used by `--target-file`,
+   `--declaration-file` and `--notes-file`, still accepts a repeated key (left alone, as
+   instructed).
+2. nit (#46): `no_later_than` (on a verified ceiling record and in each `timeliness` entry)
+   was integer microseconds beside float-second `midpoint`/`radius`. → Renamed
+   `no_later_than_us`, with its readers (`verifier`'s trust line, `cli._NOT_ON_TIME`, the
+   tests). No output text changes. Test first:
+   `test_timely__pass__all_the_report_names_the_unit_of_its_times` (an `int` under
+   `no_later_than_us` in both places, and no `no_later_than` key). Commit `c5ebcc9`. The #46
+   and round 1 notes above say `no_later_than`; they are kept as written at the time.
+   - **Mistake:** the `cli.py` reader rename went into `c8a03e1`, one commit before the
+     verifier's, so `c8a03e1` alone fails two CLI tests (the late mark and the year-9999 mark
+     read `no_later_than_us` before the verifier wrote it; checked in a worktree at
+     `c8a03e1`: 2 failed, 160 passed in `tests/test_cli.py`). `c5ebcc9` completes the rename.
+     It is green, and so is every commit after it. The pushed history is not rewritten.
+
+`scripts/check.sh` (run in full, its exit status checked before each commit): clean, 882
+passed.

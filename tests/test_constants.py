@@ -97,8 +97,33 @@ FROZEN_MANIFEST = {
     },
     "pubkey": FROZEN_KEY["pubkey"],
 }
-# A subject with no hash_alg, which relies on the verifier's fallback. The digest is of b"x".
-FROZEN_NO_HASH_ALG_MANIFEST = {
+# A subject entry carrying its own hash_alg, as every entry must. The digest is of b"x".
+FROZEN_SUBJECT_MANIFEST = {
+    "dsse": {
+        "payloadType": "application/vnd.asexec.v1+json",
+        "payload": (
+            "eyJwaGFzZSI6InByZXJlZyIsInN1YmplY3QiOlt7ImRpZ2VzdCI6eyJzaGEtMjU2IjoiMmQ3MTE2NDJi"
+            "NzI2YjA0NDAxNjI3Y2E5ZmJhYzMyZjVjODUzMGZiMTkwM2NjNGRiMDIyNTg3MTc5MjFhNDg4MSJ9LCJo"
+            "YXNoX2FsZyI6InNoYS0yNTYiLCJuYW1lIjoiYS50eHQifV0sInRhcmdldCI6Im0ifQ=="
+        ),
+        "signatures": [
+            {
+                "keyid": FROZEN_KEY["keyid"],
+                "sig": "s/vhj6pty0QZTWYjEZWWqyeyZflL0HLnjwJS2nUNbQpy6KKpbn1WuTTc"
+                "NEsX+o/0CVPMfvke+1qgOqVR3ki7BQ==",
+            }
+        ],
+    },
+    "pubkey": FROZEN_KEY["pubkey"],
+}
+A_TXT_DIGEST = "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+FROZEN_SUBJECT_BODY = {
+    **FROZEN_BODY,
+    "subject": [{"name": "a.txt", "hash_alg": "sha-256", "digest": {"sha-256": A_TXT_DIGEST}}],
+}
+# Signed before subject entries carried their own hash_alg: a subject with no hash_alg at
+# all, which content read under the format's default. There is no default now.
+NO_HASH_ALG_MANIFEST = {
     "dsse": {
         "payloadType": "application/vnd.asexec.v1+json",
         "payload": (
@@ -115,17 +140,6 @@ FROZEN_NO_HASH_ALG_MANIFEST = {
         ],
     },
     "pubkey": FROZEN_KEY["pubkey"],
-}
-FROZEN_NO_HASH_ALG_BODY = {
-    **FROZEN_BODY,
-    "subject": [
-        {
-            "name": "a.txt",
-            "digest": {
-                "sha-256": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
-            },
-        }
-    ],
 }
 
 # FROZEN_BODY as 0.3.x signed it: its layout (no dsse; the body as a JSON object, signed over
@@ -210,8 +224,9 @@ def test_frozen_manifests_still_verify(tmp_path):
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir()
     (artifacts / "a.txt").write_bytes(b"x")
+    assert json.loads(_decoded(FROZEN_SUBJECT_MANIFEST)) == FROZEN_SUBJECT_BODY
     assert _result_tokens(
-        tmp_path, FROZEN_NO_HASH_ALG_MANIFEST, ["content", "format", "selfsig"], str(artifacts)
+        tmp_path, FROZEN_SUBJECT_MANIFEST, ["content", "format", "selfsig"], str(artifacts)
     ) == ["content=PASS", "format=PASS", "selfsig=PASS"]
 
 
@@ -229,7 +244,6 @@ def test_formats_has_one_entry_keyed_by_manifest_payload_type():
         "digest_ref_prefix": "sha-256:",
         "signing_key_alg": "ed25519",
         "signing_pae_version": b"DSSEv1",
-        "subject_default_hash_alg": "sha-256",
     }
 
 
@@ -302,23 +316,20 @@ def test_frozen_v1_vectors_are_skipped_only_in_a_0_4_0_beta(payload_type, skippe
 def test_current_format_sign_then_verify_roundtrip(tmp_path):
     # Runs in every build, and is what checks the current entry while the frozen vectors are
     # skipped (D6b): files signed now pass format and selfsig through verify, each ref and
-    # keyid carries the entry's prefix, and content falls back to the entry's own default.
+    # keyid carries the entry's prefix, and content reads each subject entry's own hash_alg.
     # It does not freeze signed bytes; the frozen vectors do.
     entry = _signing_format()
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir()
     (artifacts / "a.txt").write_bytes(b"x")
     priv, pub = keys.generate()
-    subject = hashing.build_subject([str(artifacts / "a.txt")])
+    subject = [
+        {"name": "a.txt", "hash_alg": "sha-256", "digest": {"sha-256": hashing.hash_bytes(b"x")}}
+    ]
     written = manifest.sign(manifest.build_prereg("m", subject=subject), priv, pub)
-    # No hash_alg, which the writer always adds, so content reads the entry's default.
-    default_alg = entry["subject_default_hash_alg"]
-    digest = {default_alg: hashing.hash_bytes(b"x", default_alg)}
-    no_hash_alg = _signed_under(
-        constants.MANIFEST_PAYLOAD_TYPE,
-        {**FROZEN_BODY, "subject": [{"name": "a.txt", "digest": digest}]},
-    )
-    manis = [written, no_hash_alg]
+    # Not from the writer: a body signed as anyone could, with the entry's own hash_alg.
+    hand_built = _signed_under(constants.MANIFEST_PAYLOAD_TYPE, FROZEN_SUBJECT_BODY)
+    manis = [written, hand_built]
     assert [m["dsse"]["payloadType"] for m in manis] == [constants.MANIFEST_PAYLOAD_TYPE] * 2
 
     report = _report(tmp_path, manis, ["content", "format", "selfsig"], str(artifacts))
@@ -361,7 +372,6 @@ OTHER_RULES = {
     "digest_ref_prefix": "other-256:",
     "signing_key_alg": "ed25519",
     "signing_pae_version": b"asexec-PAE/other",
-    "subject_default_hash_alg": "no-such-alg",
 }
 
 
@@ -393,30 +403,17 @@ def test_formats__a_file_is_read_under_its_own_entry(tmp_path, monkeypatch):
     # The selector (docs/MULTIVERSION.md, Verifier design): with a second entry, a file is
     # verified under the rules its own payloadType names, beside a v1 file under v1's.
     monkeypatch.setitem(constants.FORMATS, OTHER_FORMAT, OTHER_RULES)
-    # No hash_alg: under its own rules content looks for digest["no-such-alg"], under v1's
-    # for digest["sha-256"], which it lacks.
-    body = {**FROZEN_BODY, "subject": [{"name": "a.txt", "digest": {"no-such-alg": "00"}}]}
-    other = _signed_under(OTHER_FORMAT, body)
+    other = _signed_under(OTHER_FORMAT, FROZEN_BODY)
     assert signing_input(FROZEN_BODY_BYTES, OTHER_FORMAT) == (
         b'asexec-PAE/other 33 application/vnd.asexec.other+json 31 {"phase":"prereg","target":"m"}'
     )
     assert other["dsse"]["signatures"][0]["keyid"].startswith("other-256:")
-    artifacts = tmp_path / "artifacts"
-    artifacts.mkdir()
-    (artifacts / "a.txt").write_bytes(b"x")
-    current = _signed_under(constants.MANIFEST_PAYLOAD_TYPE, FROZEN_NO_HASH_ALG_BODY)
-    report = _report(
-        tmp_path,
-        [current, other],
-        ["content", "format", "selfsig"],
-        str(artifacts),
-    )
+    current = _signed_under(constants.MANIFEST_PAYLOAD_TYPE, FROZEN_BODY)
+    report = _report(tmp_path, [current, other], ["format", "selfsig"])
     v1, mine = report["manifests"]
     assert report["results"]["format"]["reason"] == "2/2 manifest(s) ok"
     assert report["results"]["selfsig"]["reason"] == "2/2 manifest(s) ok"  # each PAE, each keyid
     assert v1["ref"].startswith("sha-256:") and mine["ref"].startswith("other-256:")
-    assert v1["content"]["status"] == "ok"  # falls back to v1's sha-256
-    assert mine["content"]["entries"][0]["reason"] == "algorithm unavailable: 'no-such-alg'"
 
 
 def test_formats__payload_type_is_signed_so_relabelling_fails_selfsig(tmp_path, monkeypatch):
@@ -455,19 +452,26 @@ def test_digest_ref_prefix():
 
 
 def test_subject_default_hash_alg():
-    # NEW_OUTPUT: the signing default only, which picks the hash_alg a new subject is hashed
-    # with. Signing always writes hash_alg beside a subject, so changing it fails nothing
-    # published. Verify's fallback for a subject with no hash_alg is the format's own (below).
+    # NEW_OUTPUT: the signing default only, which picks the hash_alg a new subject entry is
+    # hashed with. Signing writes it into every entry, so changing it fails nothing
+    # published. Verify has no fallback: it reads each entry's own (below).
     assert constants.SUBJECT_DEFAULT_HASH_ALG == "sha-256"
     assert hashing.hash_bytes(b"") == hashlib.sha256(b"").hexdigest()
 
 
-def test_format_subject_default_hash_alg():
-    # BREAKS_USERS (FORMATS): verifying ``content`` falls back to it for a subject with no
-    # hash_alg, so replacing it fails those published manifests
-    # (FROZEN_NO_HASH_ALG_MANIFEST). Fallback: a new format entry; each format's verify
-    # fallback never changes.
-    assert _signing_format()["subject_default_hash_alg"] == "sha-256"
+@frozen_v1
+def test_subject_entry_hash_alg_has_no_fallback(tmp_path):
+    # What removing the format's subject_default_hash_alg broke: a subject entry with no
+    # hash_alg of its own, which content used to read as sha-256, is now a malformed entry.
+    # Each entry carries its own hash_alg, and no format supplies one.
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    (artifacts / "a.txt").write_bytes(b"x")
+    report = _report(
+        tmp_path, [NO_HASH_ALG_MANIFEST], ["content", "format", "selfsig"], str(artifacts)
+    )
+    assert report["code"].split()[1:] == ["content=FAIL", "format=PASS", "selfsig=PASS"]
+    assert report["manifests"][0]["content"]["entries"][0]["reason"] == "malformed subject entry"
 
 
 def test_signing_key_alg(tmp_path):

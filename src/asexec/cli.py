@@ -14,12 +14,16 @@ import os
 import re
 import sys
 import uuid
+from collections import Counter
 from collections.abc import Callable
 from datetime import datetime
 
+from pydantic import ValidationError
+
 from . import __version__, drand, hashing, identity, keys, manifest, verifier
 from .constants import FORMATS, MANIFEST_PAYLOAD_TYPE, SUBJECT_DEFAULT_HASH_ALG
-from .errors import AsexecError, VerificationError
+from .errors import AsexecError, ManifestError, VerificationError
+from .models import STATUSES
 
 # A ref as the format signing writes it.
 REF_RE = re.compile(
@@ -50,13 +54,29 @@ def _load_json(path: str) -> str | dict:
 
 
 def _get_arg_or_file[T](
-    args, arg_name: str, file_arg_name: str, load_file: Callable[[str], T]
+    args,
+    arg_name: str,
+    file_arg_name: str,
+    load_file: Callable[[str], T],
+    parse_value: Callable[[str], T] | None = None,
 ) -> str | T | None:
-    """Load a value from ``--<arg>`` or ``--<file-arg>`` (argparse allows at most one)."""
+    """Load a value from ``--<arg>`` or ``--<file-arg>`` (argparse allows at most one).
+
+    ``parse_value``, if given, parses the inline ``--<arg>`` value into ``T`` (for example
+    ``_strict_json`` and a shape check), as ``load_file`` reads the file. A ``ValueError``
+    from it is a usage error: only the argument is wrong, so it exits ``EXIT_USAGE`` and
+    nothing runs. What a file holds is not an argument: ``load_file`` fails with exit 1."""
     value = getattr(args, arg_name, None)
     file_path = getattr(args, file_arg_name, None)
     if value:
-        return value
+        if parse_value is None:
+            return value
+        try:
+            return parse_value(value)
+        except ValueError as e:
+            flag = "--" + arg_name.replace("_", "-")
+            sys.stderr.write(f"asexec {args.cmd}: error: argument {flag}: {e}\n")
+            raise SystemExit(EXIT_USAGE) from None
     if file_path:
         try:
             return load_file(file_path)
@@ -82,6 +102,150 @@ def _get_notes(args) -> str | dict | None:
     return _get_arg_or_file(args, "notes", "notes_file", _load_json)
 
 
+# What a --plan / --evidence entry may say. asexec hashes the file at ``name`` and fills in
+# ``hash_alg`` (--hash-alg) and ``digest``, as --subject does; the rest is declared, never
+# tested.
+_PLAN_FIELDS = ("name", "media_type", "label")
+_EVIDENCE_FIELDS = ("name", "media_type", "uri")
+
+
+def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:
+    out: dict = {}
+    for key, value in pairs:
+        if key in out:  # parsers disagree on which value wins, so neither is taken
+            raise ValueError(f"duplicate JSON key {key!r}")
+        out[key] = value
+    return out
+
+
+def _strict_json(text: str):
+    """An inline JSON value: valid JSON with no duplicate key (``ValueError`` otherwise)."""
+    try:
+        return json.loads(text, object_pairs_hook=_reject_duplicate_keys)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"not valid JSON: {e}") from None
+
+
+def _spec_shape(spec, flag: str, allowed: tuple[str, ...]) -> dict:
+    """A file described as ``{"name": <path>, ...}``; ``ValueError`` if it is not one."""
+    if not isinstance(spec, dict) or not isinstance(spec.get("name"), str):
+        raise ValueError(f"{flag} needs a 'name' (a file path) in each entry: {spec!r}")
+    if "hash_alg" in spec or "digest" in spec:
+        raise ValueError(
+            f"{flag}: asexec hashes the file and fills in hash_alg and digest "
+            "(choose the algorithm with --hash-alg)"
+        )
+    unknown = sorted(set(spec) - set(allowed))
+    if unknown:
+        raise ValueError(
+            f"{flag}: unknown field(s) {', '.join(map(repr, unknown))}; "
+            f"an entry may hold {', '.join(map(repr, allowed))}"
+        )
+    for field in allowed[1:]:  # the declared fields: text, or absent
+        if spec.get(field) is not None and not isinstance(spec[field], str):
+            raise ValueError(f"{flag}: {field!r} must be a string: {spec[field]!r}")
+    return spec
+
+
+def _plan_shape(value) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError(f'--plan must be a JSON object, like {{"name": "plan.md"}}: {value!r}')
+    return _spec_shape(value, "--plan", _PLAN_FIELDS)
+
+
+def _items_shape(value) -> list:
+    """``--items``: an array of ``{"id": <string>, "kind": <string>}``, ids unique."""
+    if not isinstance(value, list):
+        raise ValueError(f'--items must be a JSON array, like [{{"id": "S1"}}]: {value!r}')
+    for item in value:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+            raise ValueError(f"--items: each item needs a string 'id': {item!r}")
+        unknown = sorted(set(item) - {"id", "kind"})
+        if unknown:
+            raise ValueError(
+                f"--items: unknown field(s) {', '.join(map(repr, unknown))}; "
+                "an item may hold 'id' and 'kind'"
+            )
+        if item.get("kind") is not None and not isinstance(item["kind"], str):
+            raise ValueError(f"--items: 'kind' must be a string: {item['kind']!r}")
+    counts = Counter(item["id"] for item in value)
+    repeated = sorted(i for i, n in counts.items() if n > 1)
+    if repeated:
+        raise ValueError(f"--items lists the id {', '.join(map(repr, repeated))} twice")
+    return value
+
+
+def _evidence_shape(value) -> list:
+    if not isinstance(value, list):
+        raise ValueError(
+            f'--evidence must be a JSON array, like [{{"name": "out.json"}}]: {value!r}'
+        )
+    if not value:
+        raise ValueError("--evidence must list at least one file")
+    return [_spec_shape(spec, "--evidence", _EVIDENCE_FIELDS) for spec in value]
+
+
+def _shaped_arg_or_file(args, name: str, shape: Callable):
+    """``--<name>`` (inline JSON) or ``--<name>-file``, held to ``shape``. An inline value that
+    fails it is a usage error (64); a file's content that fails it exits 1."""
+
+    def load_file(path: str):
+        with open(path) as f:
+            text = f.read()
+        try:  # the same JSON rules as an inline value: no duplicate key
+            value = json.loads(text, object_pairs_hook=_reject_duplicate_keys)
+        except json.JSONDecodeError as e:
+            raise ManifestError(f"{path} must contain valid JSON: {e}") from None
+        except ValueError as e:  # a duplicate key
+            raise ManifestError(f"{path}: {e}") from None
+        try:
+            return shape(value)
+        except ValueError as e:
+            raise ManifestError(str(e)) from None
+
+    return _get_arg_or_file(
+        args, name, f"{name}_file", load_file, lambda text: shape(_strict_json(text))
+    )
+
+
+def _described_entries(specs: list, alg: str) -> list[dict]:
+    """Entries for files described as ``{"name": <path>, ...}`` (already shaped): each file
+    hashed as a subject file is (``hashing.build_entries``), with its declared fields kept."""
+    entries = hashing.build_entries([spec["name"] for spec in specs], alg)
+    return [
+        {**entry, **{k: v for k, v in spec.items() if k != "name"}}
+        for entry, spec in zip(entries, specs, strict=True)
+    ]
+
+
+def _get_plan(args) -> dict | None:
+    """``body.plan`` from --plan / --plan-file: one described file."""
+    spec = _shaped_arg_or_file(args, "plan", _plan_shape)
+    return None if spec is None else _described_entries([spec], args.hash_alg)[0]
+
+
+def _get_items(args) -> list | None:
+    """``body.items`` from --items / --items-file: a list of ``{"id", "kind"}``, as given."""
+    return _shaped_arg_or_file(args, "items", _items_shape)
+
+
+def _get_evidence(args) -> list | None:
+    """``body.evidence`` from --evidence / --evidence-file: a non-empty list of described
+    files."""
+    specs = _shaped_arg_or_file(args, "evidence", _evidence_shape)
+    return None if specs is None else _described_entries(specs, args.hash_alg)
+
+
+def _built(build: Callable[..., dict], *args, **kwargs) -> dict:
+    """A body from ``manifest.build_*``; what its writer model refuses is a clean error."""
+    try:
+        return build(*args, **kwargs)
+    except ValidationError as e:
+        raise ManifestError(
+            "; ".join(f"{'.'.join(map(str, x['loc'])) or 'body'}: {x['msg']}" for x in e.errors())
+        ) from None
+
+
 def _get_floor(args) -> dict | None:
     """Fetch a drand freshness floor (anchor.floor) at sign time, or None."""
     if not args.floor:
@@ -99,8 +263,8 @@ def _get_floor(args) -> dict | None:
 
 
 def _build_subject(paths: list[str] | None, hash_alg: str) -> list | None:
-    """Construct subject data (a list of filenames/dirnames and their associated
-    digest hashes) given source paths and a hash algorithm."""
+    """Construct subject data: one entry per file path, named by its normalized path
+    relative to the current directory, with its own hash_alg and digest."""
     return hashing.build_subject(paths, hash_alg) if paths else None
 
 
@@ -191,14 +355,17 @@ def cmd_prereg(args) -> int:
         raise SystemExit(f"error: --target-file {args.target_file!r} holds no target")
     priv, pub = keys.load_signing_key(args.key)
     subject = _build_subject(args.subject, args.hash_alg)
-    body = manifest.build_prereg(
+    plan, items = _get_plan(args), _get_items(args)
+    body = _built(
+        manifest.build_prereg,
         target,
         due=args.due,
         declaration=_get_declaration(args),
         subject=subject,
-        hash_alg=args.hash_alg,
         floor=_get_floor(args),
         notes=_get_notes(args),
+        plan=plan,
+        items=items,
     )
     mani = manifest.sign(body, priv, pub)
     ref = manifest.ref(manifest.read_body(mani)[0])
@@ -222,8 +389,8 @@ def cmd_postreg(args) -> int:
     if os.path.isfile(args.fulfills):
         prereg_body = _load_manifest_body(args.fulfills, "--fulfills")[1]
 
-    # target / due / declaration / hash_alg inherit from the fulfilled prereg
-    # unless overridden on this postreg.
+    # target / due / declaration inherit from the fulfilled prereg unless overridden on this
+    # postreg. Each subject entry names its own hash_alg: --hash-alg, or the default.
     target = _get_target(args)
     if target is None:
         if prereg_body is None:
@@ -232,21 +399,23 @@ def cmd_postreg(args) -> int:
 
     due = args.due or (prereg_body or {}).get("due")
     declaration = _get_declaration(args) or (prereg_body or {}).get("declaration")
-    hash_alg = args.hash_alg or (prereg_body or {}).get("hash_alg") or SUBJECT_DEFAULT_HASH_ALG
-
-    subject = _build_subject(args.subject, hash_alg)
-    body = manifest.build_postreg(
+    subject = _build_subject(args.subject, args.hash_alg)
+    evidence = _get_evidence(args)
+    body = _built(
+        manifest.build_postreg,
         target,
         fulfills=fulfills,
         due=due,
         declaration=declaration,
         subject=subject,
-        hash_alg=hash_alg,
         prev_hash=prev_hash,
         floor=_get_floor(args),
         notes=_get_notes(args),
         provenance=args.provenance,
         repro_recipe=args.repro_recipe,
+        item_id=args.item_id,
+        status=args.status,
+        evidence=evidence,
     )
     mani = manifest.sign(body, priv, pub)
     ref = manifest.ref(manifest.read_body(mani)[0])
@@ -299,7 +468,8 @@ def cmd_verify(args) -> int:
             _show(f"    {cs} content hashes {c['status']}")
             for e in c.get("entries", []):
                 if not e["ok"]:
-                    _show(f"        {NO} {e['name']}: {e.get('reason', 'digest mismatch')}")
+                    what = "" if e["field"] == "subject" else f"{e['field']} "  # plan, evidence
+                    _show(f"        {NO} {what}{e['name']}: {e.get('reason', 'digest mismatch')}")
 
     _show("\n=== commitments ===")
     if not report["commitments"] and report["rejected_preregs"]:
@@ -317,12 +487,17 @@ def cmd_verify(args) -> int:
         _show(f"    due          : {due}")
         if c["due_naive"]:
             _show(f"    {NO} due has no timezone; read as UTC (re-sign with an explicit offset)")
-        if c["state"] == "invalid-due":
+        if c["due_invalid"]:  # in any state: timely fails on it too
             _show(f"    {NO} due is not a parseable ISO-8601 timestamp")
         _show(
             f"    postregs     : {len(c['counted_postregs'])}"
             + ("" if c["chain_ok"] else f"  {NO} {c['chain_note']}")
         )
+        if "timely" in report["tests"]:  # each counted postreg not shown on time, and why
+            for t in c["timeliness"]:
+                if t["status"] != "on-time":
+                    _show(f"    {NO} postreg {t['ref']} {_NOT_ON_TIME[t['status']](t)}")
+        _show_items(c["complete"])
         for r in c["rejected_postregs"]:
             _show(f"    {NO} postreg {r['ref']} does NOT count toward fulfillment: {r['reason']}")
     if report["rejected_preregs"]:  # pass format, fail selfsig: no commitment, no state
@@ -353,6 +528,41 @@ def cmd_verify(args) -> int:
     _show(f"\n{report['code']}")
     _show(f"Checked at {report['checked_at']}")
     return EXIT_OK if report["ok"] else EXIT_FAIL
+
+
+def _show_items(cp: dict) -> None:
+    """A commitment's items (``complete``'s view, shown whenever its prereg lists items):
+    each item's status, or why it is not accounted for; then any problem with the list, and
+    each counted postreg whose item_id names no listed item."""
+    if not cp["examined"]:
+        return
+    if cp["reason"] == verifier.REASON_ITEMS_MALFORMED:
+        _show(f"    {NO} {cp['reason']}")
+        return
+    _show(f"    items        : {len(cp['items'])}")
+    for item in cp["items"]:
+        text = ", ".join(item["statuses"])
+        if not item["ok"]:
+            text = f"{text}, but {item['reason']}" if text else item["reason"]
+        _show(f"      {OK if item['ok'] else NO} {item['id']}: {text}")
+    if cp["reason"] and cp["reason"].startswith("item ids repeat"):
+        _show(f"    {NO} {cp['reason']}")
+    for u in cp["unlisted"]:
+        _show(
+            f"    {NO} postreg {u['ref']} names item {u['item_id']!r}, which the prereg does "
+            "not list"
+        )
+
+
+# Why a counted postreg is not shown on time (verifier._on_time), as the report says it.
+_NOT_ON_TIME: dict[str, Callable[[dict], str]] = {
+    "late": lambda t: (
+        f"is late: its ceiling (no later than {verifier._utc_ceil(t['no_later_than_us'])}) "
+        "is after due"
+    ),
+    "no-ceiling": lambda t: "is not shown on time: it has no ceiling",
+    "invalid-ceiling": lambda t: "is not shown on time: its ceiling does not verify",
+}
 
 
 def cmd_identity(args) -> int:
@@ -512,18 +722,34 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument(
         "--subject",
         nargs="+",
-        help="path(s) to harness/eval to hash (optional at prereg time)",
+        help="file(s) to hash, each named by its path relative to the current directory "
+        "(no directories; verify finds them under --artifacts; optional at prereg time)",
     )
     pr.add_argument(
         "--hash-alg",
         default=SUBJECT_DEFAULT_HASH_ALG,
         choices=hashing.available_algorithms(),
+        help="algorithm each hashed file's entry names (default: %(default)s)",
     )
     _add_arg_or_file(
         pr,
         "notes",
         help="free-form context (hypothesis/methodology)",
         file_help="structured JSON notes",
+    )
+    _add_arg_or_file(
+        pr,
+        "plan",
+        help='the plan the claim is tested against, as JSON: {"name": <file path>, '
+        '"media_type": ..., "label": ...}; asexec hashes the file (--hash-alg)',
+        file_help="the --plan JSON, from a file",
+    )
+    _add_arg_or_file(
+        pr,
+        "items",
+        help='what the claim commits to deliver, as a JSON array: [{"id": "S1", "kind": '
+        '"run"}, ...]; ids must be unique, and each is accounted for by a postreg\'s --item-id',
+        file_help="the --items JSON array, from a file",
     )
     _add_anchor_flags(pr)
     pr.add_argument("--out", default="preregistration.json")
@@ -545,8 +771,18 @@ def build_parser() -> argparse.ArgumentParser:
         "(default: inherit from prereg)",
     )
     _add_arg_or_file(po, "declaration")
-    po.add_argument("--subject", nargs="+", help="path(s) to outputs/transcript/harness to hash")
-    po.add_argument("--hash-alg", default=None, choices=hashing.available_algorithms())
+    po.add_argument(
+        "--subject",
+        nargs="+",
+        help="file(s) to hash (outputs, transcript, harness files), each named by its path "
+        "relative to the current directory (no directories)",
+    )
+    po.add_argument(
+        "--hash-alg",
+        default=SUBJECT_DEFAULT_HASH_ALG,
+        choices=hashing.available_algorithms(),
+        help="algorithm each hashed file's entry names (default: %(default)s)",
+    )
     po.add_argument(
         "--prev",
         help="prior postreg file (or sha-256:<64 hex> ref) in this commitment's chain",
@@ -558,6 +794,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="JSON: {seed, decode, runtime} if provenance=reproducible",
     )
     _add_arg_or_file(po, "notes")
+    po.add_argument("--item-id", help="the id of the prereg's item this postreg accounts for")
+    po.add_argument(
+        "--status",
+        choices=STATUSES,
+        help="what happened to the item: " + " | ".join(STATUSES),
+    )
+    _add_arg_or_file(
+        po,
+        "evidence",
+        help='files that back this postreg, as a JSON array: [{"name": <file path>, '
+        '"media_type": ..., "uri": ...}, ...]; asexec hashes each file (--hash-alg)',
+        file_help="the --evidence JSON array, from a file",
+    )
     _add_anchor_flags(po)
     po.add_argument("--out", default="postregistration.json")
     po.set_defaults(func=cmd_postreg)
