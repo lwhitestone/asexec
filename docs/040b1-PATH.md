@@ -983,7 +983,8 @@ Action: none
 8. The `docs/MULTIVERSION.md` banner still called the whole document a proposal → it now
    says the *Status* line marks which part describes current behavior. Commit `58ce175`.
 
-`scripts/check.sh`: clean, 444 passed (442 + the 2 new run-rule cases).
+`scripts/check.sh`: clean, 444 passed (442 + the 2 new run-rule cases). CI on `3f62b80`
+(run 44681321756): lint, python-matrix, test (3.12, 3.13, 3.14) and build pass.
 
 **Observations added in review round 1 (out of scope):**
 - **#44 (checkpoint 5), an intended contrast:** a prereg that fails `format` is not a provided
