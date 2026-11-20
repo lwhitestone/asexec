@@ -527,11 +527,11 @@ def verify_paths(
                 "due_naive": due_naive,
                 "chain_ok": chain_ok,
                 "chain_note": chain_note,
-                # keyconsist's scope and verdict, defined here only. A commitment is
-                # key-checked iff it has a counted postreg or a postreg rejected under it as
-                # signed by a different key (different_key), and it passes iff it has no such
-                # rejection. One whose postregs all have invalid signatures has no key to
-                # check: selfsig judges them.
+                # keyconsist's scope, defined here only: a commitment is key-checked iff it
+                # has a counted postreg or a postreg rejected under it as signed by a
+                # different key (different_key). One whose postregs all have invalid
+                # signatures has no key to check: selfsig judges them. Its verdict is
+                # `not different_key`.
                 "key_checked": bool(pr["counted_postregs"]) or pr["different_key"],
             }
         )
