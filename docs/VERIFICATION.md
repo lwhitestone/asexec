@@ -905,8 +905,9 @@ asexec-verify/1 format=PASS order=PASS selfsig=PASS
 Checked at 2026-12-31T23:59:59Z
 ```
 
-With a prereg whose ceiling was fetched later (here, three months after the round), the
-run's floor precedes the prereg's ceiling. The postreg still counts, so the commitment is
+With a prereg signed with `--due 2099-01-01T00:00:00Z` as well (so another body, with
+another `ref`) and a ceiling fetched later (here, three months after the round), the run's
+floor precedes the prereg's ceiling. The postreg still counts, so the commitment is
 `fulfilled`, and the report marks it. Exit status `2`:
 
 ```

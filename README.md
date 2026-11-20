@@ -177,7 +177,7 @@ pre-register with `--ceiling`, and have the run fetch a drand round when it star
 ```bash
 # when the run starts: the latest round of the quicknet chain, which --floor uses too
 curl -s https://api.drand.sh/52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971/public/latest > round.json
-#   -> {"round": 21543210, "randomness": "c3d4e5f6…", "signature": "8d2f1c3a…"}
+#   -> {"round": 31036100, "randomness": "c3d4e5f6…", "signature": "8d2f1c3a…"}
 
 asexec postreg --key lab.key --fulfills preregistration.json \
     --floor-round-file round.json --out postregistration.json
@@ -360,7 +360,7 @@ The body (`dsse.payload` decoded):
     "floor": {                                          // drand (--floor): not before
       "floor_type": "drand",
       "chain_hash": "52db9ba7…",
-      "round": 21543210,
+      "round": 31036100,
       "signature": "8d2f1c3a…",
       "randomness": "c3d4e5f6…"
     }

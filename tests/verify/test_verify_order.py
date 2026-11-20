@@ -153,6 +153,60 @@ def test_order__pass__2_any_copy_of_the_prereg_with_a_verified_ceiling_shows_it(
     assert len(report["commitments"]) == 1
 
 
+def _late_ceiling_for_the_commitment(sc, make_server, ceiling_for):
+    """The prereg as first written (its ceiling nine seconds before the floor), and from then
+    on the commitment's own ceiling from a second pinned witness, a minute after the floor."""
+    sc.write()
+    early = json.loads((sc.manifest_dir / "prereg.json").read_text())
+    late_pub, late_sign = make_server(midpoint_us=FLOOR_US + 60_000_000)
+    sc.servers["later"] = {"pubkey": late_pub}
+    sc.ceilings["prereg"] = lambda nonce: ceiling_for(nonce, "later", late_pub, late_sign)
+    return early
+
+
+def test_order__fail__2_a_rejected_copy_s_ceiling_is_not_the_prereg_s(sc, make_server, ceiling_for):
+    """order #1-#2: the prereg's time comes only from copies that are the commitment. A copy
+    that fails selfsig (another key's keyid claimed) is a rejected pre-registration: its
+    ceiling, though genuine, early and for the same body, is not read, so the commitment's
+    own late ceiling decides."""
+    early = _late_ceiling_for_the_commitment(sc, make_server, ceiling_for)
+    early["dsse"]["signatures"][0]["keyid"] = keys.keyid_for(keys.generate()[1])
+    sc.add_raw("prereg-forged-copy", json.dumps(early))
+    report = sc.verify("ceiling", "order")
+    assert report["code"] == "asexec-verify/1 ceiling=PASS format=PASS order=FAIL selfsig=FAIL"
+    assert len(report["rejected_preregs"]) == 1
+    order = _order(report)
+    assert order["ceiling"] == {"status": "verified", "no_later_than_us": FLOOR_US + 61_000_000}
+    assert _statuses(report) == ["not-after"]
+
+
+def test_order__fail__2_another_signer_s_ceiling_is_not_the_prereg_s(sc, make_server, ceiling_for):
+    """order #1-#2: the same body signed by a second key is a second commitment, judged on its
+    own: its early ceiling orders its own counted postreg, and is not the first commitment's
+    time, whose own late ceiling decides."""
+    _late_ceiling_for_the_commitment(sc, make_server, ceiling_for)
+    other = keys.generate()
+    raw = d.decoded(json.loads(sc.read("prereg")))
+    copy = d.sign_bytes(raw, other)
+    nonce = d.ref(raw).split(":", 1)[-1]
+    copy["ceiling"] = ceiling_for(nonce, "synthetic", sc.server_pub, sc.sign_response)
+    sc.add_raw("prereg-other-signer", json.dumps(copy))
+    sc.add_postreg("post-other", fulfills="prereg")
+    sc.sign_with("post-other", other)
+    sc.with_floor("post-other")
+    report = sc.verify("ceiling", "order")
+    assert report["code"] == "asexec-verify/1 ceiling=PASS format=PASS order=FAIL selfsig=PASS"
+    by_signer = {c["keyid"]: c["order"] for c in report["commitments"]}
+    assert len(by_signer) == 2
+    mine = by_signer[keys.keyid_for(d.TEST_KEY[1])]
+    theirs = by_signer[keys.keyid_for(other[1])]
+    assert mine["ceiling"]["no_later_than_us"] == FLOOR_US + 61_000_000
+    assert [p["status"] for p in mine["postregs"]] == ["not-after"]
+    assert theirs["ceiling"]["no_later_than_us"] == CEILING_US
+    assert [p["status"] for p in theirs["postregs"]] == ["after"] and theirs["ok"]
+    assert report["results"]["order"]["reason"] == "1/2 commitment(s) failed"
+
+
 def test_order__fail__3_counted_postreg_has_a_floor(sc):
     """order #3: a counted postreg with no floor fails: nothing shows when it was made."""
     sc.specs["postreg0"].floor = False
