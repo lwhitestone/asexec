@@ -171,10 +171,13 @@ def test_frozen_manifests_still_verify(tmp_path):
 def test_formats_has_one_entry_keyed_by_manifest_payload_type():
     # BREAKS_USERS: verify reads a file only under the entry its payloadType names, so
     # editing an entry fails every manifest published under it, and removing one fails them
-    # all as an unknown format. Fallback: add an entry instead; existing entries are never
-    # edited. Each value is pinned again, with what it does, in the tests below.
-    # One entry, keyed by the MANIFEST_PAYLOAD_TYPE name itself: a release commit rewrites
-    # that one literal, and the key moves with it. Signing uses this entry, the newest.
+    # all as an unknown format. Fallback: add an entry instead; a released entry is never
+    # edited or re-keyed. Each value is pinned again, with what it does, in the tests below.
+    # One entry, the one under development, keyed by the MANIFEST_PAYLOAD_TYPE name itself:
+    # each beta's release commit rewrites that one literal, and the key moves with it.
+    # Signing uses this entry, the newest. The 0.4.0 release commit (at the latest, before
+    # any later release commit) makes its key the literal "application/vnd.asexec.v1+json",
+    # and this pin changes with it.
     assert list(constants.FORMATS) == [constants.MANIFEST_PAYLOAD_TYPE]
     assert constants.FORMATS[constants.MANIFEST_PAYLOAD_TYPE] == {
         "digest_ref_prefix": "sha-256:",
@@ -216,7 +219,8 @@ def test_manifest_payload_type_change_fails_what_was_signed_before_it(tmp_path):
     ]
 
 
-# A second format, for the tests of the selector only: every rule differs from v1's.
+# A second format, for the tests of the selector only: every rule but signing_key_alg differs
+# from v1's (ed25519 is the only algorithm verify checks).
 OTHER_FORMAT = "application/vnd.asexec.other+json"
 OTHER_RULES = {
     "digest_ref_prefix": "other-256:",

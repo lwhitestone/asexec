@@ -1,8 +1,9 @@
 # Multi-version support
 
 > [!NOTE]
-> This is a design proposal, not a description of current behavior. It is AI-assisted, so
-> treat it with due skepticism.
+> This is a design, built only in part: the *Status* line below says which part describes
+> current behavior, and the rest is a proposal. It is AI-assisted, so treat it with due
+> skepticism.
 
 Starting with `0.4.0`, a format change adds a new version and keeps accepting the old ones
 ([`ROADMAP.md`](../ROADMAP.md#versioning)). This document covers what the verifier needs in
@@ -71,9 +72,13 @@ FORMATS: dict[str, dict] = {
 }
 ```
 
-The one entry is keyed by the name `MANIFEST_PAYLOAD_TYPE`, so a release commit that
-rewrites that literal (a beta writes its own type) moves the key with it. When a second
-format is added, the existing entry's key becomes its literal.
+Only the entry under development, which no release has shipped yet, is keyed by the name
+`MANIFEST_PAYLOAD_TYPE`. Until `0.4.0` that is the one entry, so each beta's release commit,
+which rewrites that literal to the beta's own type, re-keys it. The `0.4.0` release commit
+(at the latest, before any later release commit rewrites the literal) makes the entry's key
+the literal `application/vnd.asexec.v1+json`, which never changes after that. Otherwise the
+next release commit would re-key the released `v1` entry, and every `v1` manifest would
+read as an unknown format.
 
 - **Known `payloadType`:** verify under that entry's rules: the PAE signing input, the prefix
   of `ref` and `keyid`, and the `hash_alg` a subject without one is read with.
@@ -83,7 +88,8 @@ format is added, the existing entry's key becomes its literal.
   does not examine that file, so it still passes for the others: the code tells "upgrade"
   apart from "damaged". A missing or non-string `payloadType` is malformed, which also fails
   `format`.
-- **New format:** add an entry. Existing entries are never edited.
+- **New format:** add an entry, keyed by `MANIFEST_PAYLOAD_TYPE` while it is under
+  development. A released entry is never edited or re-keyed.
 
 Signing always uses the newest entry. There is no option to write an older format.
 
