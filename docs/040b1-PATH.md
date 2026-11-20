@@ -1530,7 +1530,9 @@ above). Neither blocks b1.
 
 **Judgement calls / new paradigms:**
 - **(a) A postreg that counts toward a commitment is not listed under the ref's rejected
-  pre-registrations**, whatever keyid the broken copy claims. This is the existing rule ("a
+  pre-registrations**, whatever keyid the broken copy claims. **Needs the human's
+  confirmation:** this narrows D2's literal text ("a postreg naming it is listed as rejected
+  under it"); review round 1 judged it safe and order-independent. This is the existing rule ("a
   postreg that counts toward one commitment of a `ref` is not rejected under the others")
   carried to rejected copies. Listing it would show one postreg as counted and as rejected
   for the same ref, and would let anyone add rejection lines to a valid commitment's postregs
@@ -1544,8 +1546,8 @@ above). Neither blocks b1.
 - **(b) A postreg naming only rejected pre-registrations** is rejected under each of them and
   is not notarization-only (D2: it names a provided prereg). With no commitment, `chain` and
   `keyconsist` are empty for it.
-- **(c) Rejected copies are deduplicated by `(ref, keyid)`** (whole-entry equality, since a
-  keyid may be unhashable), however each copy is broken; their single reason is the same. A
+- **(c) Rejected copies are deduplicated by `(ref, keyid)`** (the keyid compared as JSON
+  text since review round 1, as a keyid may be unhashable), however each copy is broken; their single reason is the same. A
   valid prereg and a broken copy with the same `(ref, keyid)` are a commitment plus a
   rejected pre-registration, never merged, as a broken copy of a postreg is judged on its own.
 - **(d) `keyconsist`'s empty reason changes** from `… names a provided prereg` to `requested
@@ -1570,3 +1572,48 @@ above). Neither blocks b1.
   `key_checked`". The two keyconsist tests that read `key_consistent` now check the
   documented result reason and the rejected postreg's reason, black-box.
 - No new dependency, system or paradigm.
+
+**Review round 1** (findings on PR #54):
+1. should-fix: `docs/VERIFICATION.md:704` said a rejected pre-registration "fails `selfsig`,
+   which is its only failure", but in the doc's own example the run also gives `chain=FAIL
+   keyconsist=FAIL` (both empty) → it now says that of the tests it fails only `selfsig`,
+   and that with no commitment `chain` and `keyconsist` may be empty and `FAIL`, as in the
+   example (whose code already shows `chain=FAIL format=PASS keyconsist=FAIL
+   selfsig=FAIL`). The *What affects a verdict* paragraph says the same. Commit `390a5b3`.
+2. nit: rejected pre-registrations were deduplicated with Python equality
+   (`verifier.py:463`), so keyids `1`, `1.0` and `true` merged into one entry whose printed
+   keyid depended on file order → they are keyed by `(ref, json.dumps(keyid,
+   sort_keys=True))` (`_json_value`). Test first:
+   `test_matching__rejected_preregs_with_json_distinct_keyids_are_not_merged` (three copies
+   claiming `1`, `1.0` and `true`; both file orders give the same three entries, each with
+   its own keyid). It failed on `f81ce35` (one merged entry, a different keyid per order)
+   and passes now. The adversarial corpus, `f81ce35` vs `6a6e947`: 6,494 runs, 0
+   differences (its only number keyid is `7`). Commit `6a6e947`.
+3. nit: the `key_checked` comment said keyconsist's "scope and verdict, defined here only",
+   but the verdict is computed in `_evaluate` → it defines the scope there and names the
+   verdict, `not different_key`. Commit `f81ce35`.
+4. nit: `README.md:173` was not rewrapped → rewrapped. Commit `390a5b3`.
+5. out of scope → observation below (for the human gate).
+6. → judgement call (a) above is marked as needing the human's confirmation, and (d) is
+   recorded below as an FYI.
+
+`scripts/check.sh`: clean, 478 passed (477 + the new matching test). CI: see the PR.
+
+**Observations added in review round 1 (out of scope):**
+- **For the human gate: unauthenticated `signature.keyid` strings are printed raw.** The
+  new rejected block (`src/asexec/cli.py:321`) prints a rejected pre-registration's keyid,
+  and the manifests block's `keyid=` line already printed every file's. A keyid holding
+  newlines can therefore forge report lines: the reviewer printed a fake `[FULFILLED]`
+  commitment this way. The code line and the exit status are unaffected. Suggested later
+  fix: one display escape (for example `json.dumps` or `repr`) for every unauthenticated
+  value the report prints. Not fixed here.
+- Postreg entries (counted, rejected under a commitment or a rejected pre-registration, and
+  notarization-only) are still deduplicated by `_add_once`, with Python equality, so two
+  copies of a postreg whose keyids are `1` and `true` are listed once, under the first
+  file's keyid. This predates the checkpoint (it holds for commitments and notarization-only
+  on `e60cd1c`); such postregs always fail `selfsig`, so no verdict depends on it. The same
+  `_json_value` key would fix it.
+- **FYI for the human gate (judgement call (d)):** `keyconsist`'s empty reason changed
+  from `requested but no validly signed postreg names a provided prereg` to `requested but
+  no validly signed postreg names a commitment`. It is a reason the doc lists, so scripts
+  that matched the old text would need the new one.
