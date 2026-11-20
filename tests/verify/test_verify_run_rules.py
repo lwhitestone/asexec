@@ -177,6 +177,30 @@ def test_run__malformed_postreg_joins_no_commitment(scenario, path, value):
     assert report["notarization_only"] == []
 
 
+@pytest.mark.parametrize(
+    "path,value",
+    [
+        ("signature.pubkey", "zz"),
+        ("payloadType", "application/vnd.asexec.v2+json"),
+    ],
+    ids=["bad-hex", "newer-format"],
+)
+def test_run__prereg_failing_format_is_not_a_provided_prereg(scenario, path, value):
+    """A prereg that fails format (here: a non-hex pubkey, or a format this release does
+    not read) is not a provided prereg: there is no commitment, and a valid postreg naming
+    it is notarization-only, so chain and keyconsist have nothing to examine."""
+    scenario.drop("postreg1")
+    scenario.drop("postreg2")
+    scenario.set("prereg", path, value)
+    report = scenario.verify("chain", "keyconsist")
+    assert report["code"] == ("asexec-verify/1 chain=FAIL format=FAIL keyconsist=FAIL selfsig=PASS")
+    assert report["results"]["selfsig"]["applicable"] == 1  # the postreg, which is valid
+    assert report["results"]["keyconsist"]["applicable"] == 0
+    assert report["commitments"] == []
+    (lone,) = report["notarization_only"]
+    assert lone["fulfills"] == d.ref(json.loads(scenario.read("prereg"))["payload"])
+
+
 def test_run__verification_is_offline(scenario, monkeypatch):
     """No test touches the network: with sockets and urlopen disabled, all seven still pass."""
     scenario.with_floor("prereg")

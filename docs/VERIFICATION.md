@@ -69,10 +69,12 @@ in the README's [Exit status](../README.md#exit-status).
   in it, key or value, holds an unpaired surrogate escape such as `"\ud800"`, which has no
   UTF-8 encoding), or its `signature.pubkey` and `signature.sig` are not both hex
   ([`format`](#format) #1 and #2). A file is of an **unknown format** if its `payloadType`
-  is a string that names no format this release reads ([`format`](#format) #3).
+  is a string that names no format this release reads ([`format`](#format) #3). A readable
+  JSON object with such a `payloadType` is judged by #3 instead of the rest of #1 and #2,
+  so it is of an unknown format and never malformed, whatever else it holds.
 - A file that is malformed or of an unknown format fails [`format`](#format), and no other
-  test examines it, `selfsig` included. It takes no part in any commitment: it is neither
-  counted nor rejected (see
+  test examines it, `selfsig` included. It takes no part in any commitment: as a prereg it
+  is no commitment, and as a postreg it is neither counted nor rejected (see
   [Matching postregs to commitments](#matching-postregs-to-commitments)).
 
 ## Output
@@ -127,11 +129,11 @@ Checked at 2026-12-31T23:59:59Z
 |---|---|---|
 | [`ceiling`](#ceiling) | • `ceiling.ceiling_type`<br>• `ceiling.nonce`<br>• `ceiling.witness_id`<br>• `ceiling.pubkey`<br>• `ceiling.response`<br>• `payload` | 1. `ceiling.ceiling_type` is `roughtime`<br>2. `ceiling.nonce` equals `ref(payload)`<br>3. `ceiling.witness_id` has a pinned key<br>4. `ceiling.pubkey`, if present, equals the pinned key<br>5. `ceiling.response` verifies against the pinned key |
 | [`chain`](#chain) | • `payload.phase`<br>• `payload.fulfills`<br>• `payload.prev_hash`<br>• `signature.pubkey`<br>• `signature.sig`<br>• `signature.keyid` | 1. exactly one counted postreg has no `payload.prev_hash`<br>2. every other `payload.prev_hash` is the `ref` of a counted postreg<br>3. no `ref` is the `payload.prev_hash` of more than one counted postreg |
-| [`content`](#content) | • `payload.subject`<br>• `payload.subject[].name`<br>• `payload.subject[].digest`<br>• `payload.hash_alg`<br>• `--artifacts` | 1. `payload.subject` is a non-empty array of well-formed entries<br>2. `payload.hash_alg` is available<br>3. `name` resolves inside `--artifacts`<br>4. the artifact exists<br>5. the artifact is readable<br>6. recomputed digest equals `digest[hash_alg]` |
+| [`content`](#content) | • `payload.subject`<br>• `payload.subject[].name`<br>• `payload.subject[].digest`<br>• `payload.hash_alg`<br>• `payloadType`<br>• `--artifacts` | 1. `payload.subject` is a non-empty array of well-formed entries<br>2. `payload.hash_alg` is available<br>3. `name` resolves inside `--artifacts`<br>4. the artifact exists<br>5. the artifact is readable<br>6. recomputed digest equals `digest[hash_alg]` |
 | [`floor`](#floor) | • `payload.anchor.floor.floor_type`<br>• `payload.anchor.floor.chain_hash`<br>• `payload.anchor.floor.round`<br>• `payload.anchor.floor.signature`<br>• `payload.anchor.floor.randomness` | 1. `floor_type` is `drand`<br>2. `chain_hash` is pinned<br>3. `round` is an integer and `signature` is hex<br>4. `randomness`, if present, equals `sha256(signature)`<br>5. `signature` BLS-verifies for `round` under the pinned key |
 | [`format`](#format) | • the file<br>• `payloadType`<br>• `payload`<br>• `signature`<br>• `signature.pubkey`<br>• `signature.sig` | 1. file is a well-formed JSON envelope<br>2. `signature.pubkey` and `signature.sig` are hex<br>3. `payloadType` names a format this release reads |
 | [`keyconsist`](#keyconsist) | • `payload.phase`<br>• `payload.fulfills`<br>• `signature.pubkey`<br>• `signature.sig`<br>• `signature.keyid` | 1. every validly signed postreg naming the prereg's `ref` has the `signature.keyid` of a provided prereg with that `ref` |
-| [`selfsig`](#selfsig) | • `payload`<br>• `signature.pubkey`<br>• `signature.sig`<br>• `signature.keyid` | 1. `signature.sig` verifies over `payload` by `signature.pubkey`<br>2. `signature.keyid` derives from `signature.pubkey` |
+| [`selfsig`](#selfsig) | • `payloadType`<br>• `payload`<br>• `signature.pubkey`<br>• `signature.sig`<br>• `signature.keyid` | 1. `signature.sig` verifies over `payload` by `signature.pubkey`<br>2. `signature.keyid` derives from `signature.pubkey` |
 
 Condition numbers match each test's *Passes when all* list below; the table shortens them.
 `format` and `selfsig` are required in every run. `selfsig` examines only files that pass
@@ -290,7 +292,8 @@ Subject digests recomputed from the original artifacts.
 - `payload.subject`
 - `payload.subject[].name`
 - `payload.subject[].digest`
-- `payload.hash_alg` (if absent, the format's default: `sha-256`)
+- `payload.hash_alg` (if absent, the default of the format `payloadType` names: `sha-256`)
+- `payloadType` (only for that default)
 - `--artifacts`
 
 **Passes when all** (for each manifest that has a `payload.subject`, and each of its entries)
@@ -628,6 +631,7 @@ layers: [`keyconsist`](#keyconsist) gives key continuity within one claim, and
 [`ceiling`](#ceiling) pins when the prereg was signed.
 
 **Examines (\*)**
+- `payloadType` (it is in the signing input, and names the format whose rules apply)
 - `payload`
 - `signature.pubkey`
 - `signature.sig`
@@ -637,7 +641,8 @@ layers: [`keyconsist`](#keyconsist) gives key continuity within one claim, and
 its format)
 1. `signature.sig` is a valid ed25519 signature by `signature.pubkey` over the PAE signing
    input of the file's `payloadType` and the canonical bytes of `payload`.
-2. `signature.keyid == "sha-256:" + sha256(bytes.fromhex(signature.pubkey)).hexdigest()`.
+2. `signature.keyid == "sha-256:" + sha256(bytes.fromhex(signature.pubkey)).hexdigest()`,
+   where `sha-256:` is the format's prefix.
 
 **When empty:** if no manifest passes `format` (including when no manifest file is found),
 `selfsig` has nothing to examine and is `FAIL`, with the reason
@@ -676,6 +681,10 @@ With every requirement holding, `selfsig` prints `✓ selfsig=PASS`, as in the
 A **commitment** is a prereg's `ref` together with its signer, `signature.keyid`. The body
 holds no key, so the same body signed by two keys has one `ref` but is two commitments, each
 judged on its own.
+
+A **provided prereg** is a prereg among the files given that passes [`format`](#format). A
+prereg that fails `format` (malformed, or of an unknown format) is not a provided prereg and
+is no commitment, so a postreg that names it is notarization-only.
 
 A postreg `P` **counts** toward the commitment of prereg `R` iff all hold:
 1. `P.payload.phase == "postreg"` and `P.payload.fulfills == ref(R)`.
