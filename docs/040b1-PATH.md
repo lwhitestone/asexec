@@ -192,7 +192,7 @@ breaks any vector that hardcodes it. The options:
 - [x] 3. #31: `FORMATS` table; an unknown format fails `format` (on feature/0321)
 - [x] 4. #30: beta release support (after #31, because it rewrites the `FORMATS` key) (on feature/0321)
 - [x] 5. #44 (D2), then #42 and #43 (on feature/0321)
-- [ ] 6. #32: DSSE envelope
+- [x] 6. #32: DSSE envelope (on feature/0321)
 - [ ] 7. #33 → #36 → #46 → #37
 - [ ] 8. #34 and #38
 - [ ] 9. #45 (after #38)
@@ -1630,3 +1630,350 @@ difference. Post-merge on `feature/0321` at `310fa16`: `scripts/check.sh` clean,
 lint, build, test on 3.12, 3.13 and 3.14 pass. **Open for the human gate:** judgement call
 (a), which narrows D2's literal text, and the forgeable report lines from an
 unauthenticated keyid (see the observations above).
+
+### Checkpoint 6: #32
+
+**Landed** (branch `feature/0321-checkpoint6`):
+- #32, `b0abfdb`: the DSSE envelope. A file is `{dsse: {payloadType, payload, signatures:
+  [{keyid, sig}]}, pubkey, ceiling}`, with `dsse.payload` the strict base64 of the body bytes.
+  The PAE is DSSE's (`FORMATS[...]["signing_pae_version"]` is now `b"DSSEv1"`), over
+  `dsse.payloadType` and the body bytes as stored, and `ref` is their sha-256; verify
+  re-serializes nothing. Signing still writes the canonical serialization
+  (`canonical_bytes`), once. Malformed is only what stops verify reading a manifest, and the
+  signature fields moved to `selfsig`. Every reader moved: `verifier.py`, `cli.py`
+  (prereg/postreg writing, `--fulfills`/`--prev` refs and inheritance from the decoded prereg
+  body, the report), `manifest.py` (`sign`, `ref(bytes)`, new `read_body` and `parse_body`;
+  `get_body` removed), `models.py` (`DsseInput`, `EnvelopeInput`, `SignatureInput`,
+  `KeyInput`; writers `Dsse`, `Manifest`, `Signature`, which lose `alg` and `payload`),
+  `canonical.py` (`signing_input` takes bytes; new strict `b64encode`/`b64decode`),
+  `fields.py` (`Base64`), `constants.py` (comments), and the tests. `keys.py` and
+  `identity.py` needed no change. `docs/VERIFICATION.md`, `README.md` (*Manifest at a
+  glance*, its legend, the integrity bullet), `ROADMAP.md` (done-ahead marks),
+  `docs/MULTIVERSION.md`, `docs/DEVELOPMENT.md` and `docs/FORMAT.md` (minimal) are updated.
+
+**How it reads now** (`docs/VERIFICATION.md`):
+- **Paths** (*Conventions*, *Property paths*): `body.<path>` is a field of the body, inside the
+  decoded `dsse.payload` (`body.phase`, `body.anchor.floor.round`). Any other path is from the
+  file's root, outside the body (`dsse.payloadType`, `dsse.signatures[0].keyid`, `pubkey`,
+  `ceiling.nonce`). Applied to every path in the doc, and the same notation drives
+  `tests/verify/conftest.py`. New conventions: *Base64* (strict: standard alphabet, padded, no
+  whitespace, the one spelling of its bytes) and, under *JSON*, the body rules.
+- **`format`**: #1 the file is readable, a JSON object, at most 64 deep, no duplicate key,
+  holding an object `dsse` with a string `dsse.payloadType` and an array `dsse.signatures`.
+  #2 `dsse.payload` is strict base64, and the body bytes are the UTF-8 JSON text of an
+  object, at most 64 deep counted from the body's own outermost object, with no duplicate
+  key. #3 `dsse.payloadType` names a known format, checked before the rest of the frame (so
+  a file of an unknown format is held only to "readable object, ≤64, no duplicate key, an
+  object `dsse` with a string `dsse.payloadType`"). A file in 0.3.x's layout (no `dsse`, a
+  top-level `payloadType` of `application/vnd.asexec+json`) keeps the pre-0.4.0 reason.
+- **`selfsig`**: #1 `dsse.signatures` holds exactly one entry, an object (D3a). #2 `pubkey` and
+  `dsse.signatures[0].sig` are present and hex. #3 the signature verifies by `pubkey` over
+  the PAE of `dsse.payloadType` and the body bytes. #4 `dsse.signatures[0].keyid` derives
+  from `pubkey`. So a missing or non-hex `pubkey` or `sig`, a missing `keyid`, zero or two
+  signatures, and an entry that is not an object fail `selfsig`, not `format`.
+- **#44's rule re-checked:** such a prereg passes `format`, so it is a provided prereg and,
+  failing `selfsig`, a rejected pre-registration, listed with `dsse.signatures[0].keyid` as
+  the keyid it claims (`None` if it has no entry). A postreg with the same faults is read and
+  rejected under the commitment it names, for `invalid signature`. Before this change a
+  non-hex `pubkey` was malformed, so such a postreg joined nothing and such a prereg made
+  its postregs notarization-only (checkpoint 2's prediction).
+- **Decided body cases:** body bytes that are not UTF-8 (Latin-1, an encoded surrogate, a byte
+  order mark, UTF-16) are malformed (#2), as is JSON that is not an object (`[1]`, `"x"`,
+  `null`, `1`) and empty bytes. A lone surrogate escape (`"\ud800"`) is valid JSON, and the
+  bytes are never re-encoded, so it passes `format` and `selfsig`. It is the string it spells:
+  it equals no `ref` (a `fulfills` holding one is notarization-only), parses as no time
+  (`invalid-due`), and as a subject name names no artifact (content #4, `artifact not found`,
+  as a NUL now does too). The report prints it as `\ud800` (`cli._show`, `backslashreplace`
+  on every report line). The writer refuses a body with such a string (`ManifestError: the
+  body has a string with no UTF-8 form`), so `postreg --fulfills` inheriting one from a
+  prereg exits 1 with that error.
+- The manifests block shows `[None]  keyid=None` for every file that fails `format`, unknown
+  formats included: its body is not read (checkpoint 3's observation that it showed
+  `payload.phase` of a body this release can't interpret no longer applies).
+
+**Evidence:**
+- `scripts/check.sh`: ruff check and format check clean. pytest **478 passed before**
+  (`c08ad59`), **620 after** (`b0abfdb`). By file: `test_verify_format.py` 38 → 83,
+  `test_verify_selfsig.py` 6 → 30, `test_verify_run_rules.py` 52 → 76,
+  `test_verify_matching.py` 29 → 34, `test_verify_planted_faults.py` 25 → 30, `test_cli.py`
+  83 → 90, `test_manifest.py` 25 → 40, `test_primitives.py` 10 → 26, `test_constants.py`
+  30 → 31; the rest unchanged.
+- Red first: with only the tests changed, 296 failed, 144 passed and 4 test files failed to
+  collect. 267 failures were `TypeError: Object of type bytes is not JSON serializable`
+  (`signing_input` re-serialized whatever it was given, so it could not take body bytes), 14
+  `manifest has no attribute 'read_body'`, 8 `KeyError: 'dsse'`, and the collection errors
+  were `cannot import name 'Dsse'` / `'b64decode'`. The rest: `b'asexec-PAE/v1' ==
+  b'DSSEv1'`, the `FORMATS` literal, the ref literal, the doc-coverage test. With the code in
+  place only the frozen-vector tests (placeholders) and the doc-coverage test failed; they
+  passed once the vectors were regenerated and `docs/VERIFICATION.md` rewritten.
+- Tests that pin each requirement:
+  - `format` #1: `test_format__fail__1_well_formed_file` (10 files, now with `missing-dsse`,
+    `dsse-not-object`, `missing-signatures`, `missing-payload`),
+    `__fail__1_no_duplicate_keys` (a repeated `pubkey`), `__fail__1_nested_at_most_64_deep`,
+    `__fail__1_dsse_is_an_object` (4), `__fail__1_payload_type_is_a_string` (5, exact reasons
+    `malformed: dsse.payloadType: …`, with a top-level `payloadType` present that is not
+    read), `__fail__1_signatures_is_an_array` (4), `__pass__1_nesting_at_the_limit`,
+    `__pass__1_brackets_inside_strings_do_not_nest`.
+  - `format` #2: `test_format__fail__2_payload_is_strict_base64` (15: missing, null, number,
+    list, padding dropped/short/extra, newline/space inside, newline after, `-`, `_`, `!`, a
+    non-ASCII letter, unused bits set), `__fail__2_payload_has_one_spelling_per_byte_string`
+    (`e31=`, `e32=`, `e33=` all decode to `{}` beside a passing `e30=`),
+    `__fail__2_body_is_utf8` (4), `__fail__2_body_is_a_json_object` (8),
+    `__fail__2_body_has_no_duplicate_keys` (exact reason `malformed: body: duplicate JSON key
+    'phase'`), `__fail__2_duplicate_key_nested_in_the_body`,
+    `__fail__2_body_nested_at_most_64_deep` (a body 65 deep in a file 3 deep),
+    `__pass__2_body_nesting_is_counted_in_the_body_alone` (64 deep passes),
+    `__pass__2_brackets_inside_body_strings_do_not_nest`,
+    `__pass__2_body_bytes_are_read_as_stored` (spaced, reordered bytes pass, and the reported
+    `ref` is the sha-256 of exactly those bytes), `__pass__2_lone_surrogate_escape_in_the_body_is_valid_json`,
+    `__pass__2_small_body_as_signed`.
+  - `format` #3: the 9 `payloadType` cases now set `dsse.payloadType`;
+    `__fail__3_unknown_format_is_not_judged_by_this_formats_frame` (no signatures, payload
+    `"?"`: the upgrade reason), `__fail__3_never_falls_back_to_this_releases_rules`,
+    `__fail__3_file_laid_out_before_0_4_0` (0.3.x layout: pre-0.4.0 reason under the 0.3.x
+    type, `malformed: dsse: Field required` under the current one).
+  - `selfsig`: `test_selfsig__fail__1_exactly_one_signature` (none, two copies of the valid
+    one, a junk second, an empty first, a string, `null`, an array entry),
+    `__fail__2_pubkey_and_sig_are_hex` (10: missing, null, non-hex, odd length, number,
+    array, object), `__pass__2_hex_accepts_either_case_and_whitespace` (moved from format),
+    `__fail__3_signature_covers_the_body_bytes`,
+    `__fail__3_signature_covers_the_bytes_not_the_json` (the same JSON respaced fails),
+    `__fail__3_signature_by_pubkey`, `__fail__4_keyid_derives_from_pubkey` (missing, null,
+    another key's, number, object). Each asserts `format=PASS`, `4/4 manifest(s) ok`, and
+    `selfsig` `1/4 manifest(s) failed`.
+  - #44 under the new counting:
+    `test_matching__fail__4_prereg_meets_selfsig_conditions` gains `two-signatures`,
+    `two-valid-signatures`, `pubkey-missing`, `pubkey-not-hex` and `sig-missing` (each a
+    rejected pre-registration whose keyid is `dsse.signatures[0].keyid`, all three postregs
+    under it, no commitment, no notarization-only);
+    `test_run__postreg_failing_only_selfsig_is_rejected_under_its_commitment` (6: non-hex or
+    missing `pubkey`, missing `sig`, missing `keyid`, no signature, two signatures).
+  - Run rules: `test_run__malformed_file_fails_format_and_no_other_test_examines_it` gains
+    `duplicate-key-in-body` (validly signed, ceiling kept) and `not-base64`;
+    `test_run__file_failing_format_is_examined_by_no_other_test` (a body with a floor and a
+    subject that fails on a duplicate key, on not being an object, or on an unknown format);
+    `__malformed_postreg_joins_no_commitment` and `__prereg_failing_format_is_not_a_provided_prereg`
+    use frame faults instead of the old non-hex case.
+  - Never raises: `test_never_raises__lone_surrogate_escape_in_the_body` (10 body strings, with
+    ceiling, chain, content and keyconsist), `__subject_named_as_no_path_can_be` (a lone
+    surrogate and a NUL: `artifact not found`), `__lone_surrogate_escape_as_due_or_link`
+    (`invalid-due`; notarization-only with that `fulfills`),
+    `__lone_surrogate_escape_as_a_claimed_keyid` (a rejected pre-registration with that
+    keyid). `test_cli.py::test_verify_shows_lone_surrogates_escaped` checks the report prints
+    `due          : \ud800`, `(fulfills \udfff)` and `✗ \ud801: artifact not found`.
+  - Planted faults: unknown fields of the file, of `dsse` and of the signature entry
+    (`alg`), and a top-level `payloadType`, are not read; `test_fault__body_not_an_object`,
+    `__payload_as_json_rather_than_base64` (0.3.x's object payload),
+    `__very_deep_body_fails_format_everywhere` (100,000 levels, signed),
+    `__postreg_with_a_duplicate_key_in_the_body_joins_no_commitment`.
+  - Writer: `tests/test_manifest.py::test_sign_writes_a_dsse_envelope_in_the_wrapper` (exact
+    keys and order, payload = base64 of the canonical bytes, one `{keyid, sig}`),
+    `test_read_body_refuses_what_is_not_a_body` (7), `test_sign_refuses_a_body_with_no_utf8_form`,
+    `test_writer_writes_exactly_one_signature[0|2]`, `test_writer_payload_is_strict_base64`,
+    `test_writer_pubkey_rejects_non_lowercase_hex`; `tests/test_primitives.py` strict base64
+    round trip (5) and one-spelling (11).
+  - CLI: `test_postreg_inherits_target_due_and_declaration_from_the_prereg_body`,
+    `test_fulfills_is_the_digest_of_the_prereg_bytes_as_stored` (a prereg whose stored bytes
+    are spaced and unordered: `fulfills` is their sha-256, and verify gives `[FULFILLED]`),
+    `test_fulfills_file_with_no_readable_body_is_a_clean_error` (3),
+    `test_postreg_inheriting_a_string_with_no_utf8_form_is_a_clean_error` (exit 1),
+    `test_verify_version_skew_reads_as_format_not_signature` (now `[None]`).
+  - Constants: `test_signing_pae_version_and_manifest_payload_type` (`b"DSSEv1"`),
+    `test_formats_has_one_entry_keyed_by_manifest_payload_type`,
+    `test_signing_input_of_the_frozen_v1_vector` (the literal
+    `b'DSSEv1 30 application/vnd.asexec.v1+json 31 {"phase":"prereg","target":"m"}'`, and
+    `FROZEN_MANIFEST`'s payload decodes to those 31 bytes), the new
+    `test_ref_of_the_frozen_v1_vector_is_the_digest_of_its_stored_body_bytes` (literal
+    `sha-256:2e2ecfe5…48e53e`, through `manifest.ref` and through verify's report),
+    `test_signing_key_alg` (the algorithm is in key files and identity documents; a
+    manifest's signature entry is exactly `{keyid, sig}`), `test_not_enforced_yet__signature_alg`
+    (an `alg` in the entry is not read), the roundtrip (refs equal the stored bytes' digest).
+- **Frozen vectors regenerated by the production signer.** A script in the session scratchpad
+  calls `manifest.sign(body, bytes(32), pub)` with only its bedrock gate stubbed out (the
+  frozen bodies hold just `phase` and `target`, and a subject), as checkpoint 1 did. Run on a
+  worktree at `c08ad59` first, it printed the vectors then in the file exactly (`afd85bcb…`,
+  `13dccac3…`), so it is the method that made them. On this branch it printed the DSSE files
+  now in `tests/test_constants.py`: `FROZEN_MANIFEST` payload
+  `eyJwaGFzZSI6InByZXJlZyIsInRhcmdldCI6Im0ifQ==`, sig `39bf368a…08a60f`;
+  `FROZEN_NO_HASH_ALG_MANIFEST` sig `32b453cc…cf120b`. `FROZEN_KEY` loses `alg`, the keyid
+  and pubkey are unchanged. `PRE_V1_MANIFEST`, the genuine 0.3.x file, is unedited and gives
+  `format=FAIL selfsig=FAIL` with the pre-0.4.0 reason.
+- **Interop, independent of asexec** (a scratchpad script that imports only `json`,
+  `base64`, `binascii`, `hashlib` and PyNaCl, run with `python -I`): it builds the PAE by hand
+  from the DSSE protocol (`"DSSEv1" SP LEN(type) SP type SP LEN(body) SP body`), decodes the
+  payload with `binascii.a2b_base64(strict_mode=True)` and requires it to re-encode to the
+  same string, verifies the signature with `nacl.signing.VerifyKey` directly, checks the
+  keyid, computes `ref = sha256(base64decode(payload))` and checks each `fulfills`/`prev_hash`
+  against those refs. On CLI-produced `prereg.json`, `postreg-1.json`, `postreg-2.json`:
+  `sig=OK keyid=OK` for all three, refs `b17107d0…`, `da0adf83…`, `ae569ef2…` (the CLI printed
+  the same), PAEs starting `DSSEv1 30 application/vnd.asexec.v1+json 101 {"phase":"prere…`,
+  every link names a file given, `ALL OK`, exit 0. On the two frozen vectors: `ALL OK`. On the
+  edited-body and relabelled files below: `sig=BAD`, exit 1.
+- CLI demonstrations, in a scratch dir (`keygen`; `prereg --target "model m via provider p"`;
+  `postreg --fulfills prereg.json [--prev postreg-1.json]`). The cases are `postreg-1.json`
+  edited by hand as JSON (a scratchpad script that does not import asexec). Each is
+  `asexec verify prereg.json <case> --tests format,selfsig,chain,keyconsist`.
+  - Good chain: the three files give `[FULFILLED]` (`postregs : 2`), `asexec-verify/1
+    chain=PASS format=PASS keyconsist=PASS selfsig=PASS`, exit 0. `prereg.json`:
+    ```
+    {"dsse": {"payloadType": "application/vnd.asexec.v1+json",
+              "payload": "eyJwaGFzZSI6InByZXJlZyIsInByZWRpY2F0ZVR5cGUiOiJodHRwczovL2FzZXhlYy5vcmcvbWFuaWZlc3QvdjEiLCJ0YXJnZXQiOiJtb2RlbCBtIHZpYSBwcm92aWRlciBwIn0=",
+              "signatures": [{"keyid": "sha-256:bc5627006c7d…66f9945c", "sig": "7a816afd…3d8600"}]},
+     "pubkey": "91230c4ebff9…a9f86c58"}
+    ```
+  - Malformed, each `✗ <file>  [None]  keyid=None`, `[OPEN]` with `postregs : 0`, `format=FAIL
+    (1/2 manifest(s) failed)`, `selfsig=PASS (1/1 manifest(s) ok)`, code `chain=FAIL
+    format=FAIL keyconsist=FAIL selfsig=PASS`, exit 2, with the reason:
+    - bad base64 (a `!` in it): `✗ format: malformed: dsse.payload: Value error, not strict
+      base64 (the standard alphabet, padded, no whitespace, one spelling per byte string)`;
+    - non-canonical base64 (`…BwIn0=` → `…BwIn1=`, the same bytes): the same reason;
+    - body not an object (`[` + body + `]`, re-encoded): `✗ format: malformed: body: the body
+      must be a JSON object`;
+    - duplicate key inside the body: `✗ format: malformed: body: duplicate JSON key 'phase'`;
+    - missing signatures: `✗ format: malformed: dsse.signatures: Field required`.
+  - `selfsig`, each `✗ <file>  [postreg]  keyid=…` with no reason line, `[OPEN]` with `✗ postreg
+    sha-256:da0adf83… does NOT count toward fulfillment: invalid signature`, `format=PASS
+    (2/2 manifest(s) ok)`, `selfsig=FAIL (1/2 manifest(s) failed)`, code `chain=FAIL
+    format=PASS keyconsist=FAIL selfsig=FAIL`, exit 2: zero signatures (`keyid=None`), two
+    signatures (two copies of the valid one), missing `pubkey`, missing `sig`, non-hex
+    `pubkey`, non-hex `sig` (the last four `keyid=sha-256:bc562700…`).
+  - Edited body (decoded, `target` changed, re-encoded, signature kept): `✗ e-edited-body.json
+    [postreg]`, `✗ postreg sha-256:25640381… does NOT count toward fulfillment: invalid
+    signature` (a new ref, as it is a new body), `format=PASS selfsig=FAIL`, exit 2.
+  - Relabelled, unknown (`dsse.payloadType` → `application/vnd.asexec.v2+json`): `✗
+    r-relabelled-v2.json  [None]  keyid=None`, `✗ format: payloadType names a format newer
+    than this release: upgrade asexec to read it`, `format=FAIL selfsig=PASS`, exit 2.
+  - Relabelled, known (signed by the same key over the PAE of the `v2` type, then labelled
+    `v1`, the one type this release reads): read as `v1`, `invalid signature`, `format=PASS
+    selfsig=FAIL`, exit 2.
+  - A prereg with two signatures (`p-prereg-two-signatures.json`) beside both postregs: `(no
+    commitments: no pre-registration provided is validly signed)`, `=== rejected
+    pre-registrations ===`, `✗ prereg sha-256:b17107d0… is NOT a commitment: invalid
+    signature`, `keyid : sha-256:bc562700…`, both postregs `does NOT count toward fulfillment:
+    the pre-registration's signature is invalid`, `chain=FAIL format=PASS keyconsist=FAIL
+    selfsig=FAIL`.
+  - The `docs/VERIFICATION.md` examples were rebuilt from these runs: refs are unchanged (the
+    stored bytes are the old canonical bytes), the key is new (`7bc19c1d…` → `bc562700…`),
+    and the truncated file's reason is now `Unterminated string starting at: line 4 column 16
+    (char 82)`.
+- `uv run python examples/adequacy-test/run.py`: exit 0, and its output is **byte-identical**
+  before (`c08ad59`) and after (`diff` empty): `no fault` `chain=PASS content=PASS format=PASS
+  keyconsist=PASS selfsig=PASS`, swapped plants `content=FAIL` (caught), the other two faults
+  missed as before. Its faults never edit a manifest (they re-run the CLI or edit artifacts),
+  so nothing in it needed to decode or re-sign a body, and no code changed.
+- The pre-existing NUL crash: on a worktree at `c08ad59`, a validly signed prereg with subject
+  name `a\x00b` made `verify_paths` raise `ValueError: lstat: embedded null character in path`
+  with `--tests format,selfsig,content`. It now fails content #4.
+- Nothing left behind: `git grep -n -e 'signature\.pubkey' -e 'signature\.sig' -e
+  'signature\.keyid' -e '"signature"' -e 'asexec-PAE' -e canonical -e get_body -e
+  'signature\.alg'` outside this file finds only:
+  - `"signature"` of drand floors (`drand.py`, `body.anchor.floor.signature` in tests, the
+    README and VERIFICATION examples), a different field;
+  - the old layout on purpose: `PRE_V1_MANIFEST` and its comment, the 0.3.x-layout inputs in
+    `test_verify_format.py` and `test_manifest.py`, `docs/FORMAT.md`'s 0.3.x bullet and
+    example, `ROADMAP.md`'s identifiers bullet ("`asexec-PAE/v1` before the DSSE envelope") and
+    MULTIVERSION's rejected-selector row for `signature.alg`;
+  - `asexec-PAE/other`, the test-only second format of the selector tests;
+  - `canonical_bytes`, kept as signing's serialization (writer, `tests/manifest_data.py`, and
+    the tests that build signed files), `canonical.py` itself, and unrelated uses ("canonical
+    verify code", Roughtime's canonical tag order, `ROADMAP.md`'s JCS item and history).
+
+  No verification path canonicalizes: `signing_input` and `manifest.ref` take bytes, and
+  `verifier.py` imports `b64decode` and `signing_input` from `canonical.py`, not
+  `canonical_bytes`. The top-level `signature` and `payloadType` are gone from every model and
+  writer; `Signature.alg`, `EnvelopeInput.payload`/`payloadType`/`signature` and
+  `manifest.get_body` are removed.
+
+**Release-note entries** (for #40, in the `tests/test_constants.py` header format):
+
+```
+Identifier: FORMATS[MANIFEST_PAYLOAD_TYPE]["signing_pae_version"], asexec-PAE/v1 -> DSSEv1
+Impact: BREAKS_USERS
+Affected: every manifest signed before this change: the PAE prefix is in the signed bytes (and the file layout changed too, below)
+Action: re-sign with this release
+
+Identifier: the manifest file layout (no constant): {payloadType, payload: <object>, signature: {alg, keyid, pubkey, sig}} -> {dsse: {payloadType, payload: <base64 of the body bytes>, signatures: [{keyid, sig}]}, pubkey}
+Impact: BREAKS_USERS
+Affected: every manifest written before this change is malformed ("dsse: Field required"), except a 0.3.x file, which fails format with the pre-0.4.0 reason; tools that read payload or signature.* from a file; the Python API (manifest.get_body removed, manifest.ref takes the body bytes, canonical.signing_input takes bytes, models.Signature has no alg or pubkey)
+Action: re-sign with this release; read the body by base64-decoding dsse.payload, and the key from pubkey and dsse.signatures[0]
+```
+
+**Observations (out of scope):**
+- **For the human gate: hex `sig` is not standard DSSE.** The DSSE envelope spec gives `sig` as
+  base64 of the signature (and allows standard or URL-safe base64 for `payload`). This
+  checkpoint follows its brief: `sig` and `pubkey` are hex, judged by `selfsig` #2, and
+  `payload` must be standard padded base64. `ROADMAP.md` (*Wrapper*) says `dsse` is "a
+  standard envelope that DSSE and in-toto tooling can lift out and verify unchanged": with a
+  hex `sig`, standard tooling would base64-decode the hex string and fail. Either `sig`
+  becomes base64 (another format change, before 0.4.0 fixes the format) or the ROADMAP claim
+  is narrowed. Our strict `payload` rule is a subset of DSSE's, so an envelope another DSSE
+  tool writes with URL-safe base64 would be malformed here.
+- The manifests block still gives no reason for a file that passes `format` and fails
+  `selfsig` (checkpoint 2's observation). With four `selfsig` conditions it would help more:
+  "two signatures" reads very differently from "signature does not verify". Every failure
+  is still `invalid signature` in the commitment and rejected-pre-registration blocks.
+- Checkpoint 5's open item stands: unauthenticated strings (a claimed keyid, `body.fulfills`,
+  a subject name) are printed raw apart from `cli._show`'s escape of characters with no UTF-8
+  form, so a newline in one can still forge report lines.
+- `tests/verify/test_verify_format.py` pins pydantic's text for a non-object `dsse` (`Input
+  should be a valid dictionary or instance of DsseInput`), which shows a class name in a
+  user-facing reason, and the base64 reason carries pydantic's `Value error, ` prefix. Both are
+  stable across the supported pydantic, but a reason of asexec's own would read better.
+- `src/asexec/manifest.py` `get_ceiling` is used only by `tests/test_manifest.py` (it predates
+  this checkpoint).
+- For #33 (checkpoint 7): `FROZEN_NO_HASH_ALG_MANIFEST` relies on the body-level `hash_alg`
+  fallback, which #33 removes, and D6 has #33 regenerate the vectors again; the regeneration
+  script and the interop script from this checkpoint (session scratchpad) can be reused.
+- For #34: nothing here reads an unknown top-level key; they are ignored as before
+  (`test_fault__unsigned_envelope_field_verify_does_not_examine`), and #34 puts them under
+  *untrusted*.
+
+**Judgement calls / new paradigms:**
+- **Path notation `body.<path>`**, chosen over keeping `payload.<path>`: `dsse.payload` is now a
+  base64 string, so `payload.phase` would read as a member of a string. Every path that does
+  not start `body.` is from the file's root. Defined once under *Conventions*.
+- **`format` numbering:** #1 the file and frame (`dsse`, `dsse.payloadType`,
+  `dsse.signatures`), #2 the payload and body, #3 the type, so #3 keeps its number and tests.
+  "A `payload` that strict-decodes to a JSON object" is #2 rather than part of #1 because it
+  is the one frame rule with its own rules (base64, UTF-8, the body's JSON rules).
+- **`selfsig` numbering:** #1 one entry, #2 hex, #3 the signature, #4 the keyid, so each of the
+  brief's selfsig cases fails exactly one item.
+- **Body depth is counted in the body alone**, from its own outermost object. The file holds
+  it as a string, so a body's depth is the same in any file, and the limit means what it says
+  for both.
+- **Body bytes must be UTF-8, without a BOM** (RFC 8259 §8.1): `json.loads(bytes)` would
+  otherwise auto-detect UTF-16/32, and two verifiers could read different text from the same
+  signed bytes. JSON that is not an object, and empty bytes, are malformed (#2, "decodes to a
+  JSON object").
+- **A lone surrogate escape is valid** (it does not stop verify reading the manifest, which is
+  now all that "malformed" means): it passes `format` and `selfsig`, and every reader treats
+  it as an ordinary string. The report escapes it with `backslashreplace` on every line,
+  rather than a per-field escape; this changes nothing for any other text. A subject name
+  that no path can have (`ValueError` from `realpath`: a NUL, or a surrogate the filesystem
+  encoding can't encode) is `artifact not found` (content #4), the item about whether the
+  artifact exists.
+- **0.3.x files keep their reason.** Checkpoint 3 gave genuine 0.3.x files the pre-0.4.0
+  reason; with the selector moved into `dsse`, a 0.3.x file has no `dsse.payloadType`, so
+  `verify_format` also recognizes 0.3.x's own layout (no `dsse`, top-level `payloadType ==
+  "application/vnd.asexec+json"`). Any other `dsse`-less file is malformed. Documented in
+  `format` #3.
+- **The claimed keyid is `dsse.signatures[0].keyid`**, whatever the number of entries, and
+  `None` if the list is empty or its first entry is not an object (#44's rule: "postregs
+  follow the same matching conditions with `dsse.signatures[0].keyid` as signer").
+- **Strict base64 lives in `fields.Base64`** (a structural rule, like `Hex`, so the writer's
+  `Dsse` model uses it too), and the body's JSON rules are code (`manifest.parse_body`), beside
+  `manifest.load` and sharing its parser. The base64 reason is asexec's own fixed text,
+  so it does not change with the Python version's `binascii` messages.
+- **`verify_format` returns the body bytes and body**, which `verify_paths` pops before the
+  record goes into the report, so the report's `manifests[].format` slice keeps its shape and
+  carries no body.
+- **The writer refuses a string with no UTF-8 form** (`canonical_bytes` raises
+  `ManifestError`), so the CLI prints an error and exits 1 instead of a traceback.
+- **`canonical.py` is kept and repurposed** ("the body bytes signing writes, their one base64
+  spelling, and the PAE signing input") rather than splitting base64 into a new module.
+- **`docs/FORMAT.md`** (not in #32's list): the banner now says the DSSE envelope is built and
+  `untrusted` is not; the PAE example uses `DSSEv1`; "Today (0.3.x)" is "0.3.x". Nothing else.
+  `docs/MULTIVERSION.md` and `docs/DEVELOPMENT.md` (also not listed) had sentences this made
+  false (the selector "reads the top-level `payloadType` until the DSSE switch", the PAE
+  comment, the `signature.alg` rows, the test-path example); only those are changed.
+- No new dependency, system or paradigm.
