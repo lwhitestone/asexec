@@ -1,12 +1,15 @@
 """``format`` (the file can be read): docs/VERIFICATION.md `### format`. Naming: see conftest.py.
 
-``selfsig`` does not examine a file that fails ``format``, so a malformed file among valid
-ones reads ``format=FAIL selfsig=PASS``: the code tells "unreadable" apart from "changed
-since it was signed" (``test_verify_selfsig.py``).
+``selfsig`` does not examine a file that fails ``format``, so a malformed file, or one of a
+format this release does not read, among valid ones reads ``format=FAIL selfsig=PASS``: the
+code tells "unreadable" and "upgrade" apart from "changed since it was signed"
+(``test_verify_selfsig.py``).
 """
 
+import json
 import os
 
+import manifest_data as d
 import pytest
 
 from asexec.verifier import verify_paths
@@ -15,11 +18,24 @@ PASS = "asexec-verify/1 format=PASS selfsig=PASS"
 FAIL = "asexec-verify/1 format=FAIL selfsig=PASS"  # selfsig still passes the other files
 REQUIRED = ["format", "selfsig"]
 NONE_PASSES = "no manifest passes format"
+NEWER = "payloadType names a format newer than this release: upgrade asexec to read it"
+BETA = "payloadType names an asexec beta format, and betas are not supported"
+PRE_V1 = (
+    "payloadType names the format of asexec before 0.4.0, which is not supported:"
+    " re-sign with this release"
+)
+_MISSING = object()
+
+
+def _entry(report, name):
+    (entry,) = [m for m in report["manifests"] if m["path"].endswith(f"{os.sep}{name}.json")]
+    return entry
 
 
 def test_format__pass__all(scenario):
-    """format #1-#2: every file is a JSON object with an object payload and signature, and
-    hex pubkey and sig."""
+    """format #1-#3: every file is a JSON object with an object payload, a string
+    payloadType and an object signature, has hex pubkey and sig, and names a format this
+    release reads."""
     report = scenario.verify()
     assert report["code"] == PASS
     assert report["ok"] is True
@@ -34,8 +50,8 @@ MALFORMED_FILES = {
     "array": "[1, 2]",
     "string": '"x"',
     "null": "null",
-    "missing-payload": '{"signature": {}}',
-    "missing-signature": '{"payload": {}}',
+    "missing-payload": '{"payloadType": "application/vnd.asexec.v1+json", "signature": {}}',
+    "missing-signature": '{"payloadType": "application/vnd.asexec.v1+json", "payload": {}}',
 }
 
 
@@ -138,6 +154,33 @@ def test_format__fail__1_unlistable_directory_is_examined_and_malformed(tmp_path
     assert entry["format"]["errors"] == [f"malformed: [Errno 13] Permission denied: '{tmp_path}'"]
 
 
+@pytest.mark.parametrize(
+    "value,error",
+    [
+        (_MISSING, "malformed: payloadType: Field required"),
+        (None, "malformed: payloadType: Field required"),
+        (1, "malformed: payloadType: Input should be a valid string"),
+        (
+            ["application/vnd.asexec.v1+json"],
+            "malformed: payloadType: Input should be a valid string",
+        ),
+        ({}, "malformed: payloadType: Input should be a valid string"),
+    ],
+    ids=["missing", "null", "number", "list", "object"],
+)
+def test_format__fail__1_payload_type_is_a_string(scenario, value, error):
+    """format #1: the envelope has a string payloadType. A file without one is malformed,
+    and is never read under some format's rules instead."""
+    if value is _MISSING:
+        scenario.unset("postreg0", "payloadType")
+    else:
+        scenario.set("postreg0", "payloadType", value)
+    report = scenario.verify()
+    assert report["code"] == FAIL
+    assert report["results"]["selfsig"]["applicable"] == 3
+    assert _entry(report, "postreg0")["format"]["errors"] == [error]
+
+
 @pytest.mark.parametrize("field", ["pubkey", "sig"])
 def test_format__fail__2_pubkey_and_sig_are_hex(scenario, field):
     """format #2: signature.pubkey and signature.sig are hex. A file where either is not
@@ -146,6 +189,70 @@ def test_format__fail__2_pubkey_and_sig_are_hex(scenario, field):
     report = scenario.verify()
     assert report["code"] == FAIL
     assert report["results"]["selfsig"]["applicable"] == 3
+
+
+@pytest.mark.parametrize(
+    "payload_type,reason",
+    [
+        ("application/vnd.asexec.v2+json", NEWER),
+        ("application/vnd.asexec.v10+json", NEWER),
+        ("application/something-else", NEWER),
+        ("", NEWER),
+        ("APPLICATION/VND.ASEXEC.V1+JSON", NEWER),
+        ("application/vnd.asexec.v1+json ", NEWER),
+        ("application/vnd.asexec.0.4.0b1+json", BETA),
+        ("application/vnd.asexec.1.12.3b20+json", BETA),
+        ("application/vnd.asexec+json", PRE_V1),
+    ],
+    ids=[
+        "v2",
+        "v10",
+        "not-asexec",
+        "empty",
+        "other-case",
+        "trailing-space",
+        "beta",
+        "beta-wide",
+        "before-0.4.0",
+    ],
+)
+def test_format__fail__3_payload_type_names_a_known_format(scenario, payload_type, reason):
+    """format #3: payloadType names a format this release reads, exactly. A file that names
+    another fails format with a reason saying which kind it is, and is not examined by
+    selfsig, which still passes for the other files: version skew reads as format=FAIL, not
+    as a bad signature. The type is changed after signing, so the file's signature no longer
+    covers it either; only format judges it."""
+    scenario.set("postreg0", "payloadType", payload_type)
+    report = scenario.verify()
+    assert report["code"] == FAIL
+    assert report["results"]["format"]["reason"] == "1/4 manifest(s) failed"
+    assert report["results"]["selfsig"]["applicable"] == 3
+    assert _entry(report, "postreg0")["format"]["errors"] == [reason]
+
+
+def test_format__fail__3_unknown_format_is_not_judged_by_this_formats_frame(scenario):
+    """format #3: a file of a format this release does not read is not held to this format's
+    frame (#1) or hex (#2): a newer format may be laid out differently. It fails with the
+    upgrade reason, not as malformed."""
+    scenario.add_raw(
+        "v2", '{"payloadType": "application/vnd.asexec.v2+json", "dsse": {"payload": "e30="}}'
+    )
+    report = scenario.verify()
+    assert report["code"] == FAIL
+    assert report["results"]["selfsig"]["applicable"] == 4
+    assert _entry(report, "v2")["format"]["errors"] == [NEWER]
+
+
+def test_format__fail__3_never_falls_back_to_this_releases_rules(scenario):
+    """format #3: a file whose signature would verify under this release's rules with its own
+    payloadType in the PAE still fails format: no other entry's rules are applied to it."""
+    scenario.add_raw(
+        "labelled", json.dumps(d.sign_labelled(d.PREREG, "application/vnd.asexec.v2+json"))
+    )
+    report = scenario.verify()
+    assert report["code"] == FAIL
+    assert report["results"]["selfsig"]["applicable"] == 4
+    assert _entry(report, "labelled")["format"]["errors"] == [NEWER]
 
 
 def test_format__fail__empty_no_manifests():

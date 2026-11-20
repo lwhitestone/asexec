@@ -11,10 +11,18 @@ asexec verify <manifest|dir>... --tests <name>[,<name>...] [--artifacts <dir>]
 
 ## Conventions
 
-**Property paths.** A manifest file is an envelope with three top-level members: `payload`
-(the signed body), `signature`, and optionally `ceiling`. Properties are written as dotted
-paths from the envelope root, e.g. `payload.anchor.floor.round`, `signature.keyid`,
-`ceiling.nonce`. `[]` denotes array elements: `payload.subject[].name`.
+**Property paths.** A manifest file is an envelope with four top-level members:
+`payloadType` (its format), `payload` (the signed body), `signature`, and optionally
+`ceiling`. Properties are written as dotted paths from the envelope root, e.g.
+`payload.anchor.floor.round`, `signature.keyid`, `ceiling.nonce`. `[]` denotes array
+elements: `payload.subject[].name`.
+
+**Formats.** A file's `payloadType` names its format, and every test reads the file under
+that format's rules only, never another format's. This release reads one format,
+`application/vnd.asexec.v1+json`, and this document gives its rules: the PAE signing input
+starts `asexec-PAE/v1`, `ref` and `keyid` start `sha-256:`, and a subject with no
+`payload.hash_alg` is read as `sha-256`. A file whose `payloadType` names any other format
+fails [`format`](#format) #3.
 
 **Phases.** A manifest's phase is its `payload.phase`. A *prereg* is a manifest with
 `payload.phase == "prereg"`; a *postreg* has `payload.phase == "postreg"`. `ref(m)` is
@@ -56,12 +64,15 @@ in the README's [Exit status](../README.md#exit-status).
   it also does not count toward passing.
 - Verification is offline.
 - A file is **malformed** if it cannot be read, is not a JSON object, nests more than 64
-  deep, contains a duplicate JSON key at any level, lacks an object `payload` or
-  `signature`, has a `payload` with no canonical bytes (a string in it, key or value, holds
-  an unpaired surrogate escape such as `"\ud800"`, which has no UTF-8 encoding), or its
-  `signature.pubkey` and `signature.sig` are not both hex. It fails
-  [`format`](#format), and no other test examines it, `selfsig` included. It takes no part
-  in any commitment: it is neither counted nor rejected (see
+  deep, contains a duplicate JSON key at any level, lacks an object `payload`, a string
+  `payloadType` or an object `signature`, has a `payload` with no canonical bytes (a string
+  in it, key or value, holds an unpaired surrogate escape such as `"\ud800"`, which has no
+  UTF-8 encoding), or its `signature.pubkey` and `signature.sig` are not both hex
+  ([`format`](#format) #1 and #2). A file is of an **unknown format** if its `payloadType`
+  is a string that names no format this release reads ([`format`](#format) #3).
+- A file that is malformed or of an unknown format fails [`format`](#format), and no other
+  test examines it, `selfsig` included. It takes no part in any commitment: it is neither
+  counted nor rejected (see
   [Matching postregs to commitments](#matching-postregs-to-commitments)).
 
 ## Output
@@ -72,7 +83,7 @@ report's wording may change, except for the reasons this document lists.
 
 | Block | Printed | Shows |
 |---|---|---|
-| `=== manifests ===` | always | One line per file: `✓` if it passes `format` and meets `selfsig`'s conditions (else `✗`), the path, `payload.phase` and `signature.keyid`. Indented beneath: why a malformed file fails `format` (`format: malformed: …`), and one line each for a floor, a ceiling and content hashes when the manifest has them. |
+| `=== manifests ===` | always | One line per file: `✓` if it passes `format` and meets `selfsig`'s conditions (else `✗`), the path, `payload.phase` and `signature.keyid`. Indented beneath: why a file fails `format` (`format: malformed: …`, or the [reason](#format) for an unknown format), and one line each for a floor, a ceiling and content hashes when the manifest has them. |
 | `=== commitments ===` | always | One entry per commitment (a prereg's `ref` and signer): its [state](#commitment-states), `ref`, signer keyid, `due`, the number of counted postregs, a chain problem if any, and each rejected postreg with its reason. |
 | `=== notarization-only … ===` | if any | Each [notarization-only](#matching-postregs-to-commitments) postreg: one whose `payload.fulfills` matches no provided prereg. |
 | `=== tests ===` | always | One line per requested test: its result and a short reason. |
@@ -118,13 +129,13 @@ Checked at 2026-12-31T23:59:59Z
 | [`chain`](#chain) | • `payload.phase`<br>• `payload.fulfills`<br>• `payload.prev_hash`<br>• `signature.pubkey`<br>• `signature.sig`<br>• `signature.keyid` | 1. exactly one counted postreg has no `payload.prev_hash`<br>2. every other `payload.prev_hash` is the `ref` of a counted postreg<br>3. no `ref` is the `payload.prev_hash` of more than one counted postreg |
 | [`content`](#content) | • `payload.subject`<br>• `payload.subject[].name`<br>• `payload.subject[].digest`<br>• `payload.hash_alg`<br>• `--artifacts` | 1. `payload.subject` is a non-empty array of well-formed entries<br>2. `payload.hash_alg` is available<br>3. `name` resolves inside `--artifacts`<br>4. the artifact exists<br>5. the artifact is readable<br>6. recomputed digest equals `digest[hash_alg]` |
 | [`floor`](#floor) | • `payload.anchor.floor.floor_type`<br>• `payload.anchor.floor.chain_hash`<br>• `payload.anchor.floor.round`<br>• `payload.anchor.floor.signature`<br>• `payload.anchor.floor.randomness` | 1. `floor_type` is `drand`<br>2. `chain_hash` is pinned<br>3. `round` is an integer and `signature` is hex<br>4. `randomness`, if present, equals `sha256(signature)`<br>5. `signature` BLS-verifies for `round` under the pinned key |
-| [`format`](#format) | • the file<br>• `payload`<br>• `signature`<br>• `signature.pubkey`<br>• `signature.sig` | 1. file is a well-formed JSON envelope<br>2. `signature.pubkey` and `signature.sig` are hex |
+| [`format`](#format) | • the file<br>• `payloadType`<br>• `payload`<br>• `signature`<br>• `signature.pubkey`<br>• `signature.sig` | 1. file is a well-formed JSON envelope<br>2. `signature.pubkey` and `signature.sig` are hex<br>3. `payloadType` names a format this release reads |
 | [`keyconsist`](#keyconsist) | • `payload.phase`<br>• `payload.fulfills`<br>• `signature.pubkey`<br>• `signature.sig`<br>• `signature.keyid` | 1. every validly signed postreg naming the prereg's `ref` has the `signature.keyid` of a provided prereg with that `ref` |
 | [`selfsig`](#selfsig) | • `payload`<br>• `signature.pubkey`<br>• `signature.sig`<br>• `signature.keyid` | 1. `signature.sig` verifies over `payload` by `signature.pubkey`<br>2. `signature.keyid` derives from `signature.pubkey` |
 
 Condition numbers match each test's *Passes when all* list below; the table shortens them.
 `format` and `selfsig` are required in every run. `selfsig` examines only files that pass
-`format`, and so does every other test.
+`format`, and so does every other test, each under the rules of the file's format.
 
 (\*) per [Run rules](#conventions): if no manifest or commitment has these properties, the
 test is empty and judged `FAIL` (see each test's *When empty* line).
@@ -157,10 +168,10 @@ Roughtime witness: the manifest was created no later than time T.
    - the Merkle path (`PATH`, `INDX`) roots `ceiling.nonce` at `SREP.ROOT`;
    - `DELE.MINT <= SREP.MIDP <= DELE.MAXT`.
 
-**When empty:** if no well-formed manifest has a `ceiling`, the test has nothing to examine
-and is `FAIL`, with the reason `requested but no manifest carries a ceiling witness`.
+**When empty:** if no manifest that passes `format` has a `ceiling`, the test has nothing to
+examine and is `FAIL`, with the reason `requested but no manifest carries a ceiling witness`.
 
-**Not examined:** a manifest that is malformed (see Run rules).
+**Not examined:** a manifest that fails `format` (see Run rules).
 
 **Trust class:** signature-witness. Passing means the named server signed that time; it is
 not proof-of-work. Interop is proven for `int08h-Roughtime` and expected, not proven, for
@@ -279,7 +290,7 @@ Subject digests recomputed from the original artifacts.
 - `payload.subject`
 - `payload.subject[].name`
 - `payload.subject[].digest`
-- `payload.hash_alg` (default `sha-256` if absent)
+- `payload.hash_alg` (if absent, the format's default: `sha-256`)
 - `--artifacts`
 
 **Passes when all** (for each manifest that has a `payload.subject`, and each of its entries)
@@ -295,7 +306,7 @@ Subject digests recomputed from the original artifacts.
    `digest[hash_alg]`, in either hex case.
 
 **When empty:** if `--artifacts` is not given or is empty (`--artifacts ""`), or no
-well-formed manifest has a `payload.subject`, the test has nothing to examine and is
+manifest that passes `format` has a `payload.subject`, the test has nothing to examine and is
 `FAIL`, with the reason `requested but no content could be checked (need --artifacts and a
 manifest with a subject)`.
 
@@ -303,7 +314,7 @@ manifest with a subject)`.
 `algorithm unavailable: <alg>`, `path resolves outside --artifacts`, `artifact not found`,
 `artifact unreadable: <error>`, or a digest mismatch with `expected`/`actual`.
 
-**Not examined:** a manifest that is malformed; any manifest when `--artifacts` is absent.
+**Not examined:** a manifest that fails `format`; any manifest when `--artifacts` is absent.
 
 **Does not establish:** provenance. A match shows the artifact was not altered, not that it
 is the output of the named harness and model.
@@ -366,11 +377,11 @@ drand beacon: the manifest was created no earlier than time T.
 5. `signature` is a valid BLS12-381 signature over `sha256(round as 8-byte big-endian)`
    under the pinned group public key.
 
-**When empty:** if no well-formed manifest has a `payload.anchor.floor`, the test has
-nothing to examine and is `FAIL`, with the reason `requested but no manifest carries an
+**When empty:** if no manifest that passes `format` has a `payload.anchor.floor`, the test
+has nothing to examine and is `FAIL`, with the reason `requested but no manifest carries an
 anchor.floor`.
 
-**Not examined:** a manifest that is malformed.
+**Not examined:** a manifest that fails `format`.
 
 **Does not establish:** that the pre-registration preceded the run. A floor bounds
 freshness (anti-precomputation), not backdating.
@@ -417,10 +428,12 @@ Checked at 2026-12-31T23:59:59Z
 
 ### `format`
 
-Whether the file can be read as a manifest at all. Required in every run.
+Whether the file can be read as a manifest of a format this release reads. Required in
+every run.
 
 **Examines (\*)**
 - every manifest file found, as a whole
+- `payloadType`
 - `payload`
 - `signature`
 - `signature.pubkey`
@@ -428,22 +441,41 @@ Whether the file can be read as a manifest at all. Required in every run.
 
 **Passes when all**
 1. The file can be read, and is a JSON object, nested at most 64 deep, with no duplicate
-   keys, containing an object `payload` and an object `signature`, and `payload` has
-   canonical bytes (no string in it, key or value, holds an unpaired surrogate escape).
+   keys, containing an object `payload`, a string `payloadType` and an object `signature`,
+   and `payload` has canonical bytes (no string in it, key or value, holds an unpaired
+   surrogate escape).
 2. `signature.pubkey` and `signature.sig` are hex.
+3. `payloadType` names a format this release reads, compared exactly: in this release,
+   `application/vnd.asexec.v1+json` (see [Formats](#conventions)). A file that names
+   another format is never read under this one's rules instead. Such a file is held only to
+   the part of #1 that comes before any format: it can be read, and is a JSON object,
+   nested at most 64 deep, with no duplicate keys. The rest of #1, and #2, are this
+   format's rules, and a newer format may lay its file out differently.
 
-A file that fails `format` is malformed (see [Run rules](#conventions)), and no other test
-examines it.
+A file that fails #1 or #2 is malformed, and one that fails #3 is of an unknown format (see
+[Run rules](#conventions)). Either way no other test examines it.
+
+**Failure reasons** (shown under the file in the report):
+- #1 and #2: `malformed: ` and what is wrong. A `payloadType` that is absent (missing or
+  `null`) is `malformed: payloadType: Field required`, and one that is not a string is
+  `malformed: payloadType: Input should be a valid string`.
+- #3, by what `payloadType` names:
+  - `application/vnd.asexec+json`, the format of asexec before 0.4.0: `payloadType names
+    the format of asexec before 0.4.0, which is not supported: re-sign with this release`.
+  - A beta's format, `application/vnd.asexec.X.Y.ZbN+json` (for example
+    `application/vnd.asexec.0.4.0b1+json`): `payloadType names an asexec beta format, and
+    betas are not supported`.
+  - Any other: `payloadType names a format newer than this release: upgrade asexec to read
+    it`.
 
 **When empty:** if no manifest file is found (every path given is a directory with no
 `*.json` file in it), `format` has nothing to examine and is `FAIL`, with the reason
 `no manifests to verify`. A path that is not a directory is always examined, even if it
 does not exist (it is malformed), and so is a directory that cannot be listed.
 
-**Does not establish:** that the signature is valid (that is [`selfsig`](#selfsig)); that
-`payload` is a well-formed asexec body (any object `payload` passes, whatever it holds);
-that `payloadType` names a format this release reads (this version does not read
-`payloadType`).
+**Does not establish:** that the signature is valid (that is [`selfsig`](#selfsig)), which
+also covers `payloadType`; that `payload` is a well-formed asexec body (any object `payload`
+passes, whatever it holds).
 
 **Example** (all requirements pass)
 
@@ -455,6 +487,7 @@ $ asexec verify prereg.json --tests format,selfsig
 
 ```jsonc
 {
+  "payloadType": "application/vnd.asexec.v1+json",
   "payload": {
     "predicateType": "https://asexec.org/manifest/v1",
     "phase": "prereg",
@@ -492,6 +525,32 @@ $ asexec verify prereg.json truncated.json --tests format,selfsig
 ✓ prereg.json  [prereg]  keyid=sha-256:7bc19c1d…
 ✗ truncated.json  [None]  keyid=None
     ✗ format: malformed: Unterminated string starting at: line 5 column 15 (char 109)
+…
+=== tests ===
+  ✗ format=FAIL  (1/2 manifest(s) failed)
+  ✓ selfsig=PASS  (1/1 manifest(s) ok)
+
+asexec-verify/1 format=FAIL selfsig=PASS
+```
+
+Version skew: `postreg-v2.json` is `postreg-1.json` from the [`chain` example](#chain) with
+its `payloadType` changed to `application/vnd.asexec.v2+json`, as a later release would
+label its own files. It fails `format` with the upgrade reason, not as a bad signature, and
+`selfsig` still passes for `prereg.json`. It takes no part in the commitment, which stays
+open. Exit status `2`:
+
+```console
+$ asexec verify prereg.json postreg-v2.json --tests format,selfsig
+```
+
+```
+=== manifests ===
+✓ prereg.json  [prereg]  keyid=sha-256:7bc19c1d…
+✗ postreg-v2.json  [postreg]  keyid=None
+    ✗ format: payloadType names a format newer than this release: upgrade asexec to read it
+
+=== commitments ===
+  [OPEN] prereg sha-256:b17107d0…
 …
 === tests ===
   ✗ format=FAIL  (1/2 manifest(s) failed)
@@ -574,9 +633,10 @@ layers: [`keyconsist`](#keyconsist) gives key continuity within one claim, and
 - `signature.sig`
 - `signature.keyid`
 
-**Passes when all** (for each manifest that passes [`format`](#format))
+**Passes when all** (for each manifest that passes [`format`](#format), under the rules of
+its format)
 1. `signature.sig` is a valid ed25519 signature by `signature.pubkey` over the PAE signing
-   input of the canonical bytes of `payload`.
+   input of the file's `payloadType` and the canonical bytes of `payload`.
 2. `signature.keyid == "sha-256:" + sha256(bytes.fromhex(signature.pubkey)).hexdigest()`.
 
 **When empty:** if no manifest passes `format` (including when no manifest file is found),
@@ -642,11 +702,11 @@ valid.
 
 | Postreg situation | `format` | `selfsig` | Outcome | In the report |
 |---|---|---|---|---|
-| Malformed (see [Run rules](#conventions)) | `FAIL` | not examined | none: not treated as a postreg | not listed under any commitment |
-| Well-formed, fails a `selfsig` condition, `fulfills` a provided prereg | `PASS` | `FAIL` | not counted: `invalid signature` | **rejected** |
+| Malformed, or of an unknown format (see [Run rules](#conventions)) | `FAIL` | not examined | none: not treated as a postreg | not listed under any commitment |
+| Passes `format`, fails a `selfsig` condition, `fulfills` a provided prereg | `PASS` | `FAIL` | not counted: `invalid signature` | **rejected** |
 | Valid signature by a key that signed no provided prereg with that `ref`, `fulfills` a provided prereg | `PASS` | `PASS` | not counted: `signed by a different key than the pre-registration` | **rejected**; also fails `keyconsist` |
 | Valid signature by the key of a provided prereg with that `ref` | `PASS` | `PASS` | **counted** toward that prereg's commitment | listed as a counted postreg of that commitment only |
-| Well-formed, `fulfills` matches no provided prereg | `PASS` | `PASS` if the signature is valid, else `FAIL` | not counted: names no provided prereg | **notarization-only** |
+| Passes `format`, `fulfills` matches no provided prereg | `PASS` | `PASS` if the signature is valid, else `FAIL` | not counted: names no provided prereg | **notarization-only** |
 
 **What affects a verdict.** Only the tests produce `PASS` or `FAIL`. *Counted* matters
 because `chain` examines counted postregs only. `keyconsist` fails a commitment only for a

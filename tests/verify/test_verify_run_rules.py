@@ -98,12 +98,20 @@ def test_run__manifest_lacking_the_examined_properties_is_not_examined(scenario)
     assert report["results"]["ceiling"]["applicable"] == 1
 
 
-@pytest.mark.parametrize("target", ["not-json", "binary", "duplicate-key", "missing-file"])
+@pytest.mark.parametrize(
+    "target", ["not-json", "binary", "duplicate-key", "missing-file", "unknown-format"]
+)
 def test_run__malformed_file_fails_format_and_no_other_test_examines_it(scenario, target):
-    """A malformed file fails format; every other test's verdict, selfsig's included, is as
-    if it were absent."""
+    """A malformed file, or one of a format this release does not read, fails format; every
+    other test's verdict, selfsig's included, is as if it were absent."""
     scenario.with_ceiling("prereg")
-    if target == "duplicate-key":
+    if target == "unknown-format":  # a copy of the prereg, ceiling and all, relabelled
+        raw = scenario.read("prereg").replace(
+            '"application/vnd.asexec.v1+json"', '"application/vnd.asexec.v2+json"', 1
+        )
+        assert "v2+json" in raw
+        scenario.add_raw("bad", raw)
+    elif target == "duplicate-key":
         raw = scenario.read("prereg").replace(
             '"phase": "prereg"', '"phase": "prereg", "phase": "x"', 1
         )
@@ -119,18 +127,24 @@ def test_run__malformed_file_fails_format_and_no_other_test_examines_it(scenario
     )
 
 
-def test_run__file_failing_format_is_examined_by_no_other_test(scenario):
-    """A file that fails format (bad hex) is not examined for selfsig, floor, ceiling or
-    content."""
+@pytest.mark.parametrize(
+    "payload_type,hex_value",
+    [("application/vnd.asexec.v1+json", "zz"), ("application/vnd.asexec.v2+json", "00")],
+    ids=["bad-hex", "unknown-format"],
+)
+def test_run__file_failing_format_is_examined_by_no_other_test(scenario, payload_type, hex_value):
+    """A file that fails format (bad hex, or a format this release does not read) is not
+    examined for selfsig, floor, ceiling or content."""
     scenario.with_floor("prereg")
     scenario.with_ceiling("prereg")
     bad_floor = {"floor_type": "drand", "round": 1001, "signature": "00"}
     scenario.add_raw(
         "bad",
-        '{"payload": {"phase": "prereg", "anchor": {"floor": '
+        f'{{"payloadType": "{payload_type}",'
+        ' "payload": {"phase": "prereg", "anchor": {"floor": '
         + str(bad_floor).replace("'", '"')
         + '}, "subject": [{"name": "harness/", "digest": {"sha-256": "00"}}]},'
-        ' "signature": {"pubkey": "zz", "sig": "zz"},'
+        f' "signature": {{"pubkey": "{hex_value}", "sig": "{hex_value}"}},'
         ' "ceiling": {"ceiling_type": "roughtime"}}',
     )
     report = scenario.verify("ceiling", "content", "floor")
@@ -139,12 +153,22 @@ def test_run__file_failing_format_is_examined_by_no_other_test(scenario):
     )
 
 
-def test_run__malformed_postreg_joins_no_commitment(scenario):
-    """A malformed postreg (here: non-hex pubkey) fulfilling the prereg is neither counted
-    nor rejected, so chain and keyconsist have nothing to examine."""
+@pytest.mark.parametrize(
+    "path,value",
+    [
+        ("signature.pubkey", "zz"),
+        ("payloadType", "application/vnd.asexec.v2+json"),
+        ("payloadType", "application/vnd.asexec.0.4.0b1+json"),
+    ],
+    ids=["bad-hex", "newer-format", "beta-format"],
+)
+def test_run__malformed_postreg_joins_no_commitment(scenario, path, value):
+    """A postreg that fails format (here: a non-hex pubkey, or a format this release does
+    not read) fulfilling the prereg is neither counted nor rejected, so chain and
+    keyconsist have nothing to examine."""
     scenario.drop("postreg1")
     scenario.drop("postreg2")
-    scenario.set("postreg0", "signature.pubkey", "zz")
+    scenario.set("postreg0", path, value)
     report = scenario.verify("chain", "keyconsist")
     assert report["code"] == ("asexec-verify/1 chain=FAIL format=FAIL keyconsist=FAIL selfsig=PASS")
     assert report["results"]["keyconsist"]["applicable"] == 0

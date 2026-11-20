@@ -133,10 +133,9 @@ def test_fault__fulfills_not_exactly_the_ref(tmp_path, post):
     "edit",
     [
         lambda env: env.update(surprise=1),
-        lambda env: env.pop("payloadType"),
         lambda env: env["signature"].pop("alg"),
     ],
-    ids=["unknown-field", "payloadType-missing", "signature-alg-missing"],
+    ids=["unknown-field", "signature-alg-missing"],
 )
 def test_fault__unsigned_envelope_field_verify_does_not_examine(tmp_path, edit):
     pre, post = _pair(d.PREREG)

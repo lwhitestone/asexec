@@ -8,9 +8,11 @@ The rule, starting with the 0.4.0 release: add a new format version and keep acc
 ones. Never replace a value in a way that makes a manifest signed by 0.4.0 or later fail. Until
 0.4.0 ships, breaking changes are allowed: get the format right rather than preserve it.
 
-This is not built yet (design: ``docs/MULTIVERSION.md``). The verifier accepts only one value
-of each identifier, so changing a BREAKS_USERS constant does break users. From 0.4.0, its
-fallback has to be built first, in the same PR; the comment on each test says what it is.
+The selector is built (design: ``docs/MULTIVERSION.md``): ``FORMATS`` holds the rules of each
+``payloadType`` verify reads, and a file is read under its own entry or fails ``format``. It
+has one entry, so changing a value in it, or another BREAKS_USERS constant, does break users.
+From 0.4.0, its fallback has to be built first, in the same PR (for a ``FORMATS`` value, a new
+entry); the comment on each test says what it is.
 
 Each identifier has exactly one class in ``IMPACT``:
 
@@ -60,15 +62,13 @@ BREAKS_USERS = "BREAKS_USERS"
 NEW_OUTPUT = "NEW_OUTPUT"
 
 IMPACT = {
-    "DIGEST_REF_PREFIX": BREAKS_USERS,
+    "FORMATS": BREAKS_USERS,
     "IDENTITY_WELL_KNOWN_PATH": BREAKS_USERS,
     "MANIFEST_PAYLOAD_TYPE": BREAKS_USERS,
-    "SIGNING_KEY_ALG": BREAKS_USERS,
-    "SIGNING_PAE_VERSION": BREAKS_USERS,
-    "SUBJECT_DEFAULT_HASH_ALG": BREAKS_USERS,
     "VERIFY_CODE_VERSION": BREAKS_USERS,
     "IDENTITY_DOCUMENT_VERSION": NEW_OUTPUT,
     "MANIFEST_PREDICATE_TYPE": NEW_OUTPUT,
+    "SUBJECT_DEFAULT_HASH_ALG": NEW_OUTPUT,
 }
 
 # Signed once with the all-zero seed and then frozen, standing in for published manifests.
@@ -120,11 +120,18 @@ PRE_V1_MANIFEST = {
 }
 
 
+def _report(tmp_path, manis, tests, artifacts_dir=None):
+    paths = []
+    for i, mani in enumerate(manis):
+        path = tmp_path / f"manifest-{i}.json"
+        path.write_text(json.dumps(mani))
+        paths.append(str(path))
+    return verify_paths(paths, tests, artifacts_dir=artifacts_dir)
+
+
 def _result_tokens(tmp_path, mani, tests, artifacts_dir=None):
     # Only the result tokens, so a VERIFY_CODE_VERSION bump does not count as a broken manifest.
-    path = tmp_path / "manifest.json"
-    path.write_text(json.dumps(mani))
-    return verify_paths([str(path)], tests, artifacts_dir=artifacts_dir)["code"].split()[1:]
+    return _report(tmp_path, [mani], tests, artifacts_dir)["code"].split()[1:]
 
 
 def _required_tokens(tmp_path, mani):
@@ -138,6 +145,11 @@ def _required_pass(tmp_path, mani):
 def _signed_prereg():
     priv, pub = keys.generate()
     return manifest.sign(manifest.build_prereg("m"), priv, pub)
+
+
+def _signing_format():
+    # The entry signing uses. MANIFEST_PAYLOAD_TYPE is pinned as a literal below.
+    return constants.FORMATS[constants.MANIFEST_PAYLOAD_TYPE]
 
 
 def test_every_identifier_is_classified():
@@ -156,33 +168,137 @@ def test_frozen_manifests_still_verify(tmp_path):
     ) == ["content=PASS", "format=PASS", "selfsig=PASS"]
 
 
+def test_formats_has_one_entry_keyed_by_manifest_payload_type():
+    # BREAKS_USERS: verify reads a file only under the entry its payloadType names, so
+    # editing an entry fails every manifest published under it, and removing one fails them
+    # all as an unknown format. Fallback: add an entry instead; existing entries are never
+    # edited. Each value is pinned again, with what it does, in the tests below.
+    # One entry, keyed by the MANIFEST_PAYLOAD_TYPE name itself: a release commit rewrites
+    # that one literal, and the key moves with it. Signing uses this entry, the newest.
+    assert list(constants.FORMATS) == [constants.MANIFEST_PAYLOAD_TYPE]
+    assert constants.FORMATS[constants.MANIFEST_PAYLOAD_TYPE] == {
+        "digest_ref_prefix": "sha-256:",
+        "signing_key_alg": "ed25519",
+        "signing_pae_version": b"asexec-PAE/v1",
+        "subject_default_hash_alg": "sha-256",
+    }
+
+
 def test_signing_pae_version_and_manifest_payload_type():
     # BREAKS_USERS: both are in the bytes every signature covers, so replacing either fails
     # every published signature. Refs don't change, because they hash the body without PAE.
-    # Fallback: a new format entry, selected by payloadType. From 0.4.0 the PAE value is the
-    # fixed DSSEv1, so payloadType is what carries the format version.
+    # The PAE value is the entry's signing_pae_version; MANIFEST_PAYLOAD_TYPE is the selector,
+    # the key of the entry signing uses. Fallback: a new format entry, selected by
+    # payloadType. From 0.4.0 the PAE value is the fixed DSSEv1, so payloadType is what
+    # carries the format version.
     # The 0.4.0 format is v1, and a later format N is vN, matching MANIFEST_PREDICATE_TYPE.
-    assert constants.SIGNING_PAE_VERSION == b"asexec-PAE/v1"
+    assert _signing_format()["signing_pae_version"] == b"asexec-PAE/v1"
     assert constants.MANIFEST_PAYLOAD_TYPE == "application/vnd.asexec.v1+json"
     assert signing_input(FROZEN_BODY) == (
         b'asexec-PAE/v1 30 application/vnd.asexec.v1+json 31 {"phase":"prereg","target":"m"}'
+    )
+    assert signing_input(FROZEN_BODY, "application/vnd.asexec.v1+json") == (
+        signing_input(FROZEN_BODY)
     )
     assert _signed_prereg()["payloadType"] == "application/vnd.asexec.v1+json"
 
 
 def test_manifest_payload_type_change_fails_what_was_signed_before_it(tmp_path):
     # What BREAKS_USERS means for MANIFEST_PAYLOAD_TYPE: the same body and key, signed under
-    # the type 0.3.x used, no longer passes selfsig, because the type is in the signed bytes.
-    # It still passes format, because verify does not read payloadType yet (see below).
+    # the type 0.3.x used, fails format, because no entry reads that type. Verify never falls
+    # back to another entry, so the reason says what the file is, not "invalid signature".
     assert PRE_V1_MANIFEST["payload"] == FROZEN_MANIFEST["payload"]
-    assert _required_tokens(tmp_path, PRE_V1_MANIFEST) == ["format=PASS", "selfsig=FAIL"]
+    report = _report(tmp_path, [PRE_V1_MANIFEST], ["format", "selfsig"])
+    assert report["code"].split()[1:] == ["format=FAIL", "selfsig=FAIL"]
+    assert report["manifests"][0]["format"]["errors"] == [
+        "payloadType names the format of asexec before 0.4.0, which is not supported:"
+        " re-sign with this release"
+    ]
+
+
+# A second format, for the tests of the selector only: every rule differs from v1's.
+OTHER_FORMAT = "application/vnd.asexec.other+json"
+OTHER_RULES = {
+    "digest_ref_prefix": "other-256:",
+    "signing_key_alg": "ed25519",
+    "signing_pae_version": b"asexec-PAE/other",
+    "subject_default_hash_alg": "no-such-alg",
+}
+
+
+def _signed_under(payload_type, body):
+    priv, pub = bytes(32), bytes.fromhex(FROZEN_KEY["pubkey"])
+    return {
+        "payloadType": payload_type,
+        "payload": body,
+        "signature": {
+            "alg": "ed25519",
+            "keyid": keys.keyid_for(pub, payload_type),
+            "pubkey": pub.hex(),
+            "sig": keys.sign(priv, signing_input(body, payload_type)).hex(),
+        },
+    }
+
+
+def test_formats__a_file_is_read_under_its_own_entry(tmp_path, monkeypatch):
+    # The selector (docs/MULTIVERSION.md, Verifier design): with a second entry, a file is
+    # verified under the rules its own payloadType names, beside a v1 file under v1's.
+    monkeypatch.setitem(constants.FORMATS, OTHER_FORMAT, OTHER_RULES)
+    # No hash_alg: under its own rules content looks for digest["no-such-alg"], under v1's
+    # for digest["sha-256"], which it lacks.
+    body = {**FROZEN_BODY, "subject": [{"name": "a.txt", "digest": {"no-such-alg": "00"}}]}
+    other = _signed_under(OTHER_FORMAT, body)
+    assert signing_input(FROZEN_BODY, OTHER_FORMAT) == (
+        b'asexec-PAE/other 33 application/vnd.asexec.other+json 31 {"phase":"prereg","target":"m"}'
+    )
+    assert other["signature"]["keyid"].startswith("other-256:")
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    (artifacts / "a.txt").write_bytes(b"x")
+    report = _report(
+        tmp_path,
+        [FROZEN_NO_HASH_ALG_MANIFEST, other],
+        ["content", "format", "selfsig"],
+        str(artifacts),
+    )
+    v1, mine = report["manifests"]
+    assert report["results"]["format"]["reason"] == "2/2 manifest(s) ok"
+    assert report["results"]["selfsig"]["reason"] == "2/2 manifest(s) ok"  # each PAE, each keyid
+    assert v1["ref"].startswith("sha-256:") and mine["ref"].startswith("other-256:")
+    assert v1["content"]["status"] == "ok"  # falls back to v1's sha-256
+    assert mine["content"]["entries"][0]["reason"] == "algorithm unavailable: 'no-such-alg'"
+
+
+def test_formats__payload_type_is_signed_so_relabelling_fails_selfsig(tmp_path, monkeypatch):
+    # Tampering (docs/MULTIVERSION.md, Testing): payloadType is in the signed bytes, so a file
+    # relabelled with another known format reads under that format and fails selfsig. It is
+    # never read under the rules of the format it was signed in.
+    monkeypatch.setitem(constants.FORMATS, OTHER_FORMAT, OTHER_RULES)
+    relabelled = [
+        {
+            **_signed_under(OTHER_FORMAT, FROZEN_BODY),
+            "payloadType": constants.MANIFEST_PAYLOAD_TYPE,
+        },
+        {**FROZEN_MANIFEST, "payloadType": OTHER_FORMAT},
+    ]
+    for mani in relabelled:
+        assert _required_tokens(tmp_path, mani) == ["format=PASS", "selfsig=FAIL"]
+
+
+def test_formats__signing_uses_the_entry_of_manifest_payload_type(monkeypatch):
+    # Signing always writes the newest format, whatever other entries exist.
+    monkeypatch.setitem(constants.FORMATS, OTHER_FORMAT, OTHER_RULES)
+    signed = _signed_prereg()
+    assert signed["payloadType"] == "application/vnd.asexec.v1+json"
+    assert signed["signature"]["keyid"].startswith("sha-256:")
+    assert manifest.ref(signed["payload"]).startswith("sha-256:")
 
 
 def test_digest_ref_prefix():
-    # BREAKS_USERS: replacing it fails every published keyid and link.
+    # BREAKS_USERS (FORMATS): replacing it fails every published keyid and link.
     # Fallback: a new format entry, selected by payloadType. The label must never disagree
     # with the digest.
-    assert constants.DIGEST_REF_PREFIX == "sha-256:"
+    assert _signing_format()["digest_ref_prefix"] == "sha-256:"
     assert keys.keyid_for(bytes(32)) == (
         "sha-256:66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925"
     )
@@ -192,20 +308,27 @@ def test_digest_ref_prefix():
 
 
 def test_subject_default_hash_alg():
-    # BREAKS_USERS: verifying ``content`` falls back to it for a subject with no hash_alg, so
-    # replacing it fails those published manifests.
-    # Fallback: split it in two. Each format's verify fallback never changes, and a new default
-    # affects signing only, which always writes hash_alg.
+    # NEW_OUTPUT: the signing default only, which picks the hash_alg a new subject is hashed
+    # with. Signing always writes hash_alg beside a subject, so changing it fails nothing
+    # published. Verify's fallback for a subject with no hash_alg is the format's own (below).
     assert constants.SUBJECT_DEFAULT_HASH_ALG == "sha-256"
     assert hashing.hash_bytes(b"") == hashlib.sha256(b"").hexdigest()
 
 
+def test_format_subject_default_hash_alg():
+    # BREAKS_USERS (FORMATS): verifying ``content`` falls back to it for a subject with no
+    # hash_alg, so replacing it fails those published manifests
+    # (FROZEN_NO_HASH_ALG_MANIFEST). Fallback: a new format entry; each format's verify
+    # fallback never changes.
+    assert _signing_format()["subject_default_hash_alg"] == "sha-256"
+
+
 def test_signing_key_alg():
-    # BREAKS_USERS: existing key files stop loading. Verify is unaffected, but only because it
-    # doesn't read signature.alg. Changing the string alone would mislabel ed25519 signatures.
-    # Fallback: a new format entry, selected by payloadType, never by an unsigned field. Signing
-    # with a new algorithm needs a new key.
-    assert constants.SIGNING_KEY_ALG == "ed25519"
+    # BREAKS_USERS (FORMATS): existing key files stop loading. Verify is unaffected, but only
+    # because it doesn't read signature.alg. Changing the string alone would mislabel ed25519
+    # signatures. Fallback: a new format entry, selected by payloadType, never by an unsigned
+    # field. Signing with a new algorithm needs a new key.
+    assert _signing_format()["signing_key_alg"] == "ed25519"
     assert _signed_prereg()["signature"]["alg"] == "ed25519"
 
 
@@ -248,14 +371,6 @@ def test_identity_document_version():
 def test_not_enforced_yet__predicate_type(tmp_path):
     assert "predicateType" not in FROZEN_MANIFEST["payload"]
     assert _required_pass(tmp_path, FROZEN_MANIFEST)
-
-
-def test_not_enforced_yet__envelope_payload_type(tmp_path):
-    mani = copy.deepcopy(FROZEN_MANIFEST)
-    # An unknown payloadType is not yet a format failure: verify signs and checks under
-    # MANIFEST_PAYLOAD_TYPE whatever the file says.
-    mani["payloadType"] = "application/something-else"
-    assert _required_pass(tmp_path, mani)
 
 
 def test_not_enforced_yet__signature_alg(tmp_path):

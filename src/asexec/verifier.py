@@ -39,8 +39,10 @@ Tests (the catalog - only verifiable claims, no self-declarations)
                      manifests that carry an anchor.floor.
   - ``format``     : the file can be read: a JSON object (unique keys, nested at
                      most 64 deep) with an object payload that has canonical
-                     bytes and a signature whose pubkey and sig are hex. Applies
-                     to every manifest file. **Required in every run.**
+                     bytes, a string payloadType and a signature whose pubkey and
+                     sig are hex, and its payloadType names a format this release
+                     reads (a ``FORMATS`` key). Applies to every manifest file.
+                     **Required in every run.**
   - ``keyconsist`` : each validly signed postreg that names a pre-registration's
                      ref has the key of a provided pre-registration with that
                      ref. Applies to commitments with a counted postreg or one
@@ -50,7 +52,8 @@ Tests (the catalog - only verifiable claims, no self-declarations)
                      derives from pubkey. Applies to every manifest that passes
                      ``format``. **Required in every run.**
 
-Only a file that passes ``format`` is examined by any other test.
+Only a file that passes ``format`` is examined by any other test, and every test reads it
+under the rules of the format its payloadType names (``FORMATS``), never another's.
 
 A requested test is ``PASS`` iff it holds everywhere it applies AND it applies
 somewhere; a requested test that applies **nowhere** is ``FAIL``
@@ -81,6 +84,7 @@ from __future__ import annotations
 
 import datetime
 import os
+import re
 import time
 from typing import Any
 
@@ -88,7 +92,7 @@ from pydantic import ValidationError
 
 from . import drand, hashing, keys, manifest
 from .canonical import signing_input
-from .constants import SUBJECT_DEFAULT_HASH_ALG, VERIFY_CODE_VERSION
+from .constants import FORMATS, VERIFY_CODE_VERSION
 from .errors import VerificationError
 from .models import (
     CeilingInput,
@@ -184,34 +188,72 @@ def _lookup(obj: Any, *path: str) -> tuple[bool, Any]:
     return True, obj
 
 
+# Why a file's string payloadType names no format this release reads (format #3), as the
+# report shows it (docs/VERIFICATION.md). Such a file is never read under another entry.
+REASON_FORMAT_NEWER = (
+    "payloadType names a format newer than this release: upgrade asexec to read it"
+)
+REASON_FORMAT_BETA = "payloadType names an asexec beta format, and betas are not supported"
+REASON_FORMAT_PRE_V1 = (
+    "payloadType names the format of asexec before 0.4.0, which is not supported:"
+    " re-sign with this release"
+)
+
+# Recognized only to say why they fail: what asexec 0.2.0 to 0.3.x wrote, and a beta's
+# type (``X.Y.ZbN``). Any other payloadType that is not a FORMATS key reads as newer.
+_PRE_V1_PAYLOAD_TYPE = "application/vnd.asexec+json"
+_BETA_PAYLOAD_TYPE = re.compile(r"application/vnd\.asexec\.[0-9]+\.[0-9]+\.[0-9]+b[0-9]+\+json")
+
+
+def _unknown_format_reason(payload_type: str) -> str:
+    if payload_type == _PRE_V1_PAYLOAD_TYPE:
+        return REASON_FORMAT_PRE_V1
+    if _BETA_PAYLOAD_TYPE.fullmatch(payload_type):
+        return REASON_FORMAT_BETA
+    return REASON_FORMAT_NEWER
+
+
 def verify_format(mani: dict[str, Any]) -> dict[str, Any]:
     """``format`` for a file ``manifest.load`` has read as a JSON object (which checks the
-    rest of format #1: readable, unique keys, nesting): its frame and hex fields, and the
-    ``ref`` and ``keyid`` that a file that passes is known by."""
+    rest of format #1: readable, unique keys, nesting): the format its payloadType names
+    (#3), then that format's frame and hex fields, and the ``payload_type``, ``ref`` and
+    ``keyid`` that a file that passes is known by.
+
+    #3 comes first: a file of a format this release does not read is not held to this
+    format's frame, which a newer format may lay out differently."""
+    payload_type = mani.get("payloadType")
+    if isinstance(payload_type, str) and payload_type not in FORMATS:  # format #3
+        return {"ok": False, "errors": [_unknown_format_reason(payload_type)]}
     try:
         envelope = EnvelopeInput.model_validate(mani)  # format #1 (frame), #2 (hex)
     except ValidationError as e:
         return {"ok": False, "errors": [f"malformed: {_describe(e)}"]}
-    try:
-        ref = manifest.ref(envelope.payload)  # format #1: payload has canonical bytes
+    try:  # format #1: payload has canonical bytes
+        ref = manifest.ref(envelope.payload, envelope.payloadType)
     except Exception as e:  # e.g. a string holding a lone surrogate, which has no UTF-8 form
         return {"ok": False, "errors": [f"malformed: {e}"]}
-    # A file whose payloadType names no format this release reads would fail here; verify
-    # does not read payloadType yet.
-    return {"ok": True, "errors": [], "ref": ref, "keyid": envelope.signature.keyid}
+    return {
+        "ok": True,
+        "errors": [],
+        "payload_type": envelope.payloadType,
+        "ref": ref,
+        "keyid": envelope.signature.keyid,
+    }
 
 
 def verify_selfsig(mani: dict[str, Any]) -> dict[str, Any]:
     """``selfsig`` for a file that passed ``format``: the signature verifies over the PAE
-    input by ``pubkey`` (#1), and ``keyid`` derives from ``pubkey`` (#2). Never raises."""
+    input by ``pubkey`` (#1), and ``keyid`` derives from ``pubkey`` (#2), both under the
+    rules of the file's own format. Never raises."""
     envelope = EnvelopeInput.model_validate(mani)
+    payload_type = envelope.payloadType
     sigblock = envelope.signature
     pub = bytes.fromhex(sigblock.pubkey)
     sig = bytes.fromhex(sigblock.sig)
     return {
         "examined": True,
-        "signature_ok": keys.verify(pub, signing_input(envelope.payload), sig),
-        "keyid_ok": keys.keyid_for(pub) == sigblock.keyid,
+        "signature_ok": keys.verify(pub, signing_input(envelope.payload, payload_type), sig),
+        "keyid_ok": keys.keyid_for(pub, payload_type) == sigblock.keyid,
     }
 
 
@@ -271,7 +313,7 @@ def verify_ceiling(
     from . import roughtime
 
     try:  # ceiling #2 binding, #3 pin lookup, #4 equality, #5 response
-        expected_nonce = manifest.ref(mani["payload"])
+        expected_nonce = manifest.ref(mani["payload"], mani["payloadType"])
         return roughtime.verify_ceiling(parsed, expected_nonce, servers)
     except Exception as e:  # an unsigned, attacker-shaped envelope field must not crash verify
         return {"status": "invalid", "error": str(e)}
@@ -311,7 +353,11 @@ def _verify_subject_item(item: Any, alg: Any, artifacts_dir: str) -> dict[str, A
     return {"name": name, "ok": ok, **({} if ok else {"expected": expected, "actual": actual})}
 
 
-def verify_content(body: dict[str, Any], artifacts_dir: str | None) -> dict[str, Any]:
+def verify_content(
+    body: dict[str, Any], artifacts_dir: str | None, payload_type: str
+) -> dict[str, Any]:
+    """``content`` for a manifest that passed ``format``, of format ``payload_type``: a
+    subject with no ``hash_alg`` is read with that format's default."""
     if not artifacts_dir:
         return {"status": "skipped", "reason": "no artifacts provided"}
     present, subject = _lookup(body, "subject")
@@ -325,7 +371,7 @@ def verify_content(body: dict[str, Any], artifacts_dir: str | None) -> dict[str,
             "entries": [{"name": "(subject)", "ok": False, "reason": "malformed subject"}],
         }
     present, alg = _lookup(body, "hash_alg")
-    alg = alg if present else SUBJECT_DEFAULT_HASH_ALG
+    alg = alg if present else FORMATS[payload_type]["subject_default_hash_alg"]
     entries = [_verify_subject_item(item, alg, artifacts_dir) for item in subject]
     return {"status": "ok" if all(e["ok"] for e in entries) else "mismatch", "entries": entries}
 
@@ -370,7 +416,11 @@ def verify_paths(
         selfsig = verify_selfsig(mani) if clean else {**_SELFSIG_NOT_EXAMINED}
         floor = verify_floor(body) if clean else {"status": "absent"}
         ceiling = verify_ceiling(mani, servers) if clean else {"status": "absent"}
-        content = verify_content(body, artifacts_dir) if clean else {"status": "skipped"}
+        content = (
+            verify_content(body, artifacts_dir, fmt["payload_type"])
+            if clean
+            else {"status": "skipped"}
+        )
         if ceiling.get("status") == "verified":
             ceiling_trust.append(
                 f"{p}: ceiling witnessed by {ceiling.get('witness_id')} at "

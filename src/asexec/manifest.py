@@ -26,7 +26,7 @@ from typing import Any
 
 from . import keys
 from .canonical import canonical_bytes, signing_input
-from .constants import DIGEST_REF_PREFIX, SUBJECT_DEFAULT_HASH_ALG
+from .constants import FORMATS, MANIFEST_PAYLOAD_TYPE, SUBJECT_DEFAULT_HASH_ALG
 from .errors import ManifestError
 from .models import Anchor, Manifest, ManifestBody, Signature
 
@@ -127,13 +127,15 @@ def build_postreg(
     )
 
 
-def ref(body: dict[str, Any]) -> str:
-    """Stable content reference to a manifest body: ``sha-256:<hex>``.
+def ref(body: dict[str, Any], payload_type: str = MANIFEST_PAYLOAD_TYPE) -> str:
+    """Stable content reference to a manifest body: ``sha-256:<hex>``, with the prefix of
+    format ``payload_type`` (by default the one signing writes).
 
     Computed over the canonical bytes of the body (signature-independent), so
     ``fulfills`` and ``prev_hash`` links are stable regardless of who signed.
     """
-    return DIGEST_REF_PREFIX + hashlib.sha256(canonical_bytes(body)).hexdigest()
+    prefix = FORMATS[payload_type]["digest_ref_prefix"]
+    return prefix + hashlib.sha256(canonical_bytes(body)).hexdigest()
 
 
 def sign(body: dict[str, Any], private_key: bytes, public_key: bytes) -> dict[str, Any]:

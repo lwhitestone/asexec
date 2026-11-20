@@ -15,17 +15,22 @@ from __future__ import annotations
 import json
 import urllib.request
 
-from .constants import IDENTITY_DOCUMENT_VERSION, IDENTITY_WELL_KNOWN_PATH, SIGNING_KEY_ALG
+from .constants import (
+    FORMATS,
+    IDENTITY_DOCUMENT_VERSION,
+    IDENTITY_WELL_KNOWN_PATH,
+    MANIFEST_PAYLOAD_TYPE,
+)
 from .errors import NetworkError
 
 
 def build_wellknown(keyid_pubkey_pairs: list[dict[str, str]], domain: str | None = None) -> dict:
     """Build the ``.well-known/asexec.json`` document a domain publishes."""
+    alg = FORMATS[MANIFEST_PAYLOAD_TYPE]["signing_key_alg"]  # the format signing writes
     doc: dict = {
         "asexec_identity_version": IDENTITY_DOCUMENT_VERSION,
         "keys": [
-            {"alg": SIGNING_KEY_ALG, "keyid": p["keyid"], "public_key": p["pubkey"]}
-            for p in keyid_pubkey_pairs
+            {"alg": alg, "keyid": p["keyid"], "public_key": p["pubkey"]} for p in keyid_pubkey_pairs
         ],
     }
     if domain:

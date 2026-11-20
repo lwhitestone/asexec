@@ -42,9 +42,9 @@ from pydantic import (
 
 from . import drand
 from .constants import (
+    FORMATS,
     MANIFEST_PAYLOAD_TYPE,
     MANIFEST_PREDICATE_TYPE,
-    SIGNING_KEY_ALG,
 )
 from .fields import Hex, Link, LowerHex, PinnedChain, StrictInt
 
@@ -89,6 +89,7 @@ class EnvelopeInput(InputModel):
     demand, so a junk floor fails only ``floor``."""
 
     payload: dict[str, Any]
+    payloadType: str  # format #1 (shape; #3, that it names a FORMATS entry, is code)
     signature: SignatureInput
 
 
@@ -265,7 +266,7 @@ class Signature(SignatureInput):
     model_config = ConfigDict(extra="forbid")
     null_is_absent = False
 
-    alg: str = SIGNING_KEY_ALG
+    alg: str = FORMATS[MANIFEST_PAYLOAD_TYPE]["signing_key_alg"]  # the format signing writes
     keyid: str
     pubkey: LowerHex
     sig: LowerHex
