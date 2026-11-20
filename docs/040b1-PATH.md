@@ -193,7 +193,7 @@ breaks any vector that hardcodes it. The options:
 - [x] 4. #30: beta release support (after #31, because it rewrites the `FORMATS` key) (on feature/0321)
 - [x] 5. #44 (D2), then #42 and #43 (on feature/0321)
 - [x] 6. #32: DSSE envelope (on feature/0321)
-- [ ] 7. #33 → #36 → #46 → #37
+- [x] 7. #33 → #36 → #46 → #37 (on feature/0321)
 - [ ] 8. #34 and #38
 - [ ] 9. #45 (after #38)
 - [ ] 10. #39 → #40
@@ -2649,3 +2649,47 @@ verifier docstring.
   only seen at verify, as an unlisted item and a missing one.
 - An item id is compared exactly, as a string (`S2` ≠ `s2`); ids that differ only by Unicode
   normalization are different ids.
+
+#### Checkpoint 7 summary
+
+**Landed** (branch `feature/0321-checkpoint7`, each issue's change with its notes commit):
+- #33, `18e63bf` (notes `8c474e9`): subjects are explicit file lists, named by normalized
+  relative path, each entry with its own `hash_alg`; no directory hash, no default algorithm.
+- #36, `5ac205f` (notes `fcd60da`): the claim record (`plan`, `items`, `item_id`, `status`,
+  `evidence`), its CLI options, and `content` over `plan` and `evidence`.
+- #46, `c101617` (notes `990ba8f`): `timely` and the `no-due` state; `verifier._on_time` is the
+  one ceiling-to-`due` comparison.
+- #37, `d10957d` (notes `9daf183`): `complete`, reusing `_on_time`.
+
+**pytest counts:** 640 (baseline `18c0955`) → 695 (#33) → 763 (#36) → 800 (#46) → 842 (#37),
+`scripts/check.sh` clean after each. `examples/adequacy-test/run.py` exits 0 after each.
+
+**Release-note entries** (for #40, in the `tests/test_constants.py` header format):
+
+```
+Identifier: FORMATS[MANIFEST_PAYLOAD_TYPE]["subject_default_hash_alg"], sha-256 -> removed
+Impact: BREAKS_USERS
+Affected: a manifest whose subject entry has no hash_alg of its own (every manifest written before this change: hash_alg was body-level) now fails content as "malformed subject entry"; a tool that reads the field (KeyError)
+Action: re-sign; each subject, plan and evidence entry carries its own hash_alg
+
+Identifier: the subject entry (no constant): {name: <basename, "/" for a directory>, digest} + body-level hash_alg -> {name: <normalized relative path of one file>, hash_alg, digest}
+Impact: BREAKS_USERS
+Affected: every manifest with a subject written before this change (see above); directory subjects fail content ("artifact is not a file"); the Python API (hashing.hash_dir and digest_path removed; build_prereg/build_postreg take no hash_alg)
+Action: re-sign, listing files (or an archive) instead of directories, named relative to where you sign and verified with --artifacts at that directory
+
+Identifier: the commitment state "open" (no constant): no counted postreg and no due -> the new state "no-due"; "open" now means a due in the future
+Impact: NEW_OUTPUT
+Affected: the report only (states are never part of the code); scripts that read "[OPEN]" for a commitment with no due
+Action: none
+```
+
+**Judgement calls needing the human's eye** (each detailed in its issue's notes above):
+- #33: absolute paths and any `..` are refused at signing (not made relative); `hash_alg` is
+  required per entry and the FORMATS fallback is removed; content #7 requires a regular
+  file (a FIFO used to hang verify).
+- #36: signing validates `status` and unique item ids, not `--item-id` against the prereg;
+  bad inline JSON is a usage error (64), a parsed value that cannot be signed exits 1.
+- #46: T is `MIDP + RADI`; a ceiling failing the `ceiling` conditions counts as none; marks are
+  shown with `timely` requested only; any counted copy's valid ceiling counts.
+- #37: any qualifying postreg satisfies an item; unlisted `item_id`s are shown, not failed;
+  `items: []` is not examined.
