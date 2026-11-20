@@ -6,7 +6,6 @@ ceiling's time T, the later end of that interval, is 2023-11-14T22:13:21Z. The s
 prereg has ``due`` 2099-01-01T00:00:00Z, so a postreg with a ceiling is on time.
 """
 
-import datetime
 import json
 
 import pytest
@@ -15,7 +14,7 @@ PASS = "asexec-verify/1 format=PASS selfsig=PASS timely=PASS"
 FAIL = "asexec-verify/1 format=PASS selfsig=PASS timely=FAIL"
 EMPTY = "requested but no commitment with a due has a counted postreg"
 POSTREGS = ("postreg0", "postreg1", "postreg2")
-T = datetime.datetime(2023, 11, 14, 22, 13, 21, tzinfo=datetime.UTC).timestamp()
+T_US = 1_700_000_001_000_000  # MIDP + RADI, in microseconds since the epoch
 
 
 @pytest.fixture
@@ -46,7 +45,7 @@ def test_timely__pass__all(sc):
     assert report["code"] == PASS
     assert report["results"]["timely"]["reason"] == "1/1 commitment(s) ok"
     assert _statuses(report) == ["on-time"] * 3
-    assert {p["no_later_than"] for p in _commitment(report)["timeliness"]} == {T}
+    assert {p["no_later_than"] for p in _commitment(report)["timeliness"]} == {T_US}
 
 
 def test_timely__pass__1_due_without_offset_is_read_as_utc(sc):
@@ -205,3 +204,37 @@ def test_timely__fail__empty_a_rejected_preregistration_is_not_examined(sc):
     report = sc.verify("timely")
     assert report["commitments"] == [] and len(report["rejected_preregs"]) == 1
     assert report["results"]["timely"] == {"result": "FAIL", "applicable": 0, "reason": EMPTY}
+
+
+# A witness time and a due that are equal to the microsecond, where seconds as floats are not:
+# MIDP / 1e6 + RADI / 1e6 rounds above the due's own float.
+MIDP_US, RADI_US = 2553427865607787, 4273949
+DUE_AT_T = "2050-11-30T13:31:09.881736Z"  # = MIDP + RADI exactly
+
+
+def _witness_at(sc, make_server, midpoint_us, radius_us):
+    """Re-pin the scenario's witness to one that signs ``midpoint_us`` and ``radius_us``."""
+    sc.server_pub, sc.sign_response = make_server(
+        midpoint_us=midpoint_us, radius_us=radius_us, maxt=2**63
+    )
+    sc.pin_server(sc.server_pub)
+
+
+def test_timely__pass__4_compared_in_whole_microseconds(sc, make_server):
+    """timely #4: T and due are compared exactly, in microseconds: a due equal to T to the
+    microsecond is at T, so on time (as seconds in floating point it read as late)."""
+    _witness_at(sc, make_server, MIDP_US, RADI_US)
+    _due(sc, DUE_AT_T)
+    assert (MIDP_US / 1e6 + RADI_US / 1e6) > 2553427869.881736  # the float error itself
+    report = sc.verify("timely")
+    assert report["code"] == PASS
+    assert {p["no_later_than"] for p in _commitment(report)["timeliness"]} == {MIDP_US + RADI_US}
+
+
+def test_timely__fail__4_one_microsecond_after_due_is_late(sc, make_server):
+    """timely #4: T one microsecond after due is late."""
+    _witness_at(sc, make_server, MIDP_US + 1, RADI_US)
+    _due(sc, DUE_AT_T)
+    report = sc.verify("timely")
+    assert report["code"] == FAIL
+    assert _statuses(report) == ["late"] * 3

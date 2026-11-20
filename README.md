@@ -261,7 +261,7 @@ The body (`dsse.payload` decoded):
   "predicateType": "https://asexec.org/manifest/v1",    // always
   "phase": "prereg",                                    // always: prereg | postreg
   "target": "claude-opus-4-8 via the anthropic API",    // always: text or JSON
-  "due": "2099-01-01T00:00:00Z",                        // deadline; none = stays open
+  "due": "2099-01-01T00:00:00Z",                        // deadline; none = no-due
   "declaration": "all runs of this harness against this model, in full", // text or JSON
   "subject": [                                          // files, each hashed as listed
     { "name": "harness/run.py", "hash_alg": "sha-256", "digest": { "sha-256": "2c26b46b…" } }
@@ -309,7 +309,7 @@ The body (`dsse.payload` decoded):
   "predicateType": "https://asexec.org/manifest/v1",    // always
   "phase": "postreg",                                   // always: prereg | postreg
   "target": "claude-opus-4-8 via the anthropic API",    // always: text or JSON
-  "due": "2099-01-01T00:00:00Z",                        // deadline; none = stays open
+  "due": "2099-01-01T00:00:00Z",                        // deadline; none = no-due
   "declaration": "all runs of this harness against this model, in full", // text or JSON
   "subject": [                                          // files, each hashed as listed
     { "name": "transcript.txt", "hash_alg": "sha-256", "digest": { "sha-256": "9f86d081…" } },
@@ -371,8 +371,9 @@ fails. The floor sits inside the body, because a value fixed before signing can 
 A post-registration counts toward a pre-registration only if both were signed with the same
 private key. So:
 
-- **Lose the private key** and your open commitments can never be fulfilled: they stay `open`,
-  or turn `elapsed-no-postreg` once `due` passes. Back up `lab.key` offline (e.g. in an
+- **Lose the private key** and your unfulfilled commitments can never be fulfilled: they stay
+  `open` (or `no-due`, if they declared no `due`), or turn `elapsed-no-postreg` once `due`
+  passes. Back up `lab.key` offline (e.g. in an
   encrypted password manager or vault) before you pre-register.
 - **Leak the private key** and anyone can sign pre- and post-registrations as you, including
   post-registrations that count toward your commitments. `asexec` has no revocation: stop

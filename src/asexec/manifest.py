@@ -42,8 +42,8 @@ from .models import Anchor, Dsse, Manifest, ManifestBody, Signature
 #                asexec manifest at all (they scope every other check).
 #   semantic   : the claim the tool actually adjudicates - what was committed to
 #                (``target``). The deadline (``due``) is *optional*: a commitment
-#                with no deadline simply stays ``open`` forever, so it is not
-#                bedrock.
+#                with no deadline can never elapse (its state is ``no-due``), so it is
+#                not bedrock.
 #
 # Everything else - the drand floor, the Roughtime ceiling witness, subject, declaration,
 # free-text - is individually optional. Each subject entry carries its own `hash_alg`:

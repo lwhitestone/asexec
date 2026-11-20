@@ -105,7 +105,6 @@ from __future__ import annotations
 
 import datetime
 import json
-import math
 import os
 import re
 import time
@@ -180,27 +179,32 @@ def parse_tests(spec: str) -> list[str]:
     return [t for t in TEST_CATALOG if t in names]
 
 
-def _parse_due(raw: Any) -> tuple[bool, float | None, bool]:
-    """Parse a ``due`` value to ``(present, epoch_seconds, naive)``.
+_EPOCH = datetime.datetime(1970, 1, 1, tzinfo=datetime.UTC)
+_MICROSECOND = datetime.timedelta(microseconds=1)
+
+
+def _parse_due(raw: Any) -> tuple[bool, float | None, bool, int | None]:
+    """Parse a ``due`` value to ``(present, epoch_seconds, naive, epoch_microseconds)``.
 
     A timezone-less value is read as UTC so the result never depends on the
-    verifier's local timezone; ``naive`` flags it. ``epoch_seconds`` is None if
-    ``due`` is absent (missing or null) or not a parseable ISO-8601 string.
+    verifier's local timezone; ``naive`` flags it. ``epoch_seconds`` (for states) and
+    ``epoch_microseconds`` (exact, for comparing with a ceiling's signed integer time) are
+    None if ``due`` is absent (missing or null) or not a parseable ISO-8601 string.
     """
     try:
         due = DueInput.model_validate({"due": raw}).due
     except ValidationError:
-        return True, None, False
+        return True, None, False, None
     if due is None:
-        return False, None, False
+        return False, None, False, None
     try:
         dt = datetime.datetime.fromisoformat(due.replace("Z", "+00:00"))
     except ValueError:
-        return True, None, False
+        return True, None, False, None
     naive = dt.tzinfo is None
     if naive:
         dt = dt.replace(tzinfo=datetime.UTC)
-    return True, dt.timestamp(), naive
+    return True, dt.timestamp(), naive, (dt - _EPOCH) // _MICROSECOND
 
 
 def _lookup(obj: Any, *path: str) -> tuple[bool, Any]:
@@ -612,13 +616,13 @@ def verify_paths(
     commitments = []
     for pr in preregs.values():
         ceilings, claims, items = pr.pop("_ceilings"), pr.pop("_claims"), pr.pop("_items")
-        due_present, due_ts, due_naive = _parse_due(pr.get("due"))
+        due_present, due_ts, due_naive, due_us = _parse_due(pr.get("due"))
         state = _commitment_state(pr, now, due_present, due_ts)
         chain_ok, chain_note = _check_chain(pr["counted_postregs"])
         # Each counted postreg against due (timely #2-#4), when there is a due to compare with.
         timeliness = (
             [
-                {"ref": c["ref"], **_on_time(ceilings[c["ref"]], due_ts)}
+                {"ref": c["ref"], **_on_time(ceilings[c["ref"]], due_us)}
                 for c in pr["counted_postregs"]
             ]
             if due_ts is not None
@@ -663,25 +667,27 @@ def verify_paths(
     }
 
 
-def _no_later_than(ceiling: dict[str, Any]) -> float:
-    """The time a verified ceiling shows its manifest existed by: the later end of the
-    interval the witness signed, ``MIDP + RADI`` (``roughtime.verify_ceiling`` reads both
-    from the verified response, never from the file's unsigned ``midpoint``/``radius``)."""
-    return ceiling["midpoint"] + ceiling["radius"]
+def _no_later_than(ceiling: dict[str, Any]) -> int:
+    """The time a verified ceiling shows its manifest existed by, in microseconds since the
+    epoch: the later end of the interval the witness signed, ``MIDP + RADI``, as the signed
+    integers (``roughtime.verify_ceiling`` reads both from the verified response, never from
+    the file's unsigned ``midpoint``/``radius``). Integers, so the comparison with ``due`` is
+    exact: seconds as floats can round a time equal to ``due`` above it."""
+    return ceiling["midpoint_us"] + ceiling["radius_us"]
 
 
-def _on_time(ceilings: list[dict[str, Any]], due_ts: float) -> dict[str, Any]:
-    """One counted postreg against a parseable ``due`` (timely #2-#4, and complete's deadline
-    part): its ceilings are those of every counted copy of it (one ref).
+def _on_time(ceilings: list[dict[str, Any]], due_us: int) -> dict[str, Any]:
+    """One counted postreg against a parseable ``due`` in microseconds (timely #2-#4, and
+    complete's deadline part): its ceilings are those of every counted copy of it (one ref).
 
     ``on-time`` if a ceiling meets the ceiling conditions and its time is at or before due;
     else ``late`` if one does; else ``invalid-ceiling`` if it has a ceiling that fails them
     (anyone can write a ceiling, so it is no time at all); else ``no-ceiling``. The earliest
-    verified time is reported as ``no_later_than``."""
+    verified time, in microseconds, is reported as ``no_later_than``."""
     times = [_no_later_than(c) for c in ceilings if c.get("status") == "verified"]
     if times:
         earliest = min(times)
-        return {"status": "on-time" if earliest <= due_ts else "late", "no_later_than": earliest}
+        return {"status": "on-time" if earliest <= due_us else "late", "no_later_than": earliest}
     if any(c.get("status") != "absent" for c in ceilings):
         return {"status": "invalid-ceiling", "no_later_than": None}
     return {"status": "no-ceiling", "no_later_than": None}
@@ -791,10 +797,15 @@ def _statuses(claims: dict[str, dict[str, Any]], refs: list[str]) -> list[str]:
     return list(dict.fromkeys(claims[r]["status"] for r in refs))
 
 
-def _utc_ceil(epoch: float) -> str:
-    """``epoch`` as ISO-8601 UTC, rounded up to the second: a "no later than" time is never
-    shown earlier than it is."""
-    return _utc_timestamp(math.ceil(epoch))
+def _utc_ceil(epoch_us: int) -> str:
+    """``epoch_us`` (microseconds) as ISO-8601 UTC, rounded up to the second: a "no later
+    than" time is never shown earlier than it is. A time with no ISO-8601 form (a witness
+    may sign one past year 9999) is shown as epoch seconds."""
+    seconds = -(-epoch_us // 1_000_000)
+    try:
+        return _utc_timestamp(seconds)
+    except (ValueError, OverflowError, OSError):
+        return f"{seconds} (epoch seconds)"
 
 
 def _json_value(value: Any) -> str:

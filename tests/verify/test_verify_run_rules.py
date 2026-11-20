@@ -359,6 +359,21 @@ def test_never_raises__junk_ceiling_on_a_counted_postreg(scenario, junk):
     assert report["code"] == "asexec-verify/1 ceiling=FAIL format=PASS selfsig=PASS timely=FAIL"
 
 
+def test_never_raises__witness_time_past_year_9999(scenario, make_server):
+    """A witness-signed MIDP of 2**62 microseconds (year ~146,000) has no ISO-8601 form:
+    the time is still compared, and shown as epoch seconds, never raised on."""
+    pub, sign = make_server(midpoint_us=2**62, maxt=2**63)
+    scenario.server_pub, scenario.sign_response = pub, sign
+    scenario.pin_server(pub)
+    for name in ("postreg0", "postreg1", "postreg2"):
+        scenario.with_ceiling(name)
+    report = scenario.verify("ceiling", "complete", "timely")
+    assert report["code"] == (
+        "asexec-verify/1 ceiling=PASS complete=FAIL format=PASS selfsig=PASS timely=FAIL"
+    )
+    assert all("epoch seconds" in line for line in report["ceiling_trust"])
+
+
 @pytest.mark.parametrize(
     "path,value",
     [

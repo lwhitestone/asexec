@@ -889,7 +889,9 @@ least one counted postreg)
    equal to the postreg's `ref`, a pinned witness and a response that verifies. A ceiling
    that fails one is no time at all, since anyone can write one, so it is treated as no
    ceiling: never as on time.
-4. Its ceiling time T is at or before `body.due`.
+4. Its ceiling time T is at or before `body.due`. Both are compared exactly, in whole
+   microseconds since the epoch (`MIDP` and `RADI` are signed integers in microseconds, and
+   `due` is read to the microsecond), so a `due` equal to T is on time.
 
 A postreg is identified by its `ref`: if several copies of one counted postreg are given, it
 is on time when any counted copy carries a ceiling that meets #3 and #4, and its time is the
@@ -903,14 +905,15 @@ whether a commitment was reported, and `timely` says whether on time.
 nothing to examine and is `FAIL`, with the reason `requested but no commitment with a due
 has a counted postreg`. A commitment whose prereg has no `body.due` is not examined, so one
 open-ended claim does not fail `timely` for a whole run; one with a `due` and no counted
-postreg is not examined either (its state, `open` or `elapsed-no-postreg`, says it was not
-reported). A [rejected pre-registration](#matching-postregs-to-commitments) is no
+postreg is not examined either (its state, `open`, `elapsed-no-postreg` or `invalid-due`,
+says it was not reported). A [rejected pre-registration](#matching-postregs-to-commitments) is no
 commitment, so its `due` is never read.
 
 **Failure reasons:** a commitment fails with `due is not a parseable ISO-8601 timestamp`
 (#1) or `a counted postreg is not shown on time` (#2 to #4). With `timely` requested, the
 report marks each counted postreg not shown on time, under its commitment: `is late: its
-ceiling (no later than <T>) is after due` (#4), `is not shown on time: it has no ceiling`
+ceiling (no later than <T>) is after due` (#4; T rounded up to the second, or as epoch
+seconds if it has no ISO-8601 form), `is not shown on time: it has no ceiling`
 (#2), or `is not shown on time: its ceiling does not verify` (#3). An unparseable `due` is
 flagged under its commitment in every state.
 
@@ -942,7 +945,7 @@ Output (from `=== commitments ===` on), exit status `0`:
   ✓ timely=PASS  (1/1 commitment(s) ok)
 
 === ceiling trust (what you are accepting) ===
-  - postreg.json: ceiling witnessed by int08h-Roughtime at … (±1.0s), so no later than … - you are trusting …
+  - postreg.json: ceiling witnessed by … at … (±…s), so no later than … - you are trusting …
 
 asexec-verify/1 format=PASS selfsig=PASS timely=PASS
 Checked at 2026-12-31T23:59:59Z

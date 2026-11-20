@@ -26,7 +26,7 @@ Schema note (v3 term/type refactor): ``phase`` is ``prereg`` | ``postreg``;
 the commitment is expressed as a free-form ``target`` (what) plus an optional
 ``due`` deadline (by when) and an optional ``declaration`` (plain-language or
 structured description). Semantic bedrock is ``target`` alone. ``due`` is
-optional (a commitment with no deadline simply stays ``open`` forever).
+optional (a commitment with no deadline can never elapse: its state is ``no-due``).
 """
 
 from __future__ import annotations

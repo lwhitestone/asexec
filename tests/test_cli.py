@@ -385,7 +385,8 @@ def test_verify_version_skew_reads_as_format_not_signature(
 ):
     """A postreg of a format this release does not read, beside a good prereg: its reason
     is shown under it, attributed to format, and selfsig still passes for the prereg. The
-    postreg joins no commitment, so the prereg stays open."""
+    postreg joins no commitment, so the prereg has no counted postreg (no-due, as it has no
+    due)."""
     post = tmp_path / "post.json"
     assert run("postreg", "--key", key, "--fulfills", prereg, "--out", post) == 0
     mani = json.loads(post.read_text())
@@ -1097,3 +1098,25 @@ def test_verify_shows_a_postreg_for_an_unlisted_item(tmp_path, key, capsys, witn
     text = capsys.readouterr().out
     line = f"    {cli.NO} postreg {_ref(out[1])} names item 'Z9', which the prereg does not list\n"
     assert line in text
+
+
+def test_verify_shows_a_witness_time_past_year_9999_as_epoch_seconds(
+    tmp_path, key, capsys, monkeypatch, make_server, ceiling_for
+):
+    """The report never fails to print a time: one with no ISO-8601 form (here 2**62 us)
+    is shown as epoch seconds."""
+    lt_pub, sign_response = make_server(midpoint_us=2**62, maxt=2**63)
+    monkeypatch.setitem(roughtime.SERVERS, "synthetic", {"pubkey": lt_pub})
+    pre, post = tmp_path / "pre.json", tmp_path / "post.json"
+    assert run("prereg", "--key", key, "--target", "t", "--due", "2099-01-01T00:00:00Z",
+               "--out", pre) == 0  # fmt: skip
+    assert run("postreg", "--key", key, "--fulfills", pre, "--out", post) == 0
+    mani = manifest.load(str(post))
+    nonce_hex = _ref(post).split(":", 1)[-1]
+    manifest.attach_ceiling(mani, ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response))
+    manifest.save(mani, str(post))
+    capsys.readouterr()
+    assert run("verify", pre, post, "--tests", "format,selfsig,ceiling,timely") == 2
+    out = capsys.readouterr().out
+    assert "is late: its ceiling (no later than 4611686018429 (epoch seconds)) is after due" in out
+    assert "so no later than 4611686018429 (epoch seconds)" in out
