@@ -316,9 +316,12 @@ The body (`dsse.payload` decoded):
 `sig` signs the [DSSE](https://github.com/secure-systems-lab/dsse)
 [PAE](https://github.com/secure-systems-lab/dsse/blob/master/protocol.md#signature-definition)
 (pre-authentication encoding) of `payloadType` and the body bytes, `DSSEv1 <len> <type>
-<len> <body>`, and `dsse` is a standard DSSE envelope that DSSE tooling can verify as it is
-(asexec reads `payload` and `sig` in standard base64 only, not the URL-safe alphabet DSSE
-also allows). Verify checks the bytes the file stores, exactly as stored, and never
+<len> <body>`, and `dsse` is a standard DSSE envelope that DSSE tooling can verify as it is.
+asexec reads only a subset of DSSE envelopes, being stricter than DSSE in four ways: only
+standard base64 (DSSE verifiers must also accept URL-safe; asexec departs from that on
+purpose), with padding (DSSE is silent), a required `keyid` that must be `sha-256:` of
+`pubkey` (optional in DSSE, an unauthenticated hint), and exactly one signature (DSSE allows
+several, with a threshold). Verify checks the bytes the file stores, exactly as stored, and never
 re-serializes them, so a body written by another tool, spaced or ordered differently,
 verifies the same way. The body borrows [in-toto](https://in-toto.io/) field names. A
 postreg carries its prereg's `target`, `due` and `declaration`, links back with `fulfills`

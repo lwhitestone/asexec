@@ -51,10 +51,14 @@ Ceiling #2 and floor #4 compare exactly against the lowercase hex of the digest.
 (`A`-`Z`, `a`-`z`, `0`-`9`, `+`, `/`), padded with `=` to a multiple of 4 characters, with no
 whitespace or other character, and in the one spelling that base64 encoding gives its bytes:
 no unused bit of the last character is set. So each byte string has exactly one spelling.
-`dsse.payload` and `dsse.signatures[].sig` are strict base64. This is stricter than DSSE,
-whose verifiers also accept the URL-safe alphabet: every `dsse` asexec writes is a standard
-DSSE envelope that DSSE tooling can verify as it is, but an envelope another tool wrote in
-URL-safe base64 is malformed here (its `payload`) or fails `selfsig` (its `sig`).
+`dsse.payload` and `dsse.signatures[].sig` are strict base64. Every `dsse` asexec writes is
+a standard DSSE envelope (protocol v1.0.2) that DSSE tooling can verify as it is, but asexec
+reads only a subset of DSSE envelopes, being stricter than DSSE in four ways: it reads only
+standard, padded base64 (DSSE says verifiers must accept the URL-safe alphabet too, which
+asexec departs from on purpose, and is silent on padding); it requires a `keyid`, which must
+be `sha-256:` of `pubkey` (in DSSE it is optional, an unauthenticated hint); and it requires
+exactly one signature (DSSE allows several, with a threshold). An envelope another tool
+wrote outside these rules is malformed here (its `payload`) or fails `selfsig`.
 
 **JSON.** Valid JSON is what Python's `json.load` accepts (so `NaN` and `Infinity` are
 allowed), nested at most 64 deep: each array or object adds a level, and the outermost

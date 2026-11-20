@@ -189,9 +189,11 @@ adds sits outside it, in the wrapper:
 
 - `dsse` is a standard envelope that DSSE and in-toto tooling can lift out and verify
   unchanged, which keeps the M2 export simple: `payload` and `sig` are base64, as DSSE
-  has them. asexec reads both in strict standard base64 only (one spelling per byte
-  string), so an envelope another tool wrote in DSSE's URL-safe alphabet does not verify
-  here; the promise is that DSSE tools read asexec's `dsse`. (Done ahead of 0.4.0.)
+  has them. The promise is that DSSE tools read asexec's `dsse`, not that asexec reads every
+  DSSE envelope: it is stricter than DSSE in four ways, namely standard base64 only (DSSE
+  verifiers must also accept URL-safe), padding required (DSSE is silent), a required
+  `keyid` that is `sha-256:` of `pubkey` (optional in DSSE), and exactly one signature
+  (DSSE allows several, with a threshold). (Done ahead of 0.4.0.)
 - `ceiling` cannot be inside the body (its nonce is the body's own hash). In the wrapper
   it can still be attached after signing; it is bound by `nonce == ref` and authenticated
   by the witness's own signature.
