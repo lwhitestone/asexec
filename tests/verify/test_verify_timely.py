@@ -45,7 +45,7 @@ def test_timely__pass__all(sc):
     assert report["code"] == PASS
     assert report["results"]["timely"]["reason"] == "1/1 commitment(s) ok"
     assert _statuses(report) == ["on-time"] * 3
-    assert {p["no_later_than"] for p in _commitment(report)["timeliness"]} == {T_US}
+    assert {p["no_later_than_us"] for p in _commitment(report)["timeliness"]} == {T_US}
 
 
 def test_timely__pass__1_due_without_offset_is_read_as_utc(sc):
@@ -228,7 +228,7 @@ def test_timely__pass__4_compared_in_whole_microseconds(sc, make_server):
     assert (MIDP_US / 1e6 + RADI_US / 1e6) > 2553427869.881736  # the float error itself
     report = sc.verify("timely")
     assert report["code"] == PASS
-    assert {p["no_later_than"] for p in _commitment(report)["timeliness"]} == {MIDP_US + RADI_US}
+    assert {p["no_later_than_us"] for p in _commitment(report)["timeliness"]} == {MIDP_US + RADI_US}
 
 
 def test_timely__fail__4_one_microsecond_after_due_is_late(sc, make_server):
@@ -238,3 +238,14 @@ def test_timely__fail__4_one_microsecond_after_due_is_late(sc, make_server):
     report = sc.verify("timely")
     assert report["code"] == FAIL
     assert _statuses(report) == ["late"] * 3
+
+
+def test_timely__pass__all_the_report_names_the_unit_of_its_times(sc):
+    """The report's "no later than" times are integer microseconds, and say so in their key,
+    beside the ceiling record's float-second midpoint and radius."""
+    report = sc.verify("timely")
+    (entry,) = {p["no_later_than_us"] for p in _commitment(report)["timeliness"]}
+    assert isinstance(entry, int)
+    ceilings = [m["ceiling"] for m in report["manifests"] if m["ceiling"]["status"] == "verified"]
+    assert {c["no_later_than_us"] for c in ceilings} == {T_US}
+    assert all("no_later_than" not in c for c in ceilings)

@@ -520,11 +520,11 @@ def verify_paths(
         ceiling = verify_ceiling(mani, fmt["ref"], servers) if clean else {"status": "absent"}
         content = verify_content(body, artifacts_dir) if clean else {"status": "skipped"}
         if ceiling.get("status") == "verified":
-            ceiling["no_later_than"] = _no_later_than(ceiling)
+            ceiling["no_later_than_us"] = _no_later_than(ceiling)
             ceiling_trust.append(
                 f"{p}: ceiling witnessed by {ceiling.get('witness_id')} at "
                 f"{ceiling.get('midpoint')} (±{ceiling.get('radius')}s), so no later than "
-                f"{_utc_ceil(ceiling['no_later_than'])} - you are "
+                f"{_utc_ceil(ceiling['no_later_than_us'])} - you are "
                 f"trusting {ceiling.get('witness_id')} to be honest about time "
                 f"(signature-witness trust class, distinct from the floor)."
             )
@@ -685,14 +685,14 @@ def _on_time(ceilings: list[dict[str, Any]], due_us: int) -> dict[str, Any]:
     ``on-time`` if a ceiling meets the ceiling conditions and its time is at or before due;
     else ``late`` if one does; else ``invalid-ceiling`` if it has a ceiling that fails them
     (anyone can write a ceiling, so it is no time at all); else ``no-ceiling``. The earliest
-    verified time, in microseconds, is reported as ``no_later_than``."""
+    verified time, in microseconds, is reported as ``no_later_than_us``."""
     times = [_no_later_than(c) for c in ceilings if c.get("status") == "verified"]
     if times:
         earliest = min(times)
-        return {"status": "on-time" if earliest <= due_us else "late", "no_later_than": earliest}
+        return {"status": "on-time" if earliest <= due_us else "late", "no_later_than_us": earliest}
     if any(c.get("status") != "absent" for c in ceilings):
-        return {"status": "invalid-ceiling", "no_later_than": None}
-    return {"status": "no-ceiling", "no_later_than": None}
+        return {"status": "invalid-ceiling", "no_later_than_us": None}
+    return {"status": "no-ceiling", "no_later_than_us": None}
 
 
 # Why a commitment fails timely, as the report shows it (docs/VERIFICATION.md).
