@@ -1235,6 +1235,16 @@ that the `v1` key exists, as the review round 1 notes above say.
   development there is refused: the name-keyed entry would collide with the literal `v1`
   key. How patches are released alongside a new format (a release branch, say) isn't
   designed yet. Refusing is the conservative outcome.
+- **Open design question for after 0.4.0, which the human tester should see: there is no
+  workable path to a `0.5.0b1` yet** (review round 1, finding 5). The beta guard needs a
+  `FORMATS` entry keyed by the name `MANIFEST_PAYLOAD_TYPE`. After `0.4.0`, main keeps
+  `MANIFEST_PAYLOAD_TYPE = "application/vnd.asexec.v1+json"` (D6a), so a new
+  `MANIFEST_PAYLOAD_TYPE: {...}` entry would have the same key as the literal `v1` entry.
+  Ruff flags that (F601), and at runtime the later entry would replace `v1`'s rules. How a
+  later line's betas are developed and released, and the patch case above, need designing
+  together before the first post-0.4.0 format change. This is not a b1 problem: every
+  `0.4.0` beta and `0.4.0` itself work, as rehearsed. `docs/DEVELOPMENT.md` no longer
+  promises the `0.5.0b1` workflow.
 
 **Judgement calls / new paradigms:**
 - **Full releases use an explicit table.** `RELEASE_PAYLOAD_TYPES = {"0.4": v1}` covers
@@ -1269,3 +1279,56 @@ that the `v1` key exists, as the review round 1 notes above say.
   The trigger glob admits `rc`, alpha and `.dev` tags, which the prerelease test would have
   published as full releases. The check fails them before any upload, and it accepts the
   same forms as `release.sh`.
+
+**Review round 1** (findings on PR #53):
+1. should-fix: the failure cleanup did nothing if `git commit` itself failed. `git restore --
+   files` restores from the index, which `git add` had already updated. With a failing
+   pre-commit hook, `--no-check 0.4.0b1` exited 1 and left `pyproject.toml`, `__init__.py`,
+   `constants.py` and `tests/test_constants.py` staged with the beta type, against
+   `docs/DEVELOPMENT.md`, the script header and these notes. → The cleanup is now
+   `git restore --source=HEAD --staged --worktree -- <the five files>`. Commit `395e15b`.
+   Rehearsed in a fresh throwaway clone (local bare `origin`, guarded as before) at
+   `395e15b`:
+   - Before the fix (at `67ccca4`), the hook case reproduced the finding: `git status
+     --porcelain` showed `M ` for the four files, and `git diff --cached` held the beta
+     literals.
+   - After the fix, the hook case (`induced pre-commit hook failure`, exit 1) leaves
+     `git status --porcelain`, `git diff HEAD` and `git diff --cached` all empty, with HEAD
+     unchanged and no tag here or on `origin`.
+   - The induced `check.sh` failure: the failing test printed ` M` for all five files, then
+     `1 failed, 451 passed, 4 skipped`, exit 1. Afterwards `git status --porcelain`,
+     `git diff HEAD` and `git diff --cached` are all empty, and the five files hold their
+     `v1` / `0.3.20` values.
+2. nit: the `X.Y.0` branch turned the name key into the literal without checking that the
+   literal key was absent, so a stray `"application/vnd.asexec.v1+json": {...}` entry
+   became a duplicate key. → It now refuses if the literal key exists. Rehearsed on the
+   `0.4.0b2` tree with a stray `v1` entry committed: `--no-check 0.4.0` → `Error:
+   src/asexec/constants.py: an entry is already keyed by application/vnd.asexec.v1+json, so
+   releasing the entry under development would duplicate that key`, exit 1, clean tree,
+   index empty, no `v0.4.0` tag. At `67ccca4` the same run exited 0 and tagged `v0.4.0`.
+   Commit `395e15b`.
+3. nit: a beta of a patch was accepted (`--no-check 0.4.1b1` committed and tagged). → A beta
+   whose `Z` is not `0` is refused before anything is touched: `0.4.1b1` and `1.2.3b1` →
+   `Error: a beta must be of an X.Y.0 release (X.Y.0bN), not of a patch`, exit 2. Commit
+   `395e15b`. Version ordering is not checked, as was already the case before this PR, so
+   `0.5.0b1` before `0.4.0` still passes the version check. The script header and
+   `docs/DEVELOPMENT.md` say so.
+4. nit: two `docs/DEVELOPMENT.md` lines were not wrapped (131 and 143 characters), and one
+   had back-to-back parentheticals. → The parentheticals are merged and every touched line
+   is wrapped at 95. Only line 5, an earlier line, is longer. Commit `395e15b`.
+5. out of scope: no workable path to a `0.5.0b1` after `0.4.0`. → Recorded prominently in
+   the observations above, beside the patch-during-development one, as an open design
+   question for after 0.4.0. The `docs/DEVELOPMENT.md` wording is softened: a later line's
+   beta "must still read `v1`", and how those betas are released "is not designed yet".
+   Commit `395e15b`.
+6. The reviewer's assessment, recorded: the `X.Y.0` rule, the beta and patch guards and the
+   `verify-release` tag-form check are mild, documented, harmless creep, and the rest is
+   within scope. No code change.
+
+The rest of the fixed rehearsal at `395e15b` matches the first one:
+- `0.4.0b1`, `0.4.0b2` and `0.4.0` give the same 5-file commits, with 5, 5 and 6 lines.
+- `check.sh` gives `451 passed, 4 skipped` after b1 and `455 passed` after 0.4.0.
+- After `0.4.0`, `0.5.0b1` and `0.5.0` are refused and `0.4.1` passes.
+- The re-key case gives 5 failed.
+
+`scripts/check.sh` on `395e15b`: clean, 455 passed. `shellcheck scripts/release.sh`: clean.
