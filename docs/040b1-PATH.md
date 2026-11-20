@@ -759,7 +759,8 @@ non-string `signature.keyid` crash, noted above, goes to checkpoint 5 (#44).
     - `test_run__malformed_postreg_joins_no_commitment[newer-format|beta-format]`: neither
       counted nor rejected nor notarization-only, and `keyconsist` applicable 0.
   - The selector itself (`tests/test_constants.py`), with a second entry added through
-    `monkeypatch.setitem` whose every rule differs from v1's:
+    `monkeypatch.setitem` whose every rule but `signing_key_alg` (ed25519 in both) differs
+    from v1's:
     - `test_formats__a_file_is_read_under_its_own_entry`: `signing_input(…, OTHER)` starts
       `asexec-PAE/other 33 application/vnd.asexec.other+json`. Its file and a v1 file both
       pass `format` and `selfsig` (each PAE and keyid prefix), the refs start `other-256:`
@@ -891,8 +892,9 @@ non-string `signature.keyid` crash, noted above, goes to checkpoint 5 (#44).
   line, and the key can't disagree with the constant.
   `test_formats_has_one_entry_keyed_by_manifest_payload_type` pins both the one entry and the
   key. `FORMATS` therefore sits just after `MANIFEST_PAYLOAD_TYPE`, out of alphabetical
-  order, and its comment says why. When a second format is added, the old entry's key has
-  to become its literal.
+  order, and its comment says why. The name key is only for the entry under development:
+  the 0.4.0 release commit (at the latest, before any later release commit) makes the `v1`
+  key its literal (corrected in review round 1, below).
 - **`SUBJECT_DEFAULT_HASH_ALG` split, not removed.** `docs/MULTIVERSION.md` says to split it.
   The entry holds verify's fallback, and the constant stays as the signing default
   (`hashing`, `manifest._build`, the CLI's `--hash-alg`), reclassified `NEW_OUTPUT`: signing
@@ -939,3 +941,66 @@ Impact: NEW_OUTPUT
 Affected: nothing published (verify's fallback is now FORMATS[...]["subject_default_hash_alg"])
 Action: none
 ```
+
+**Review round 1** (findings on PR #52):
+1. `selfsig` reads `payloadType` (the PAE input and the keyid prefix), and `content` reads it
+   for its default `hash_alg`, but neither listed it under *Examines* → added to both
+   sections and to both summary rows. `selfsig` #2 now notes that `sha-256:` is the format's
+   prefix. Commit `514ba6c`.
+2. `README.md:202-203` says fields marked `required` are the ones without which a file is
+   malformed, but `payloadType` wasn't marked → both envelope examples mark it
+   `// required: the format; must be one this release reads`. Commit `58ce175`.
+3. A prereg that fails `format` makes a postreg naming it notarization-only, and neither the
+   doc nor a test said so. *Matching postregs to commitments* now defines a **provided
+   prereg** as one that passes `format`, and adds that a prereg failing it is no commitment,
+   so a postreg naming it is notarization-only. The run rule says "as a prereg it is no
+   commitment, and as a postreg it is neither counted nor rejected". Test:
+   `test_run__prereg_failing_format_is_not_a_provided_prereg[bad-hex|newer-format]` (no
+   commitment, the postreg notarization-only with its `fulfills`, `keyconsist` applicable 0,
+   `selfsig` applicable 1). The behaviour already held, so the test was checked against a
+   planted change in `verify_paths` that keeps a prereg failing `format` as a commitment.
+   Both cases failed under it and passed once it was reverted. Commit `514ba6c`.
+4. The name key contradicted "existing entries are never edited", and its trigger ("when a
+   second format is added") was too late. After 0.4.0, any release commit that rewrites the
+   type would re-key the released `v1` entry. The reviewer showed it: a `sed` to
+   `application/vnd.asexec.0.5.0b1+json` makes `FROZEN_MANIFEST` fail with "newer than
+   this release" → the `constants.py` comment, the
+   `test_formats_has_one_entry_keyed_by_manifest_payload_type` comment and
+   `docs/MULTIVERSION.md` (*Verifier design*, *New format*) now say that only the entry
+   under development has the name key. They also say the 0.4.0 release commit (at the
+   latest, before any later release commit rewrites the literal) makes the key the literal
+   `application/vnd.asexec.v1+json`, which never changes after that. The judgement call
+   above is corrected to match. #30 is not implemented here (see observations). Commit
+   `58ce175`.
+5. #40's release-note list names `SIGNING_PAE_VERSION`, which no longer exists → moved to
+   observations (below).
+6. `tests/test_constants.py` and these notes said every `OTHER_RULES` rule differs from
+   v1's, but `signing_key_alg` is `ed25519` in both → both reworded. Commit `58ce175`.
+7. The malformed definition ("lacks an object `payload`") also fits a later format's file
+   with another layout → the run rule now says a readable JSON object with an unknown
+   `payloadType` is judged by #3 instead of the rest of #1 and #2, so it is of an unknown
+   format and never malformed. Commit `514ba6c`.
+8. The `docs/MULTIVERSION.md` banner still called the whole document a proposal → it now
+   says the *Status* line marks which part describes current behavior. Commit `58ce175`.
+
+`scripts/check.sh`: clean, 444 passed (442 + the 2 new run-rule cases).
+
+**Observations added in review round 1 (out of scope):**
+- **#44 (checkpoint 5), an intended contrast:** a prereg that fails `format` is not a provided
+  prereg, so a postreg naming it is notarization-only (finding 3). Under D2, a prereg that
+  passes `format` but fails `selfsig` is also not a commitment, but it is listed under
+  *rejected pre-registrations*, and a postreg naming it is listed as rejected under it, not
+  as notarization-only. The difference is intended. A file that fails `format` can't be read
+  under any rules this release has, so nothing can be said about what it names. One that
+  passes `format` is readable, and only its signature is in question.
+- **#30 (checkpoint 4), the frozen-vector skip:** D6b's skip ("when `MANIFEST_PAYLOAD_TYPE`
+  is a beta type") should apply only while it is a 0.4.0 beta, that is, before any format
+  has been released. Otherwise, after 0.4.0, a beta release commit would skip every test
+  that guards the `v1` entry, at the same time as it could be re-keying that entry. With a
+  `0.5.0b1` type, all four tests that read the frozen `v1` vectors would be skipped. An
+  alternative is a pin that `application/vnd.asexec.v1+json` is a `FORMATS` key whenever
+  the type is not a 0.4.0 beta. #30 should also make the `v1` key a literal in the 0.4.0
+  release commit (finding 4), or say which step does.
+- **#40:** its body has the release notes name `SIGNING_PAE_VERSION` (#32's change). That
+  constant no longer exists. Its value is `FORMATS[MANIFEST_PAYLOAD_TYPE]["signing_pae_version"]`,
+  so the release-note entry for the PAE prefix should name that field.
