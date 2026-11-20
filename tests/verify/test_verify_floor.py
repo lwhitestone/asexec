@@ -8,8 +8,8 @@ import pytest
 
 from asexec import drand
 
-PASS = "asexec-verify/1 BDR=PASS floor=PASS"
-FAIL = "asexec-verify/1 BDR=PASS floor=FAIL"
+PASS = "asexec-verify/1 floor=PASS format=PASS selfsig=PASS"
+FAIL = "asexec-verify/1 floor=FAIL format=PASS selfsig=PASS"
 EMPTY = "requested but no manifest carries an anchor.floor"
 
 
@@ -153,5 +153,5 @@ def test_floor__fail__empty_malformed_manifest_not_examined(scenario):
     )
     report = scenario.verify("floor")
     assert report["results"]["floor"]["applicable"] == 0
-    assert report["code"] == "asexec-verify/1 BDR=FAIL floor=FAIL"
+    assert report["code"] == "asexec-verify/1 floor=FAIL format=FAIL selfsig=PASS"
     assert report["results"]["floor"]["reason"] == EMPTY

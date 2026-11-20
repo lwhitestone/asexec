@@ -7,7 +7,7 @@ Output: a canonical plaintext code
 -------------------------------------------------------------
 ``verify`` runs a caller-chosen set of tests and emits one code per run::
 
-    asexec-verify/1 BDR=PASS floor=PASS
+    asexec-verify/1 floor=PASS format=PASS selfsig=PASS
 
 Grammar (spec'd here so any implementation reproduces it byte-for-byte):
 
@@ -25,8 +25,6 @@ The verify code is a summary of a computation, not a credential. Real verificati
 
 Tests (the catalog - only verifiable claims, no self-declarations)
 --------------------------------------------------------------------
-  - ``BDR``        : bedrock - signature over the PAE input + keyid matches
-                     pubkey. Applies to every manifest. **Required in every run.**
   - ``ceiling``    : a ceiling witness (Roughtime) signature verifies against a
                      pinned key AND its nonce == ref(payload). Applies to
                      manifests that carry a ceiling.
@@ -39,10 +37,20 @@ Tests (the catalog - only verifiable claims, no self-declarations)
                      subject is present.
   - ``floor``      : the drand freshness floor BLS-verifies. Applies to
                      manifests that carry an anchor.floor.
+  - ``format``     : the file can be read: a JSON object (unique keys, nested at
+                     most 64 deep) with an object payload that has canonical
+                     bytes and a signature whose pubkey and sig are hex. Applies
+                     to every manifest file. **Required in every run.**
   - ``keyconsist`` : each validly signed postreg that names a pre-registration's
                      ref has the key of a provided pre-registration with that
                      ref. Applies to commitments with a counted postreg or one
                      rejected as signed by a different key.
+  - ``selfsig``    : the file is unchanged since its own key signed it: the
+                     signature over the PAE input verifies by pubkey, and keyid
+                     derives from pubkey. Applies to every manifest that passes
+                     ``format``. **Required in every run.**
+
+Only a file that passes ``format`` is examined by any other test.
 
 A requested test is ``PASS`` iff it holds everywhere it applies AND it applies
 somewhere; a requested test that applies **nowhere** is ``FAIL``
@@ -94,36 +102,44 @@ from .models import (
 
 # The test catalog, alphabetical (the order names appear in a code).
 TEST_CATALOG: tuple[str, ...] = (
-    "BDR",
     "ceiling",
     "chain",
     "content",
     "floor",
+    "format",
     "keyconsist",
+    "selfsig",
 )
 
-# BDR (bedrock) is the mandatory minimum: a run that does not check it is not a
-# meaningful asexec verification, so `verify` requires it explicitly.
-REQUIRED_TEST = "BDR"
+# The mandatory minimum: a run that does not check both is not a meaningful asexec
+# verification, so `verify` requires each explicitly. `format` says whether a file can be
+# read at all, and `selfsig` whether a readable one is unchanged since its key signed it.
+REQUIRED_TESTS: frozenset[str] = frozenset({"format", "selfsig"})
+
+
+def _quoted(names) -> str:
+    return ", ".join(f"'{name}'" for name in sorted(names))
 
 
 def parse_tests(spec: str) -> list[str]:
     """Parse a ``--tests`` string into a validated, de-duplicated list.
 
-    Raises ``VerificationError`` on an unknown test or if ``BDR`` is absent
+    Raises ``VerificationError`` on an unknown test or if a required test is absent
     (no implicit default; the caller must declare its appetite explicitly).
     """
+    required = " and ".join(_quoted([name]) for name in sorted(REQUIRED_TESTS))
     names = [t.strip() for t in spec.split(",") if t.strip()]
     if not names:
-        raise VerificationError("no tests requested; --tests must list at least 'BDR'")
+        raise VerificationError(f"no tests requested; --tests must list at least {required}")
     unknown = [t for t in names if t not in TEST_CATALOG]
     if unknown:
         raise VerificationError(
             f"unknown test(s): {', '.join(unknown)}; available: {', '.join(TEST_CATALOG)}"
         )
-    if REQUIRED_TEST not in names:
+    missing = REQUIRED_TESTS - set(names)
+    if missing:
         raise VerificationError(
-            f"'{REQUIRED_TEST}' must be included in --tests (the mandatory minimum)"
+            f"missing required test(s) {_quoted(missing)}; every run must include {required}"
         )
     # preserve catalog order, de-dup.
     return [t for t in TEST_CATALOG if t in names]
@@ -168,26 +184,44 @@ def _lookup(obj: Any, *path: str) -> tuple[bool, Any]:
     return True, obj
 
 
-def verify_signature(mani: dict[str, Any]) -> dict[str, Any]:
-    """The bedrock check for a single manifest: signature + keyid."""
-    out: dict[str, Any] = {"signature_ok": False, "keyid_ok": False, "errors": []}
+def verify_format(mani: dict[str, Any]) -> dict[str, Any]:
+    """``format`` for a file ``manifest.load`` has read as a JSON object (which checks the
+    rest of format #1: readable, unique keys, nesting): its frame and hex fields, and the
+    ``ref`` and ``keyid`` that a file that passes is known by."""
     try:
-        envelope = EnvelopeInput.model_validate(mani)  # BDR #1, #2 (shape)
+        envelope = EnvelopeInput.model_validate(mani)  # format #1 (frame), #2 (hex)
     except ValidationError as e:
-        out["errors"].append(f"malformed: {_describe(e)}")
-        return out
+        return {"ok": False, "errors": [f"malformed: {_describe(e)}"]}
     try:
-        body, sigblock = envelope.payload, envelope.signature
-        pub = bytes.fromhex(sigblock.pubkey)
-        sig = bytes.fromhex(sigblock.sig)
-        out["signature_ok"] = keys.verify(pub, signing_input(body), sig)
-        out["keyid_ok"] = keys.keyid_for(pub) == sigblock.keyid
-        out["keyid"] = sigblock.keyid
-        out["phase"] = body.get("phase")
-        out["ref"] = manifest.ref(body)
-    except Exception as e:  # e.g. a payload with no canonical form
-        out["errors"].append(f"malformed: {e}")
-    return out
+        ref = manifest.ref(envelope.payload)  # format #1: payload has canonical bytes
+    except Exception as e:  # e.g. a string holding a lone surrogate, which has no UTF-8 form
+        return {"ok": False, "errors": [f"malformed: {e}"]}
+    # A file whose payloadType names no format this release reads would fail here; verify
+    # does not read payloadType yet.
+    return {"ok": True, "errors": [], "ref": ref, "keyid": envelope.signature.keyid}
+
+
+def verify_selfsig(mani: dict[str, Any]) -> dict[str, Any]:
+    """``selfsig`` for a file that passed ``format``: the signature verifies over the PAE
+    input by ``pubkey`` (#1), and ``keyid`` derives from ``pubkey`` (#2). Never raises."""
+    envelope = EnvelopeInput.model_validate(mani)
+    sigblock = envelope.signature
+    pub = bytes.fromhex(sigblock.pubkey)
+    sig = bytes.fromhex(sigblock.sig)
+    return {
+        "examined": True,
+        "signature_ok": keys.verify(pub, signing_input(envelope.payload), sig),
+        "keyid_ok": keys.keyid_for(pub) == sigblock.keyid,
+    }
+
+
+# A file that fails ``format``: ``selfsig`` does not examine it.
+_SELFSIG_NOT_EXAMINED = {"examined": False, "signature_ok": False, "keyid_ok": False}
+
+
+def _selfsig_ok(record: dict[str, Any]) -> bool:
+    """Whether a manifest meets the ``selfsig`` conditions (it passed ``format`` too)."""
+    return bool(record["selfsig"]["signature_ok"] and record["selfsig"]["keyid_ok"])
 
 
 def _describe(error: ValidationError) -> str:
@@ -223,7 +257,7 @@ def verify_ceiling(
 
     Two conditions: (1) the witness signature verifies against a pinned key,
     and (2) the witness's nonce binds to THIS manifest (nonce == ref(payload)).
-    Called only for a manifest that passed ``verify_signature``. Delegates the
+    Called only for a manifest that passed ``format``. Delegates the
     binding, the pin lookup in ``servers`` (default: the pinned
     ``roughtime.SERVERS``) and the witness cryptography to the ``roughtime`` module.
     """
@@ -325,14 +359,15 @@ def verify_paths(
             if unlistable is not None:
                 raise unlistable
             mani = manifest.load(p)
-            sig = verify_signature(mani)
+            fmt = verify_format(mani)
         except Exception as e:  # unreadable / not JSON / duplicate keys / not an object
             mani = {}
-            sig = {"signature_ok": False, "keyid_ok": False, "errors": [f"malformed: {e}"]}
+            fmt = {"ok": False, "errors": [f"malformed: {e}"]}
         body = mani.get("payload")
         if not isinstance(body, dict):
             body = {}
-        clean = sig.get("errors") == []
+        clean = fmt["ok"]
+        selfsig = verify_selfsig(mani) if clean else {**_SELFSIG_NOT_EXAMINED}
         floor = verify_floor(body) if clean else {"status": "absent"}
         ceiling = verify_ceiling(mani, servers) if clean else {"status": "absent"}
         content = verify_content(body, artifacts_dir) if clean else {"status": "skipped"}
@@ -346,38 +381,39 @@ def verify_paths(
         rec = {
             "path": p,
             "phase": body.get("phase"),
-            "ref": sig.get("ref"),
-            "keyid": sig.get("keyid"),
-            "signature": sig,
+            "ref": fmt.get("ref"),
+            "keyid": fmt.get("keyid"),
+            "format": fmt,
+            "selfsig": selfsig,
             "floor": floor,
             "ceiling": ceiling,
             "content": content,
         }
         manifests_report.append(rec)
         if not clean:
-            continue  # malformed: no other test examines it, so it joins no commitment
+            continue  # fails format: no other test examines it, so it joins no commitment
         links = LinkInput.model_validate({k: body[k] for k in LinkInput.model_fields if k in body})
-        if links.phase == "prereg" and sig.get("ref"):
-            preregs[(sig["ref"], sig.get("keyid"))] = {
-                "ref": sig["ref"],
-                "keyid": sig.get("keyid"),
+        if links.phase == "prereg":
+            preregs[(rec["ref"], rec["keyid"])] = {
+                "ref": rec["ref"],
+                "keyid": rec["keyid"],
                 "due": body.get("due"),
                 "counted_postregs": [],
                 "rejected_postregs": [],
             }
         elif links.phase == "postreg":
-            postregs.append((sig.get("ref"), links, sig))
+            postregs.append((links, rec))
 
     # A manifest is identified by its ref, so a copy (same ref and keyid) of one already
     # listed adds nothing: the same ref is the same body, links and all. A postreg counts
     # toward the commitment of its ref whose signer it shares; one that counts toward none
     # is rejected under every commitment of that ref.
     notarization_only: list[dict[str, Any]] = []
-    for rref, links, sig in postregs:
+    for links, rec in postregs:
         candidates = [pr for (ref, _keyid), pr in preregs.items() if ref == links.fulfills]
         if candidates:
-            entry = {"ref": rref, "prev_hash": links.prev_hash, "keyid": sig.get("keyid")}
-            reasons = [_get_postreg_rejection_reason(sig, pr) for pr in candidates]
+            entry = {"ref": rec["ref"], "prev_hash": links.prev_hash, "keyid": rec["keyid"]}
+            reasons = [_get_postreg_rejection_reason(rec, pr) for pr in candidates]
             if None in reasons:
                 _add_once(candidates[reasons.index(None)]["counted_postregs"], entry)
             else:
@@ -386,7 +422,7 @@ def verify_paths(
         else:
             _add_once(
                 notarization_only,
-                {"ref": rref, "fulfills": links.fulfills, "keyid": sig.get("keyid")},
+                {"ref": rec["ref"], "fulfills": links.fulfills, "keyid": rec["keyid"]},
             )
 
     commitments = []
@@ -455,15 +491,16 @@ def _evaluate(tests, manifests, commitments, artifacts_dir) -> dict[str, dict[st
     with_counted = [c for c in commitments if c["counted_postregs"]]
     # A commitment is key-checked only if it has a counted postreg or one rejected as signed
     # by a different key: one whose postregs were all rejected for an invalid signature has
-    # no key to check (BDR judges them).
+    # no key to check (selfsig judges them).
     key_checked = [c for c in commitments if c["key_checked"]]
 
-    if "BDR" in tests:
-        units = [
-            bool(m["signature"].get("signature_ok") and m["signature"].get("keyid_ok"))
-            for m in manifests
-        ]
-        res["BDR"] = _tally(units, "no manifests to verify", "manifest(s)")
+    if "format" in tests:
+        units = [m["format"]["ok"] for m in manifests]
+        res["format"] = _tally(units, "no manifests to verify", "manifest(s)")
+
+    if "selfsig" in tests:
+        units = [_selfsig_ok(m) for m in manifests if m["selfsig"]["examined"]]
+        res["selfsig"] = _tally(units, "no manifest passes format", "manifest(s)")
 
     if "floor" in tests:
         units = [
@@ -526,13 +563,14 @@ REASON_INVALID_SIGNATURE = "invalid signature"
 REASON_DIFFERENT_KEY = "signed by a different key than the pre-registration"
 
 
-def _get_postreg_rejection_reason(sig: dict[str, Any], prereg: dict[str, Any]) -> str | None:
+def _get_postreg_rejection_reason(rec: dict[str, Any], prereg: dict[str, Any]) -> str | None:
     """Why a postreg that references ``prereg`` does not count toward fulfilling
-    it, or None if it counts: validly signed by the prereg's own key. Only a
-    well-formed postreg gets here (a malformed one joins no commitment)."""
-    if not (sig.get("signature_ok") and sig.get("keyid_ok")):
+    it, or None if it counts: it meets the ``selfsig`` conditions and has the prereg's
+    own keyid. Only a postreg that passed ``format`` gets here (one that fails it joins
+    no commitment)."""
+    if not _selfsig_ok(rec):
         return REASON_INVALID_SIGNATURE
-    if sig.get("keyid") != prereg["keyid"]:
+    if rec["keyid"] != prereg["keyid"]:
         return REASON_DIFFERENT_KEY
     return None
 

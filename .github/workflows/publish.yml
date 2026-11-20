@@ -153,7 +153,7 @@ jobs:
           asexec keygen --out ci.key
           asexec prereg --key ci.key --subject ci.key.pub --due 2099-01-01T00:00:00Z \
             --target "model m via provider p" --out pre.json
-          asexec verify pre.json --tests BDR
+          asexec verify pre.json --tests format,selfsig
 
   publish-pypi:
     needs: smoke-testpypi

@@ -127,8 +127,12 @@ def _result_tokens(tmp_path, mani, tests, artifacts_dir=None):
     return verify_paths([str(path)], tests, artifacts_dir=artifacts_dir)["code"].split()[1:]
 
 
-def _bdr_passes(tmp_path, mani):
-    return _result_tokens(tmp_path, mani, ["BDR"]) == ["BDR=PASS"]
+def _required_tokens(tmp_path, mani):
+    return _result_tokens(tmp_path, mani, ["format", "selfsig"])
+
+
+def _required_pass(tmp_path, mani):
+    return _required_tokens(tmp_path, mani) == ["format=PASS", "selfsig=PASS"]
 
 
 def _signed_prereg():
@@ -142,14 +146,14 @@ def test_every_identifier_is_classified():
 
 
 def test_frozen_manifests_still_verify(tmp_path):
-    assert _bdr_passes(tmp_path, FROZEN_MANIFEST)
+    assert _required_pass(tmp_path, FROZEN_MANIFEST)
 
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir()
     (artifacts / "a.txt").write_bytes(b"x")
     assert _result_tokens(
-        tmp_path, FROZEN_NO_HASH_ALG_MANIFEST, ["BDR", "content"], str(artifacts)
-    ) == ["BDR=PASS", "content=PASS"]
+        tmp_path, FROZEN_NO_HASH_ALG_MANIFEST, ["content", "format", "selfsig"], str(artifacts)
+    ) == ["content=PASS", "format=PASS", "selfsig=PASS"]
 
 
 def test_signing_pae_version_and_manifest_payload_type():
@@ -168,9 +172,10 @@ def test_signing_pae_version_and_manifest_payload_type():
 
 def test_manifest_payload_type_change_fails_what_was_signed_before_it(tmp_path):
     # What BREAKS_USERS means for MANIFEST_PAYLOAD_TYPE: the same body and key, signed under
-    # the type 0.3.x used, no longer passes, because the type is in the signed bytes.
+    # the type 0.3.x used, no longer passes selfsig, because the type is in the signed bytes.
+    # It still passes format, because verify does not read payloadType yet (see below).
     assert PRE_V1_MANIFEST["payload"] == FROZEN_MANIFEST["payload"]
-    assert not _bdr_passes(tmp_path, PRE_V1_MANIFEST)
+    assert _required_tokens(tmp_path, PRE_V1_MANIFEST) == ["format=PASS", "selfsig=FAIL"]
 
 
 def test_digest_ref_prefix():
@@ -210,7 +215,7 @@ def test_verify_code_version():
     # grammar or the documented meaning of an existing test name changes; adding a test name
     # needs no bump. From 0.4.0, never change what a number means; 0.4.0 keeps /1.
     assert constants.VERIFY_CODE_VERSION == "asexec-verify/1"
-    assert verify_paths([], ["BDR"])["code"].startswith("asexec-verify/1 ")
+    assert verify_paths([], ["format", "selfsig"])["code"].startswith("asexec-verify/1 ")
 
 
 def test_identity_well_known_path():
@@ -242,19 +247,21 @@ def test_identity_document_version():
 
 def test_not_enforced_yet__predicate_type(tmp_path):
     assert "predicateType" not in FROZEN_MANIFEST["payload"]
-    assert _bdr_passes(tmp_path, FROZEN_MANIFEST)
+    assert _required_pass(tmp_path, FROZEN_MANIFEST)
 
 
 def test_not_enforced_yet__envelope_payload_type(tmp_path):
     mani = copy.deepcopy(FROZEN_MANIFEST)
+    # An unknown payloadType is not yet a format failure: verify signs and checks under
+    # MANIFEST_PAYLOAD_TYPE whatever the file says.
     mani["payloadType"] = "application/something-else"
-    assert _bdr_passes(tmp_path, mani)
+    assert _required_pass(tmp_path, mani)
 
 
 def test_not_enforced_yet__signature_alg(tmp_path):
     mani = copy.deepcopy(FROZEN_MANIFEST)
     mani["signature"]["alg"] = "something-else"
-    assert _bdr_passes(tmp_path, mani)
+    assert _required_pass(tmp_path, mani)
 
 
 def test_not_enforced_yet__digest_prefix_in_ceiling_binding():

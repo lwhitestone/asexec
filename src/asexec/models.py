@@ -77,15 +77,15 @@ class InputModel(BaseModel):
 
 
 class SignatureInput(InputModel):
-    """``signature`` (VERIFICATION.md ### BDR)."""
+    """``signature`` (VERIFICATION.md ### format, ### selfsig)."""
 
-    pubkey: Hex  # BDR #2
-    sig: Hex  # BDR #2
-    keyid: Any = None  # BDR #3 compares it to the derived keyid; any other value fails there
+    pubkey: Hex  # format #2
+    sig: Hex  # format #2
+    keyid: Any = None  # selfsig #2 compares it to the derived keyid; any other value fails there
 
 
 class EnvelopeInput(InputModel):
-    """The file's top level (BDR #1). ``payload`` stays a dict: its slices are parsed on
+    """The file's top level (format #1). ``payload`` stays a dict: its slices are parsed on
     demand, so a junk floor fails only ``floor``."""
 
     payload: dict[str, Any]
@@ -210,7 +210,7 @@ class ManifestBody(BaseModel):
 
     model_config = ConfigDict(strict=True, extra="forbid")
 
-    # structural bedrock - the format frame
+    # structural bedrock - the body frame
     predicateType: str = MANIFEST_PREDICATE_TYPE
     phase: str
 

@@ -15,10 +15,11 @@ from asexec import keys
 from asexec.verifier import verify_paths
 
 PREFIX = "asexec-verify/1 "
-TESTS_LINKED = ("BDR", "chain", "keyconsist")
+REQUIRED = ("format", "selfsig")
+TESTS_LINKED = ("chain", "format", "keyconsist", "selfsig")
 
 
-def _run(tmp_path, *manifests, tests=("BDR",)):
+def _run(tmp_path, *manifests, tests=REQUIRED):
     """Verify ``manifests`` (envelopes, or raw file text) with the scenario's artifacts."""
     paths = []
     for i, mani in enumerate(manifests):
@@ -51,15 +52,17 @@ def _content_reasons(report):
 def test_fault__hash_alg_missing_beside_a_subject(tmp_path):
     """The writer refuses a subject without hash_alg; verify reads it as sha-256."""
     pre, post = (d.sign(d.without_field(b, "hash_alg")) for b in (d.PREREG, d.POSTREG))
-    report = _run(tmp_path, pre, post, tests=("BDR", "content"))
-    assert report["code"] == PREFIX + "BDR=PASS content=PASS"
+    report = _run(tmp_path, pre, post, tests=(*REQUIRED, "content"))
+    assert report["code"] == PREFIX + "content=PASS format=PASS selfsig=PASS"
 
 
 def test_fault__subject_entry_without_a_digest(tmp_path):
     report = _run(
-        tmp_path, d.sign(d.without_field(d.PREREG, "subject.0.digest")), tests=("BDR", "content")
+        tmp_path,
+        d.sign(d.without_field(d.PREREG, "subject.0.digest")),
+        tests=(*REQUIRED, "content"),
     )
-    assert report["code"] == PREFIX + "BDR=PASS content=FAIL"
+    assert report["code"] == PREFIX + "content=FAIL format=PASS selfsig=PASS"
     assert _content_reasons(report) == ["malformed subject entry"]
 
 
@@ -86,20 +89,20 @@ def test_fault__subject_entry_without_a_digest(tmp_path):
 def test_fault__signed_body_field_verify_does_not_examine(tmp_path, path, value):
     """Unknown fields and wrong types in fields no test examines change nothing."""
     report = _run(tmp_path, *_pair(d.with_field(d.PREREG, path, value)), tests=TESTS_LINKED)
-    assert report["code"] == PREFIX + "BDR=PASS chain=PASS keyconsist=PASS"
+    assert report["code"] == PREFIX + "chain=PASS format=PASS keyconsist=PASS selfsig=PASS"
     assert report["commitments"][0]["state"] == "fulfilled"
 
 
-def test_fault__empty_signed_body_passes_BDR(tmp_path):
-    """Documented: BDR does not establish that payload is a well-formed asexec body."""
+def test_fault__empty_signed_body_passes_format_and_selfsig(tmp_path):
+    """Documented: format does not establish that payload is a well-formed asexec body."""
     report = _run(tmp_path, d.sign({}))
-    assert report["code"] == PREFIX + "BDR=PASS"
+    assert report["code"] == PREFIX + "format=PASS selfsig=PASS"
     assert report["commitments"] == [] and report["notarization_only"] == []
 
 
 def test_fault__phase_not_a_string_joins_nothing(tmp_path):
     report = _run(tmp_path, d.sign(d.with_field(d.PREREG, "phase", ["prereg"])))
-    assert report["code"] == PREFIX + "BDR=PASS"
+    assert report["code"] == PREFIX + "format=PASS selfsig=PASS"
     assert report["commitments"] == [] and report["notarization_only"] == []
 
 
@@ -118,7 +121,7 @@ _HEX = d.ref(d.PREREG).split(":")[1]
 def test_fault__fulfills_not_exactly_the_ref(tmp_path, post):
     """Matching #1 compares fulfills to ref(prereg) exactly; anything else links nowhere."""
     report = _run(tmp_path, d.sign(d.PREREG), d.sign(post), tests=TESTS_LINKED)
-    assert report["code"] == PREFIX + "BDR=PASS chain=FAIL keyconsist=FAIL"
+    assert report["code"] == PREFIX + "chain=FAIL format=PASS keyconsist=FAIL selfsig=PASS"
     assert report["commitments"][0]["counted_postregs"] == []
     assert len(report["notarization_only"]) == 1
 
@@ -139,7 +142,7 @@ def test_fault__unsigned_envelope_field_verify_does_not_examine(tmp_path, edit):
     pre, post = _pair(d.PREREG)
     edit(pre)
     assert _run(tmp_path, pre, post, tests=TESTS_LINKED)["code"] == (
-        PREFIX + "BDR=PASS chain=PASS keyconsist=PASS"
+        PREFIX + "chain=PASS format=PASS keyconsist=PASS selfsig=PASS"
     )
 
 
@@ -158,34 +161,35 @@ SIG = d.sign(d.PREREG)["signature"]
     ids=["keyid-missing", "sig-63-bytes", "sig-empty", "pubkey-31-bytes", "pubkey-33-bytes"],
 )
 def test_fault__signature_fields_of_the_wrong_shape(tmp_path, changes):
-    """Hex of the wrong length, or a missing keyid, fails BDR without raising."""
+    """Hex of the wrong length, or a missing keyid, passes format and fails selfsig without
+    raising."""
     env = d.sign(d.PREREG)
     for key, value in changes.items():
         if value is None:
             del env["signature"][key]
         else:
             env["signature"][key] = value
-    assert _run(tmp_path, env)["code"] == PREFIX + "BDR=FAIL"
+    assert _run(tmp_path, env)["code"] == PREFIX + "format=PASS selfsig=FAIL"
 
 
 @pytest.mark.parametrize("payload", [[1], "x"], ids=["list", "string"])
 def test_fault__payload_not_an_object(tmp_path, payload):
     env = {**d.sign(d.PREREG), "payload": payload}
-    assert _run(tmp_path, env)["code"] == PREFIX + "BDR=FAIL"
+    assert _run(tmp_path, env)["code"] == PREFIX + "format=FAIL selfsig=FAIL"
 
 
-def test_fault__very_deep_file_fails_BDR_everywhere(tmp_path):
+def test_fault__very_deep_file_fails_format_everywhere(tmp_path):
     """100,000 levels: rejected before parsing, so the code is the same on every Python
     version and machine (the parser's own limit is not)."""
     raw = json.dumps(d.sign(d.PREREG))[:-1] + ', "junk": ' + "[" * 100_000 + "]" * 100_000 + "}"
-    assert _run(tmp_path, raw)["code"] == PREFIX + "BDR=FAIL"
+    assert _run(tmp_path, raw)["code"] == PREFIX + "format=FAIL selfsig=FAIL"
 
 
-def test_fault__body_with_no_canonical_form_fails_BDR(tmp_path):
+def test_fault__body_with_no_canonical_form_fails_format(tmp_path):
     """A lone surrogate escape is valid JSON but has no UTF-8 form, so no canonical bytes."""
     raw = json.dumps(d.sign(d.PREREG)).replace('"notes": "prereg"', '"notes": "\\ud800"')
     assert "\\ud800" in raw
-    assert _run(tmp_path, raw)["code"] == PREFIX + "BDR=FAIL"
+    assert _run(tmp_path, raw)["code"] == PREFIX + "format=FAIL selfsig=FAIL"
 
 
 def test_fault__postreg_with_no_canonical_form_joins_no_commitment(tmp_path):
@@ -195,7 +199,7 @@ def test_fault__postreg_with_no_canonical_form_joins_no_commitment(tmp_path):
     raw = json.dumps(d.sign(post)).replace('"LONE"', '"\\ud800"')
     assert "\\ud800" in raw
     report = _run(tmp_path, d.sign(d.PREREG), raw, tests=TESTS_LINKED)
-    assert report["code"] == PREFIX + "BDR=FAIL chain=FAIL keyconsist=FAIL"
+    assert report["code"] == PREFIX + "chain=FAIL format=FAIL keyconsist=FAIL selfsig=PASS"
     (commitment,) = report["commitments"]
     assert commitment["counted_postregs"] == [] and commitment["rejected_postregs"] == []
     assert report["notarization_only"] == []
@@ -204,5 +208,5 @@ def test_fault__postreg_with_no_canonical_form_joins_no_commitment(tmp_path):
 def test_fault__nan_in_the_body_is_valid_json(tmp_path):
     """Valid JSON is what json.load accepts, and it accepts NaN."""
     assert _run(tmp_path, d.sign(d.with_field(d.PREREG, "notes", float("nan"))))["code"] == (
-        PREFIX + "BDR=PASS"
+        PREFIX + "format=PASS selfsig=PASS"
     )

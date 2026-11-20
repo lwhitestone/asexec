@@ -4,8 +4,8 @@ import pytest
 
 from asexec import keys, roughtime
 
-PASS = "asexec-verify/1 BDR=PASS ceiling=PASS"
-FAIL = "asexec-verify/1 BDR=PASS ceiling=FAIL"
+PASS = "asexec-verify/1 ceiling=PASS format=PASS selfsig=PASS"
+FAIL = "asexec-verify/1 ceiling=FAIL format=PASS selfsig=PASS"
 EMPTY = "requested but no manifest carries a ceiling witness"
 
 
@@ -178,5 +178,5 @@ def test_ceiling__fail__empty_malformed_manifest_not_examined(scenario):
     )
     report = scenario.verify("ceiling")
     assert report["results"]["ceiling"]["applicable"] == 0
-    assert report["code"] == "asexec-verify/1 BDR=FAIL ceiling=FAIL"
+    assert report["code"] == "asexec-verify/1 ceiling=FAIL format=FAIL selfsig=PASS"
     assert report["results"]["ceiling"]["reason"] == EMPTY

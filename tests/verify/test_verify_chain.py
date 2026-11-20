@@ -7,8 +7,8 @@ import pytest
 
 from asexec import keys
 
-PASS = "asexec-verify/1 BDR=PASS chain=PASS"
-FAIL = "asexec-verify/1 BDR=PASS chain=FAIL"
+PASS = "asexec-verify/1 chain=PASS format=PASS selfsig=PASS"
+FAIL = "asexec-verify/1 chain=FAIL format=PASS selfsig=PASS"
 EMPTY = "requested but no commitment has counted postregs to chain-check"
 BOGUS_REF = "sha-256:" + "cd" * 32
 

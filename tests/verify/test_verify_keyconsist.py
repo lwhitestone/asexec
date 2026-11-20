@@ -5,8 +5,8 @@ Naming: see conftest.py.
 
 from asexec import keys
 
-PASS = "asexec-verify/1 BDR=PASS keyconsist=PASS"
-FAIL = "asexec-verify/1 BDR=PASS keyconsist=FAIL"
+PASS = "asexec-verify/1 format=PASS keyconsist=PASS selfsig=PASS"
+FAIL = "asexec-verify/1 format=PASS keyconsist=FAIL selfsig=PASS"
 EMPTY = "requested but no validly signed postreg names a provided prereg"
 
 
@@ -18,11 +18,11 @@ def test_keyconsist__pass__all(scenario):
 
 
 def test_keyconsist__pass__1_invalid_signature_is_not_judged_here(scenario):
-    """keyconsist #1: a postreg with an invalid signature is not judged here (it fails BDR)."""
+    """keyconsist #1: a postreg with an invalid signature is not judged here (it fails selfsig)."""
     scenario.tamper(
         "postreg0", lambda envelope: envelope["payload"]["target"].update(model_id="SWAPPED")
     )
-    assert scenario.code("keyconsist") == "asexec-verify/1 BDR=FAIL keyconsist=PASS"
+    assert scenario.code("keyconsist") == "asexec-verify/1 format=PASS keyconsist=PASS selfsig=FAIL"
 
 
 def test_keyconsist__pass__1_postreg_by_another_signer_of_the_same_ref(scenario):
@@ -65,7 +65,7 @@ def test_keyconsist__fail__empty_only_invalid_signatures(scenario):
         )
     report = scenario.verify("keyconsist")
     assert len(report["commitments"][0]["rejected_postregs"]) == 3
-    assert report["code"] == "asexec-verify/1 BDR=FAIL keyconsist=FAIL"
+    assert report["code"] == "asexec-verify/1 format=PASS keyconsist=FAIL selfsig=FAIL"
     assert report["results"]["keyconsist"]["applicable"] == 0
     assert report["results"]["keyconsist"]["reason"] == EMPTY
 
