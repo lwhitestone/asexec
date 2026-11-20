@@ -120,11 +120,11 @@ report's wording may change, except for the reasons this document lists.
 | Block | Printed | Shows |
 |---|---|---|
 | `=== manifests ===` | always | One line per file: `✓` if it passes `format` and meets `selfsig`'s conditions (else `✗`), the path, `body.phase` and `dsse.signatures[0].keyid` (`None` for a file that fails `format`, whose body is not read). Indented beneath: why a file fails `format` (`format: malformed: …`, or the [reason](#format) for an unknown format), and one line each for a floor, a ceiling and content hashes when the manifest has them. |
-| `=== commitments ===` | always | One entry per [commitment](#matching-postregs-to-commitments) (a validly signed prereg's `ref` and signer): its [state](#commitment-states), `ref`, signer keyid, `due`, the number of counted postregs, a chain problem if any, and each rejected postreg with its reason. |
+| `=== commitments ===` | always | One entry per [commitment](#matching-postregs-to-commitments) (a validly signed prereg's `ref` and signer): its [state](#commitment-states), `ref`, signer keyid, `due` (and a line if it is not parseable), the number of counted postregs, a chain problem if any, with [`timely`](#timely) requested each counted postreg not shown on time and why, and each rejected postreg with its reason. |
 | `=== rejected pre-registrations ===` | if any | Each [rejected pre-registration](#matching-postregs-to-commitments) (a prereg that passes `format` but fails a `selfsig` condition, so is no commitment): its `ref` and its reason, `invalid signature`; the `dsse.signatures[0].keyid` it claims, which nothing authenticated; and each postreg rejected under it, with the reason `the pre-registration's signature is invalid`. It has no state. |
 | `=== notarization-only … ===` | if any | Each [notarization-only](#matching-postregs-to-commitments) postreg: one whose `body.fulfills` matches no provided prereg. |
 | `=== tests ===` | always | One line per requested test: its result and a short reason. |
-| `=== ceiling trust … ===` | if a ceiling verified | Which witness you are trusting, and for what time. |
+| `=== ceiling trust … ===` | if a ceiling verified | Which witness you are trusting, and for what time: the signed `midpoint ± radius`, and the "no later than" time, `midpoint + radius`, that [`timely`](#timely) compares. |
 | code | always | The [code](#conventions). |
 | `Checked at <time>` | always | When the run happened, in UTC to the second: the moment commitment states were judged against. Not part of the code. |
 
@@ -169,6 +169,7 @@ Checked at 2026-12-31T23:59:59Z
 | [`format`](#format) | • the file<br>• `dsse`<br>• `dsse.payloadType`<br>• `dsse.signatures`<br>• `dsse.payload` | 1. file is a well-formed JSON object with the `dsse` frame<br>2. `dsse.payload` is strict base64 of a well-formed JSON object<br>3. `dsse.payloadType` names a format this release reads |
 | [`keyconsist`](#keyconsist) | • `body.phase`<br>• `body.fulfills`<br>• `pubkey`<br>• `dsse.signatures`<br>• `dsse.signatures[0].sig`<br>• `dsse.signatures[0].keyid` | 1. every validly signed postreg naming the commitment's `ref` has the `dsse.signatures[0].keyid` of a commitment with that `ref` |
 | [`selfsig`](#selfsig) | • `dsse.payloadType`<br>• `dsse.payload`<br>• `dsse.signatures`<br>• `dsse.signatures[0].sig`<br>• `dsse.signatures[0].keyid`<br>• `pubkey` | 1. `dsse.signatures` has exactly one entry, an object<br>2. `pubkey` is hex, and `dsse.signatures[0].sig` is strict base64 of 64 bytes<br>3. `dsse.signatures[0].sig` verifies over the PAE of the body bytes by `pubkey`<br>4. `dsse.signatures[0].keyid` derives from `pubkey` |
+| [`timely`](#timely) | • `body.due` (of the prereg)<br>• which postregs are counted (as for `chain`)<br>• `ceiling` and its fields, of each counted postreg | (for each commitment with a `body.due` and a counted postreg)<br>1. `body.due` is a parseable ISO-8601 string<br>2. each counted postreg has a `ceiling`<br>3. that ceiling meets the `ceiling` conditions<br>4. its time, `MIDP + RADI`, is at or before `due` |
 
 Condition numbers match each test's *Passes when all* list below; the table shortens them.
 `format` and `selfsig` are required in every run. `selfsig` examines only files that pass
@@ -614,7 +615,8 @@ Version skew: `postreg-v2.json` is `postreg-1.json` from the [`chain` example](#
 its `dsse.payloadType` changed to `application/vnd.asexec.v2+json`, as a later release would
 label its own files. It fails `format` with the upgrade reason, not as a bad signature, and
 `selfsig` still passes for `prereg.json`. Its body is not read, so it shows no phase, and it
-takes no part in the commitment, which stays open. Exit status `2`:
+takes no part in the commitment, which has no counted postreg (and, as its prereg has no
+`body.due`, is `no-due`). Exit status `2`:
 
 ```console
 $ asexec verify prereg.json postreg-v2.json --tests format,selfsig
@@ -627,7 +629,7 @@ $ asexec verify prereg.json postreg-v2.json --tests format,selfsig
     ✗ format: payloadType names a format newer than this release: upgrade asexec to read it
 
 === commitments ===
-  [OPEN] prereg sha-256:b17107d0…
+  [NO-DUE] prereg sha-256:b17107d0…
 …
 === tests ===
   ✗ format=FAIL  (1/2 manifest(s) failed)
@@ -764,6 +766,113 @@ Checked at 2026-12-31T23:59:59Z
 
 With every requirement holding, `selfsig` prints `✓ selfsig=PASS`, as in the
 [`format` example](#format).
+
+### `timely`
+
+Whether each postreg that counts toward a commitment is shown to have existed by the
+prereg's `due`.
+
+A postreg is **counted** for a prereg if it meets the
+[conditions for counting](#matching-postregs-to-commitments). Its **ceiling time** T is the
+later end of the interval its Roughtime witness signed: `SREP.MIDP + SREP.RADI` of the
+verified `ceiling.response`, the "no later than" time the ceiling trust block reports
+(`midpoint ± radius`). It is never taken from the file's own `ceiling.midpoint` and
+`ceiling.radius`, which nothing signs.
+
+**Examines (\*)**
+- `body.due` (of the prereg)
+- `body.phase`, `body.fulfills`, `pubkey`, `dsse.signatures`, `dsse.signatures[0].sig`,
+  `dsse.signatures[0].keyid` (which postregs are counted)
+- `ceiling.ceiling_type`, `ceiling.nonce`, `ceiling.witness_id`, `ceiling.pubkey`,
+  `ceiling.response` and `dsse.payload` (the [`ceiling`](#ceiling) conditions), of each
+  counted postreg
+
+**Passes when all** (for each commitment whose prereg has a `body.due` and that has at
+least one counted postreg)
+1. `body.due` is a parseable ISO-8601 string. One without a UTC offset or `Z` is read as
+   UTC, as for [commitment states](#commitment-states).
+2. Each counted postreg has a `ceiling`.
+3. That ceiling meets the [`ceiling`](#ceiling) conditions (#1 to #5): its type, a nonce
+   equal to the postreg's `ref`, a pinned witness and a response that verifies. A ceiling
+   that fails one is no time at all, since anyone can write one, so it is treated as no
+   ceiling: never as on time.
+4. Its ceiling time T is at or before `body.due`.
+
+A postreg is identified by its `ref`: if several copies of one counted postreg are given, it
+is on time when any counted copy carries a ceiling that meets #3 and #4, and its time is the
+earliest such T.
+
+A late postreg still counts: its commitment stays `fulfilled` (see
+[Commitment states](#commitment-states)), and `timely=FAIL` carries the verdict. States say
+whether a commitment was reported, and `timely` says whether on time.
+
+**When empty:** if no commitment has both a `body.due` and a counted postreg, the test has
+nothing to examine and is `FAIL`, with the reason `requested but no commitment with a due
+has a counted postreg`. A commitment whose prereg has no `body.due` is not examined, so one
+open-ended claim does not fail `timely` for a whole run; one with a `due` and no counted
+postreg is not examined either (its state, `open` or `elapsed-no-postreg`, says it was not
+reported). A [rejected pre-registration](#matching-postregs-to-commitments) is no
+commitment, so its `due` is never read.
+
+**Failure reasons:** a commitment fails with `due is not a parseable ISO-8601 timestamp`
+(#1) or `a counted postreg is not shown on time` (#2 to #4). With `timely` requested, the
+report marks each counted postreg not shown on time, under its commitment: `is late: its
+ceiling (no later than <T>) is after due` (#4), `is not shown on time: it has no ceiling`
+(#2), or `is not shown on time: its ceiling does not verify` (#3). An unparseable `due` is
+flagged under its commitment in every state.
+
+**Does not establish:** when the postreg was created, only that it existed by T. A ceiling
+fetched after `due` for a postreg created before it fails, because the ceiling is the only
+evidence of time. Nor that every promised postreg was made: states show a commitment with
+none, and `complete`, planned for 0.4.0, checks each item.
+
+**Example** (all requirements pass). `prereg.json` is signed with `--target "model m via
+provider p" --due 2099-01-01T00:00:00Z`, and `postreg.json` with `--fulfills prereg.json
+--ceiling`:
+
+```console
+$ asexec verify prereg.json postreg.json --tests format,selfsig,timely
+```
+
+Output (from `=== commitments ===` on), exit status `0`:
+
+```
+=== commitments ===
+  [FULFILLED] prereg sha-256:b74ae2db…
+    signer       : sha-256:bc562700…
+    due          : 2099-01-01T00:00:00Z
+    postregs     : 1
+
+=== tests ===
+  ✓ format=PASS  (2/2 manifest(s) ok)
+  ✓ selfsig=PASS  (2/2 manifest(s) ok)
+  ✓ timely=PASS  (1/1 commitment(s) ok)
+
+=== ceiling trust (what you are accepting) ===
+  - postreg.json: ceiling witnessed by int08h-Roughtime at … (±1.0s), so no later than … - you are trusting …
+
+asexec-verify/1 format=PASS selfsig=PASS timely=PASS
+Checked at 2026-12-31T23:59:59Z
+```
+
+Signed the same way but with `--due 2000-01-01T00:00:00Z`, the postreg is late. It still
+counts, so the commitment is `fulfilled`, and the report marks it. Exit status `2`:
+
+```
+=== commitments ===
+  [FULFILLED] prereg sha-256:daa96b3a…
+    signer       : sha-256:bc562700…
+    due          : 2000-01-01T00:00:00Z
+    postregs     : 1
+    ✗ postreg sha-256:5006f81b… is late: its ceiling (no later than …) is after due
+
+=== tests ===
+  ✓ format=PASS  (2/2 manifest(s) ok)
+  ✓ selfsig=PASS  (2/2 manifest(s) ok)
+  ✗ timely=FAIL  (1/1 commitment(s) failed)
+…
+asexec-verify/1 format=PASS selfsig=PASS timely=FAIL
+```
 
 ---
 
@@ -905,8 +1014,9 @@ One per commitment, shown in the `=== commitments ===` block of the report (see
 
 | State | Condition |
 |---|---|
-| `fulfilled` | at least one counted postreg |
-| `open` | no counted postreg, and `body.due` is absent or in the future |
+| `fulfilled` | at least one counted postreg, on time or not (that is [`timely`](#timely)'s) |
+| `no-due` | no counted postreg, and `body.due` is absent: it can never elapse |
+| `open` | no counted postreg, and `body.due` is present and in the future |
 | `elapsed-no-postreg` | no counted postreg, and `body.due` is at or before now |
 | `invalid-due` | no counted postreg, and `body.due` is present but not a parseable ISO-8601 string |
 
@@ -916,8 +1026,9 @@ so it has no state, and a
 none either.
 
 A `body.due` without a UTC offset or `Z` is read as UTC, never in the verifier's local
-timezone, and is flagged in the report. Timeliness (a postreg created before `due`) is not
-checked in this version.
+timezone, and is flagged in the report. Whether a counted postreg came before `due` is not a
+state: a late postreg still makes its commitment `fulfilled`, and [`timely`](#timely) is the
+test that judges it.
 
 **Example** (`fulfilled`). A prereg signed with `--due 2099-01-01T00:00:00Z`, and two
 chained postregs as in the [`chain` example](#chain):
@@ -932,8 +1043,9 @@ chained postregs as in the [`chain` example](#chain):
 
 Each entry is the state in capitals and the prereg's `ref`, then its signer's keyid, `due`
 (or `(none declared)`) and the number of counted postregs. Problems follow as `✗` lines: a
-`due` without a timezone, an unparseable `due`, a chain problem (on the `postregs` line), or
-a rejected postreg and why it does not count.
+`due` without a timezone, an unparseable `due` (in any state), a chain problem (on the
+`postregs` line), with `timely` requested each counted postreg not shown on time, or a
+rejected postreg and why it does not count.
 [`notarization-only`](#matching-postregs-to-commitments) postregs are listed in their own
 block, since they have no prereg to sit under.
 
@@ -956,7 +1068,7 @@ by no test in this version either.
 
 ## Not in this version
 
-`signer`, `timely`, `complete` and `order` are planned for 0.4.0, and `continuity` is
+`signer`, `complete` and `order` are planned for 0.4.0, and `continuity` is
 deferred to 0.7.0 or later (see [`ROADMAP.md`](../ROADMAP.md)). Adding a test name never
 changes the meaning of an existing code. From 0.4.0, changing the documented meaning of an
 existing name bumps the code grammar (`asexec-verify/N`); 0.4.0 itself keeps `/1`.

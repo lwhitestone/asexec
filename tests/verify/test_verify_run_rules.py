@@ -333,8 +333,27 @@ def test_never_raises__validly_signed_junk_in_a_body_field(scenario, field, valu
     scenario.set("postreg1", f"body.{field}", value)
     if field not in ("fulfills", "prev_hash"):
         scenario.set("prereg", f"body.{field}", value)
-    report = scenario.verify("ceiling", "chain", "content", "floor", "keyconsist")
+    report = scenario.verify("ceiling", "chain", "content", "floor", "keyconsist", "timely")
     assert {"format=PASS", "selfsig=PASS"} <= set(report["code"].split()[1:])
+
+
+@pytest.mark.parametrize(
+    "junk",
+    [
+        pytest.param("x", id="not-object"),
+        pytest.param([1], id="list"),
+        pytest.param({"ceiling_type": "roughtime", "witness_id": [], "nonce": 5}, id="fields"),
+        pytest.param({"ceiling_type": "roughtime", "response": "zz"}, id="response-not-hex"),
+        pytest.param({"midpoint": "soon", "radius": [1]}, id="unsigned-time-junk"),
+    ],
+)
+def test_never_raises__junk_ceiling_on_a_counted_postreg(scenario, junk):
+    """A counted postreg whose ceiling is junk is not shown on time (timely #3); it never
+    raises."""
+    scenario.with_ceiling("postreg0")
+    scenario.ceilings["postreg0"] = lambda nonce_hex: junk
+    report = scenario.verify("ceiling", "timely")
+    assert report["code"] == "asexec-verify/1 ceiling=FAIL format=PASS selfsig=PASS timely=FAIL"
 
 
 @pytest.mark.parametrize(

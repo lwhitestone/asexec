@@ -417,12 +417,16 @@ def cmd_verify(args) -> int:
         _show(f"    due          : {due}")
         if c["due_naive"]:
             _show(f"    {NO} due has no timezone; read as UTC (re-sign with an explicit offset)")
-        if c["state"] == "invalid-due":
+        if c["due_invalid"]:  # in any state: timely fails on it too
             _show(f"    {NO} due is not a parseable ISO-8601 timestamp")
         _show(
             f"    postregs     : {len(c['counted_postregs'])}"
             + ("" if c["chain_ok"] else f"  {NO} {c['chain_note']}")
         )
+        if "timely" in report["tests"]:  # each counted postreg not shown on time, and why
+            for t in c["timeliness"]:
+                if t["status"] != "on-time":
+                    _show(f"    {NO} postreg {t['ref']} {_NOT_ON_TIME[t['status']](t)}")
         for r in c["rejected_postregs"]:
             _show(f"    {NO} postreg {r['ref']} does NOT count toward fulfillment: {r['reason']}")
     if report["rejected_preregs"]:  # pass format, fail selfsig: no commitment, no state
@@ -453,6 +457,17 @@ def cmd_verify(args) -> int:
     _show(f"\n{report['code']}")
     _show(f"Checked at {report['checked_at']}")
     return EXIT_OK if report["ok"] else EXIT_FAIL
+
+
+# Why a counted postreg is not shown on time (verifier._on_time), as the report says it.
+_NOT_ON_TIME: dict[str, Callable[[dict], str]] = {
+    "late": lambda t: (
+        f"is late: its ceiling (no later than {verifier._utc_ceil(t['no_later_than'])}) "
+        "is after due"
+    ),
+    "no-ceiling": lambda t: "is not shown on time: it has no ceiling",
+    "invalid-ceiling": lambda t: "is not shown on time: its ceiling does not verify",
+}
 
 
 def cmd_identity(args) -> int:

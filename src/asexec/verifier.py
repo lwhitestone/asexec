@@ -54,6 +54,10 @@ Tests (the catalog - only verifiable claims, no self-declarations)
                      signature over the PAE of the body bytes verifies by pubkey,
                      and its keyid derives from pubkey. Applies to every manifest
                      that passes ``format``. **Required in every run.**
+  - ``timely``     : each counted postreg of a commitment whose prereg has a due
+                     carries a ceiling that meets the ceiling conditions, and its
+                     time (MIDP + RADI of the verified response) is at or before
+                     due. Applies to commitments with a due and a counted postreg.
 
 Only a file that passes ``format`` is examined by any other test, and every test reads it
 under the rules of the format its dsse.payloadType names (``FORMATS``), never another's. The
@@ -74,13 +78,15 @@ naming it is rejected under it.
 Rendered in the human report above the code; the verifier RENDERS these, it
 never adjudicates intent or whether a commitment was "good enough":
   - fulfilled          : >=1 postreg references this prereg AND is validly
-                         signed by the prereg's own key. Postregs that reference
+                         signed by the prereg's own key, on time or not (that is
+                         ``timely``'s). Postregs that reference
                          it but fail either condition are listed separately
                          (``rejected_postregs``) and never count; those
                          that count are ``counted_postregs``.
+  - no-due             : 0 counted postregs and no ``due`` declared (an
+                         open-ended commitment: it can never elapse)
   - open               : 0 counted postregs and the ``due`` deadline has not
-                         elapsed (or no ``due`` was declared - an open-ended
-                         commitment)
+                         elapsed
   - elapsed-no-postreg : 0 counted postregs and the ``due`` deadline has elapsed
   - invalid-due        : 0 counted postregs and ``due`` is present but is not a
                          parseable ISO-8601 timestamp (never silently rendered
@@ -94,6 +100,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import math
 import os
 import re
 import time
@@ -127,6 +134,7 @@ TEST_CATALOG: tuple[str, ...] = (
     "format",
     "keyconsist",
     "selfsig",
+    "timely",
 )
 
 # The mandatory minimum: a run that does not check both is not a meaningful asexec
@@ -497,9 +505,11 @@ def verify_paths(
         ceiling = verify_ceiling(mani, fmt["ref"], servers) if clean else {"status": "absent"}
         content = verify_content(body, artifacts_dir) if clean else {"status": "skipped"}
         if ceiling.get("status") == "verified":
+            ceiling["no_later_than"] = _no_later_than(ceiling)
             ceiling_trust.append(
                 f"{p}: ceiling witnessed by {ceiling.get('witness_id')} at "
-                f"{ceiling.get('midpoint')} (±{ceiling.get('radius')}s) - you are "
+                f"{ceiling.get('midpoint')} (±{ceiling.get('radius')}s), so no later than "
+                f"{_utc_ceil(ceiling['no_later_than'])} - you are "
                 f"trusting {ceiling.get('witness_id')} to be honest about time "
                 f"(signature-witness trust class, distinct from the floor)."
             )
@@ -526,6 +536,7 @@ def verify_paths(
                 "counted_postregs": [],
                 "rejected_postregs": [],
                 "different_key": False,  # set by the matching loop; see key_checked below
+                "_ceilings": {},  # counted postreg ref -> the ceiling of each counted copy
             }
         elif links.phase == "prereg":  # copies (same ref, and keyid as JSON) are listed once
             rejected_preregs.setdefault(
@@ -566,7 +577,9 @@ def verify_paths(
             if not _selfsig_ok(rec):
                 reason = REASON_INVALID_SIGNATURE
             elif (links.fulfills, rec["keyid"]) in preregs:  # a keyid that passed selfsig: a str
-                _add_once(preregs[(links.fulfills, rec["keyid"])]["counted_postregs"], entry)
+                pr = preregs[(links.fulfills, rec["keyid"])]
+                _add_once(pr["counted_postregs"], entry)
+                pr["_ceilings"].setdefault(rec["ref"], []).append(rec["ceiling"])
                 continue
             else:
                 reason, different_key = REASON_DIFFERENT_KEY, True
@@ -585,14 +598,28 @@ def verify_paths(
 
     commitments = []
     for pr in preregs.values():
+        ceilings = pr.pop("_ceilings")
         due_present, due_ts, due_naive = _parse_due(pr.get("due"))
         state = _commitment_state(pr, now, due_present, due_ts)
         chain_ok, chain_note = _check_chain(pr["counted_postregs"])
+        # Each counted postreg against due (timely #2-#4), when there is a due to compare with.
+        timeliness = (
+            [
+                {"ref": c["ref"], **_on_time(ceilings[c["ref"]], due_ts)}
+                for c in pr["counted_postregs"]
+            ]
+            if due_ts is not None
+            else []
+        )
         commitments.append(
             {
                 **pr,
                 "state": state,
+                "due_present": due_present,
+                "due_invalid": due_present and due_ts is None,
                 "due_naive": due_naive,
+                "timeliness": timeliness,
+                "timely": _timely(pr, due_present, due_ts, timeliness),
                 "chain_ok": chain_ok,
                 "chain_note": chain_note,
                 # keyconsist's scope, defined here only: a commitment is key-checked iff it
@@ -620,6 +647,55 @@ def verify_paths(
         "ceiling_trust": ceiling_trust,
         "checked_at": _utc_timestamp(now),
     }
+
+
+def _no_later_than(ceiling: dict[str, Any]) -> float:
+    """The time a verified ceiling shows its manifest existed by: the later end of the
+    interval the witness signed, ``MIDP + RADI`` (``roughtime.verify_ceiling`` reads both
+    from the verified response, never from the file's unsigned ``midpoint``/``radius``)."""
+    return ceiling["midpoint"] + ceiling["radius"]
+
+
+def _on_time(ceilings: list[dict[str, Any]], due_ts: float) -> dict[str, Any]:
+    """One counted postreg against a parseable ``due`` (timely #2-#4, and complete's deadline
+    part): its ceilings are those of every counted copy of it (one ref).
+
+    ``on-time`` if a ceiling meets the ceiling conditions and its time is at or before due;
+    else ``late`` if one does; else ``invalid-ceiling`` if it has a ceiling that fails them
+    (anyone can write a ceiling, so it is no time at all); else ``no-ceiling``. The earliest
+    verified time is reported as ``no_later_than``."""
+    times = [_no_later_than(c) for c in ceilings if c.get("status") == "verified"]
+    if times:
+        earliest = min(times)
+        return {"status": "on-time" if earliest <= due_ts else "late", "no_later_than": earliest}
+    if any(c.get("status") != "absent" for c in ceilings):
+        return {"status": "invalid-ceiling", "no_later_than": None}
+    return {"status": "no-ceiling", "no_later_than": None}
+
+
+# Why a commitment fails timely, as the report shows it (docs/VERIFICATION.md).
+REASON_DUE_INVALID = "due is not a parseable ISO-8601 timestamp"
+REASON_NOT_ON_TIME = "a counted postreg is not shown on time"
+
+
+def _timely(
+    pr: dict[str, Any], due_present: bool, due_ts: float | None, timeliness: list
+) -> dict[str, Any]:
+    """timely for one commitment: examined iff its prereg has a due and it has a counted
+    postreg; passes iff the due parses (#1) and every counted postreg is on time (#2-#4)."""
+    if not (due_present and pr["counted_postregs"]):
+        return {"examined": False, "ok": False, "reason": None}
+    if due_ts is None:
+        return {"examined": True, "ok": False, "reason": REASON_DUE_INVALID}
+    if any(t["status"] != "on-time" for t in timeliness):
+        return {"examined": True, "ok": False, "reason": REASON_NOT_ON_TIME}
+    return {"examined": True, "ok": True, "reason": None}
+
+
+def _utc_ceil(epoch: float) -> str:
+    """``epoch`` as ISO-8601 UTC, rounded up to the second: a "no later than" time is never
+    shown earlier than it is."""
+    return _utc_timestamp(math.ceil(epoch))
 
 
 def _json_value(value: Any) -> str:
@@ -705,6 +781,12 @@ def _evaluate(tests, manifests, commitments, artifacts_dir) -> dict[str, dict[st
             units, "requested but no commitment has counted postregs to chain-check", "chain(s)"
         )
 
+    if "timely" in tests:
+        units = [c["timely"]["ok"] for c in commitments if c["timely"]["examined"]]
+        res["timely"] = _tally(
+            units, "requested but no commitment with a due has a counted postreg", "commitment(s)"
+        )
+
     if "keyconsist" in tests:
         units = [not c["different_key"] for c in key_checked]
         res["keyconsist"] = _tally(
@@ -734,9 +816,9 @@ def _commitment_state(
     pr: dict[str, Any], now: float, due_present: bool, due_ts: float | None
 ) -> str:
     if pr["counted_postregs"]:
-        return "fulfilled"
+        return "fulfilled"  # even if a counted postreg is late: timely says that (D5b)
     if not due_present:
-        return "open"  # no deadline declared -> cannot elapse
+        return "no-due"  # no deadline declared -> cannot elapse, so it is not open
     if due_ts is None:
         return "invalid-due"
     return "elapsed-no-postreg" if now >= due_ts else "open"

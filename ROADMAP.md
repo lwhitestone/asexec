@@ -221,9 +221,12 @@ adds sits outside it, in the wrapper:
   With the unknown-`payloadType` failure above in `format`, version skew reads as
   `format=FAIL`, not as a bad signature.
 - `signer`: `--signer` / `--trusted-keys <file>`.
-- `timely`: postreg ceiling ≤ prereg `due`.
+- `timely`: postreg ceiling ≤ prereg `due`. (Done ahead of 0.4.0, with D5's edge cases in
+  `docs/040b1-PATH.md`: the ceiling's time is the later end of the signed interval, `MIDP +
+  RADI`, and a missing ceiling or one that fails the `ceiling` conditions is not on time.)
 - New commitment state `no-due`, separate from `open`. This changes what `open` means, but
-  the code grammar stays `asexec-verify/1`, because the bump rule starts at `0.4.0`.
+  the code grammar stays `asexec-verify/1`, because the bump rule starts at `0.4.0`. (Done
+  ahead of 0.4.0.)
 - `complete` and `order` (see *New properties*).
 - Malformed means only what stops `verify` reading a manifest: not valid JSON, nested too
   deep, a duplicate key, or a missing frame (`dsse` with `payloadType`, a `payload` that

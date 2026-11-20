@@ -398,7 +398,7 @@ def test_verify_version_skew_reads_as_format_not_signature(
     i = lines.index(f"{cli.NO} {post}  [None]  keyid=None")  # a body it can't read: no phase
     assert lines[i + 1] == f"    {cli.NO} format: {reason}"
     assert lines[1].startswith(f"{cli.OK} {prereg}  [prereg]")
-    assert "  [OPEN] prereg " in out
+    assert "  [NO-DUE] prereg " in out
     assert "  ✗ format=FAIL  (1/2 manifest(s) failed)" in out
     assert "  ✓ selfsig=PASS  (1/1 manifest(s) ok)" in out
     assert "asexec-verify/1 format=FAIL selfsig=PASS" in out
@@ -948,3 +948,92 @@ def test_claim_record_value_errors_exit_EXIT_ERROR(tmp_path, key, claim_dir, arg
     err = capsys.readouterr().err
     assert err.startswith("error: ") and "Traceback" not in err and message in err
     assert not (tmp_path / "out.json").exists()
+
+
+# --- timely and the no-due state --------------------------------------------- #
+@pytest.fixture
+def witness(monkeypatch, make_server, ceiling_for):
+    """Attach a ceiling from a pinned synthetic witness (MIDP 2023-11-14T22:13:20Z, RADI 1s)
+    to the manifest file at a path."""
+    lt_pub, sign_response = make_server()
+    monkeypatch.setitem(roughtime.SERVERS, "synthetic", {"pubkey": lt_pub})
+
+    def attach(path):
+        mani = manifest.load(str(path))
+        nonce_hex = _ref(path).split(":", 1)[-1]
+        manifest.attach_ceiling(mani, ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response))
+        manifest.save(mani, str(path))
+
+    return attach
+
+
+def _timely_run(tmp_path, key, due, *, ceiling, witness):
+    pre, post = tmp_path / "pre.json", tmp_path / "post.json"
+    assert run("prereg", "--key", key, "--target", "t", "--due", due, "--out", pre) == 0
+    assert run("postreg", "--key", key, "--fulfills", pre, "--out", post) == 0
+    if ceiling:
+        witness(post)
+    return pre, post
+
+
+@pytest.mark.parametrize(
+    "due,ceiling,code,line",
+    [
+        ("2099-01-01T00:00:00Z", True, 0, None),
+        (
+            "2023-11-14T22:13:20Z",
+            True,
+            2,
+            "is late: its ceiling (no later than 2023-11-14T22:13:21Z) is after due",
+        ),
+        ("2099-01-01T00:00:00Z", False, 2, "is not shown on time: it has no ceiling"),
+    ],
+    ids=["on-time", "late", "no-ceiling"],
+)
+def test_verify_marks_each_counted_postreg_not_shown_on_time(
+    tmp_path, key, capsys, witness, due, ceiling, code, line
+):
+    """With timely requested, the commitments block marks each counted postreg that is not
+    shown on time, and why; a late one still counts, and the commitment is fulfilled."""
+    pre, post = _timely_run(tmp_path, key, due, ceiling=ceiling, witness=witness)
+    capsys.readouterr()
+    assert run("verify", pre, post, "--tests", "format,selfsig,timely") == code
+    out = capsys.readouterr().out
+    assert "[FULFILLED]" in out and "    postregs     : 1\n" in out
+    marks = [ln for ln in out.splitlines() if ln.startswith(f"    {cli.NO} postreg ")]
+    if line is None:
+        assert marks == [] and "timely=PASS" in out
+    else:
+        assert marks == [f"    {cli.NO} postreg {_ref(post)} {line}"]
+        assert "timely=FAIL" in out
+    # not requested: no marks
+    capsys.readouterr()
+    run("verify", pre, post, "--tests", "format,selfsig")
+    assert f"{cli.NO} postreg" not in capsys.readouterr().out
+
+
+def test_verify_ceiling_trust_names_the_time_timely_compares(tmp_path, key, capsys, witness):
+    pre, post = _timely_run(tmp_path, key, "2099-01-01T00:00:00Z", ceiling=True, witness=witness)
+    capsys.readouterr()
+    run("verify", pre, post, "--tests", "format,selfsig,ceiling,timely")
+    out = capsys.readouterr().out
+    assert "(±1.0s), so no later than 2023-11-14T22:13:21Z - you are trusting synthetic" in out
+
+
+def test_verify_renders_no_due(prereg, capsys):
+    """A commitment with no due and no counted postreg is NO-DUE, not OPEN."""
+    run("verify", prereg, "--tests", "format,selfsig")
+    out = capsys.readouterr().out
+    assert "  [NO-DUE] prereg " in out and "[OPEN]" not in out
+
+
+def test_verify_flags_an_unparseable_due_on_a_fulfilled_commitment(tmp_path, key, capsys):
+    pre, post = tmp_path / "pre.json", tmp_path / "post.json"
+    assert run("prereg", "--key", key, "--target", "t", "--out", pre) == 0
+    _resign(pre, key, lambda body: body.update(due="someday"))
+    assert run("postreg", "--key", key, "--fulfills", pre, "--out", post) == 0
+    capsys.readouterr()
+    assert run("verify", pre, post, "--tests", "format,selfsig,timely") == 2
+    out = capsys.readouterr().out
+    assert "[FULFILLED]" in out
+    assert f"    {cli.NO} due is not a parseable ISO-8601 timestamp\n" in out

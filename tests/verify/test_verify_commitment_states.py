@@ -31,15 +31,34 @@ def test_state__fulfilled__at_least_one_counted_postreg(scenario):
     assert _state(scenario) == "fulfilled"
 
 
-@pytest.mark.parametrize(
-    "due", ["2099-01-01T00:00:00Z", None, "null"], ids=["future", "absent", "null"]
-)
-def test_state__open__no_counted_postreg_and_due_absent_or_future(scenario, due):
-    """open: no counted postreg, and due is absent (missing or null) or in the future."""
-    _only_prereg(scenario, None if due == "null" else due)
+def test_state__open__no_counted_postreg_and_due_in_the_future(scenario):
+    """open: no counted postreg, and due is present and in the future."""
+    _only_prereg(scenario, "2099-01-01T00:00:00Z")
+    assert _state(scenario, now=NOW) == "open"
+
+
+@pytest.mark.parametrize("due", [None, "null"], ids=["absent", "null"])
+def test_state__no_due__no_counted_postreg_and_no_due(scenario, due):
+    """no-due: no counted postreg, and due is absent (missing or null): it can never elapse,
+    so it is not open."""
+    _only_prereg(scenario, None)
     if due == "null":
         scenario.set("prereg", "body.due", None)
-    assert _state(scenario, now=NOW) == "open"
+    assert _state(scenario, now=NOW) == "no-due"
+
+
+def test_state__fulfilled__with_no_due(scenario):
+    """fulfilled takes precedence: a commitment with no due and a counted postreg is
+    fulfilled, not no-due."""
+    scenario.unset("prereg", "body.due")
+    assert _state(scenario) == "fulfilled"
+
+
+def test_state__fulfilled__a_late_postreg_still_fulfills(scenario):
+    """fulfilled: states say whether it was reported; timely says whether on time (D5b). A
+    postreg after due still counts."""
+    scenario.set("prereg", "body.due", "2000-01-01T00:00:00Z")
+    assert _state(scenario, now=NOW) == "fulfilled"
 
 
 @pytest.mark.parametrize(

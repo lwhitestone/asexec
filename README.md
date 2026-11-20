@@ -53,7 +53,7 @@ validly signed pre-registration and its signer):
 - **What was committed to.** The signature covers the whole body, the bytes `dsse.payload`
   stores, exactly as stored: its `target` (which `asexec prereg` and `postreg` always
   write) and, in a post-registration, the pre-registration it `fulfills`.
-- **Commitment state.** Each commitment is rendered as `fulfilled`, `open`,
+- **Commitment state.** Each commitment is rendered as `fulfilled`, `no-due`, `open`,
   `elapsed-no-postreg` or `invalid-due`. A post-registration that names a pre-registration
   counts toward fulfilling it only if validly signed by that pre-registration's private key;
   otherwise it is listed under it as *rejected*, with the reason. A pre-registration whose
@@ -62,9 +62,10 @@ validly signed pre-registration and its signer):
   it is listed beneath it as rejected. A post-registration whose pre-registration was not
   provided belongs to no commitment, so it has no state: it is listed as
   *notarization-only*. Silence is on the record too: a pre-registration with no
-  counted post-registration reads `elapsed-no-postreg` once its deadline (`due`) passes. But
-  `asexec` does **not** yet check that a post-registration was created before `due`, so a
-  late one still turns it `fulfilled`; that check (`timely`) arrives in 0.4.0.
+  counted post-registration reads `elapsed-no-postreg` once its deadline (`due`) passes, and
+  `no-due` if it declared none. A state says only whether it was reported: a late
+  post-registration still turns it `fulfilled`, and whether it came before `due` is the
+  [`timely`](./docs/VERIFICATION.md#timely) test's to say (below).
 
 ### What `asexec` can prove (optional fields and tests)
 
@@ -87,6 +88,11 @@ test:
   manifest existed by time T: a
   [Roughtime](https://datatracker.ietf.org/doc/draft-ietf-ntp-roughtime/) server signed its
   hash (a signature-witness, not proof-of-work).
+- **On time** (`due` and a `ceiling` on each post-registration;
+  [`timely`](./docs/VERIFICATION.md#timely)). Each counted post-registration existed by its
+  pre-registration's `due`: its ceiling verifies, and the latest time the witness allows
+  (`midpoint + radius`) is at or before `due`. A post-registration without a valid ceiling
+  is not shown on time. A pre-registration with no `due` is not examined.
 
 ### What `asexec` cannot prove
 
