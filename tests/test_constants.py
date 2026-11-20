@@ -44,7 +44,10 @@ identifier if needed.
 import copy
 import hashlib
 import json
+import re
 from types import SimpleNamespace
+
+import pytest
 
 from asexec import (
     MANIFEST_PREDICATE_TYPE,
@@ -119,6 +122,25 @@ PRE_V1_MANIFEST = {
     },
 }
 
+# The format the frozen vectors are signed in, released by 0.4.0.
+V1_PAYLOAD_TYPE = "application/vnd.asexec.v1+json"
+
+
+def _is_0_4_0_beta(payload_type):
+    return re.fullmatch(r"application/vnd\.asexec\.0\.4\.0b[0-9]+\+json", payload_type) is not None
+
+
+# A 0.4.0 beta's release commit sets MANIFEST_PAYLOAD_TYPE to its own beta type, and the build
+# reads that type only, so the frozen v1 vectors read as an unknown format there. Every test
+# that reads them is skipped in that build, and test_current_format_sign_then_verify_roundtrip
+# covers the current entry instead (D6b in docs/040b1-PATH.md). Only a 0.4.0 beta: it is built
+# before any format is released, and every later build, betas included, still reads v1 and
+# runs these tests (test_v1_is_read_by_every_build_but_a_0_4_0_beta).
+frozen_v1 = pytest.mark.skipif(
+    _is_0_4_0_beta(constants.MANIFEST_PAYLOAD_TYPE),
+    reason="a 0.4.0 beta build does not read v1, the frozen vectors' format (D6b)",
+)
+
 
 def _report(tmp_path, manis, tests, artifacts_dir=None):
     paths = []
@@ -157,6 +179,7 @@ def test_every_identifier_is_classified():
     assert public == set(IMPACT)
 
 
+@frozen_v1
 def test_frozen_manifests_still_verify(tmp_path):
     assert _required_pass(tmp_path, FROZEN_MANIFEST)
 
@@ -175,9 +198,8 @@ def test_formats_has_one_entry_keyed_by_manifest_payload_type():
     # edited or re-keyed. Each value is pinned again, with what it does, in the tests below.
     # One entry, the one under development, keyed by the MANIFEST_PAYLOAD_TYPE name itself:
     # each beta's release commit rewrites that one literal, and the key moves with it.
-    # Signing uses this entry, the newest. The 0.4.0 release commit (at the latest, before
-    # any later release commit) makes its key the literal "application/vnd.asexec.v1+json",
-    # and this pin changes with it.
+    # Signing uses this entry, the newest. scripts/release.sh's 0.4.0 release commit makes
+    # its key the literal "application/vnd.asexec.v1+json"; this pin holds either way.
     assert list(constants.FORMATS) == [constants.MANIFEST_PAYLOAD_TYPE]
     assert constants.FORMATS[constants.MANIFEST_PAYLOAD_TYPE] == {
         "digest_ref_prefix": "sha-256:",
@@ -195,15 +217,89 @@ def test_signing_pae_version_and_manifest_payload_type():
     # payloadType. From 0.4.0 the PAE value is the fixed DSSEv1, so payloadType is what
     # carries the format version.
     # The 0.4.0 format is v1, and a later format N is vN, matching MANIFEST_PREDICATE_TYPE.
+    # A beta writes application/vnd.asexec.X.Y.ZbN+json. scripts/release.sh rewrites the
+    # MANIFEST_PAYLOAD_TYPE literal in the release commit, here and in constants.py, and this
+    # is the one line in this file that holds it: the others compare against it.
     assert _signing_format()["signing_pae_version"] == b"asexec-PAE/v1"
     assert constants.MANIFEST_PAYLOAD_TYPE == "application/vnd.asexec.v1+json"
-    assert signing_input(FROZEN_BODY) == (
-        b'asexec-PAE/v1 30 application/vnd.asexec.v1+json 31 {"phase":"prereg","target":"m"}'
-    )
     assert signing_input(FROZEN_BODY, constants.MANIFEST_PAYLOAD_TYPE) == (
         signing_input(FROZEN_BODY)
     )
-    assert _signed_prereg()["payloadType"] == "application/vnd.asexec.v1+json"
+    assert _signed_prereg()["payloadType"] == constants.MANIFEST_PAYLOAD_TYPE
+
+
+@frozen_v1
+def test_signing_input_of_the_frozen_v1_vector():
+    # The bytes a v1 signature covers (FROZEN_MANIFEST's). Replacing the PAE version or the
+    # type, or how they are framed, fails every published v1 signature.
+    assert signing_input(FROZEN_BODY, V1_PAYLOAD_TYPE) == (
+        b'asexec-PAE/v1 30 application/vnd.asexec.v1+json 31 {"phase":"prereg","target":"m"}'
+    )
+
+
+def test_v1_is_read_by_every_build_but_a_0_4_0_beta():
+    # Never skipped. From 0.4.0 on, v1 is released, and every later build reads it under its
+    # own entry, keyed by the literal (scripts/release.sh writes that key in the 0.4.0 release
+    # commit). Only a 0.4.0 beta build, made before any format was released, does not. A
+    # release commit that re-keyed the released entry fails here.
+    assert _is_0_4_0_beta(constants.MANIFEST_PAYLOAD_TYPE) or (V1_PAYLOAD_TYPE in constants.FORMATS)
+
+
+@pytest.mark.parametrize(
+    "payload_type,skipped",
+    [
+        ("application/vnd.asexec.0.4.0b1+json", True),
+        ("application/vnd.asexec.0.4.0b12+json", True),
+        ("application/vnd.asexec.v1+json", False),
+        ("application/vnd.asexec.0.5.0b1+json", False),  # v1 is released by then
+        ("application/vnd.asexec.0.4.1b1+json", False),
+        ("application/vnd.asexec.10.4.0b1+json", False),
+        ("application/vnd.asexec.0.4.0rc1+json", False),
+        ("application/vnd.asexec.0.4.0b1+json ", False),
+    ],
+)
+def test_frozen_v1_vectors_are_skipped_only_in_a_0_4_0_beta(payload_type, skipped):
+    assert _is_0_4_0_beta(payload_type) is skipped
+
+
+def test_current_format_sign_then_verify_roundtrip(tmp_path):
+    # Runs in every build, and is what checks the current entry while the frozen vectors are
+    # skipped (D6b): files signed now pass format and selfsig through verify, each ref and
+    # keyid carries the entry's prefix, and content falls back to the entry's own default.
+    # It does not freeze signed bytes; the frozen vectors do.
+    entry = _signing_format()
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    (artifacts / "a.txt").write_bytes(b"x")
+    priv, pub = keys.generate()
+    subject = hashing.build_subject([str(artifacts / "a.txt")])
+    written = manifest.sign(manifest.build_prereg("m", subject=subject), priv, pub)
+    # No hash_alg, which the writer always adds, so content reads the entry's default.
+    default_alg = entry["subject_default_hash_alg"]
+    digest = {default_alg: hashing.hash_bytes(b"x", default_alg)}
+    no_hash_alg = _signed_under(
+        constants.MANIFEST_PAYLOAD_TYPE,
+        {**FROZEN_BODY, "subject": [{"name": "a.txt", "digest": digest}]},
+    )
+    manis = [written, no_hash_alg]
+    assert [m["payloadType"] for m in manis] == [constants.MANIFEST_PAYLOAD_TYPE] * 2
+
+    report = _report(tmp_path, manis, ["content", "format", "selfsig"], str(artifacts))
+    assert report["code"].split()[1:] == ["content=PASS", "format=PASS", "selfsig=PASS"]
+    assert report["results"]["format"]["reason"] == "2/2 manifest(s) ok"
+    assert report["results"]["selfsig"]["reason"] == "2/2 manifest(s) ok"
+    assert [m["content"]["status"] for m in report["manifests"]] == ["ok", "ok"]
+    for mani, shown in zip(manis, report["manifests"], strict=True):
+        assert mani["signature"]["keyid"].startswith(entry["digest_ref_prefix"])
+        assert shown["ref"].startswith(entry["digest_ref_prefix"])
+
+    # selfsig checked the signatures: the same files changed after signing fail it.
+    tampered = copy.deepcopy(manis)
+    for mani in tampered:
+        mani["payload"]["target"] = "n"
+    report = _report(tmp_path, tampered, ["format", "selfsig"])
+    assert report["code"].split()[1:] == ["format=PASS", "selfsig=FAIL"]
+    assert report["results"]["selfsig"]["reason"] == "2/2 manifest(s) failed"
 
 
 def test_manifest_payload_type_change_fails_what_was_signed_before_it(tmp_path):
@@ -373,11 +469,13 @@ def test_identity_document_version():
     assert identity.build_wellknown([])["asexec_identity_version"] == 1
 
 
+@frozen_v1
 def test_not_enforced_yet__predicate_type(tmp_path):
     assert "predicateType" not in FROZEN_MANIFEST["payload"]
     assert _required_pass(tmp_path, FROZEN_MANIFEST)
 
 
+@frozen_v1
 def test_not_enforced_yet__signature_alg(tmp_path):
     mani = copy.deepcopy(FROZEN_MANIFEST)
     mani["signature"]["alg"] = "something-else"

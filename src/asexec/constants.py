@@ -19,9 +19,9 @@ IDENTITY_WELL_KNOWN_PATH = ".well-known/asexec.json"
 
 # Media type of the signed payload (an asexec manifest body), and the format signing writes:
 # the key of its ``FORMATS`` entry. Format N is ``vN``, and goes with
-# ``MANIFEST_PREDICATE_TYPE`` ``/vN``. A release commit may rewrite this literal (a beta
-# writes its own type); the entry under development is keyed by this name, so its key moves
-# with it.
+# ``MANIFEST_PREDICATE_TYPE`` ``/vN``. ``scripts/release.sh`` rewrites this literal in each
+# release commit (a beta writes its own type); the entry under development is keyed by this
+# name, so its key moves with it.
 MANIFEST_PAYLOAD_TYPE = "application/vnd.asexec.v1+json"
 
 # The rules of each format verify reads, keyed by ``payloadType``. A file is read only under
@@ -29,10 +29,10 @@ MANIFEST_PAYLOAD_TYPE = "application/vnd.asexec.v1+json"
 # ``format``. Signing uses the newest entry, ``MANIFEST_PAYLOAD_TYPE``'s.
 # Only the entry under development, the one no release has shipped yet, is keyed by the name
 # ``MANIFEST_PAYLOAD_TYPE``: until 0.4.0 that is the one entry, and each beta's release commit
-# re-keys it. The 0.4.0 release commit (at the latest, before any later release commit
-# rewrites the literal) makes its key the literal "application/vnd.asexec.v1+json", which
-# never changes after that. From then on a released entry is never edited or re-keyed, and a
-# new format adds an entry. (Out of alphabetical order: its key is the name above.)
+# re-keys it. The 0.4.0 release commit (``scripts/release.sh``, before any later release
+# commit rewrites the literal) makes its key the literal "application/vnd.asexec.v1+json",
+# which never changes after that. From then on a released entry is never edited or re-keyed,
+# and a new format adds an entry. (Out of alphabetical order, beside the type it is keyed by.)
 FORMATS: dict[str, dict] = {
     MANIFEST_PAYLOAD_TYPE: {
         # Starts every ``ref`` and ``keyid``: ``sha-256:<hex>``. It names the hash behind them.
