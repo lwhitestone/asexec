@@ -5,8 +5,9 @@
 # Usage:
 #   scripts/release.sh [--no-check] VERSION
 #
-# VERSION is X.Y.Z or a PEP 440 beta X.Y.ZbN, in normalized form (no leading
-# zeros), so the tag, the version declarations and the built file names agree.
+# VERSION is X.Y.Z or a PEP 440 beta of a line's first release, X.Y.0bN, in
+# normalized form (no leading zeros), so the tag, the version declarations and
+# the built file names agree. Ordering against earlier releases is not checked.
 #
 # Examples:
 #   scripts/release.sh 0.4.0b1
@@ -82,8 +83,10 @@ fi
 
 cleanup() {
     if [[ "$CLEANUP_NEEDED" == true ]]; then
-        git restore -- "$INIT_FILE" "$PYPROJECT_FILE" "$LOCK_FILE" \
-            "$CONSTANTS_FILE" "$PINS_FILE"
+        # From HEAD, index and worktree both: if `git commit` itself fails (a hook,
+        # say), the files are already staged.
+        git restore --source=HEAD --staged --worktree -- "$INIT_FILE" "$PYPROJECT_FILE" \
+            "$LOCK_FILE" "$CONSTANTS_FILE" "$PINS_FILE"
     fi
 }
 
@@ -93,6 +96,13 @@ trap cleanup EXIT
 NUM="(0|[1-9][0-9]*)"
 if [[ ! "$VERSION" =~ ^$NUM\.$NUM\.$NUM(b$NUM)?$ ]]; then
     echo "Error: version must look like X.Y.Z or X.Y.ZbN (a PEP 440 beta), with no leading zeros"
+    exit 2
+fi
+
+# A beta comes before a line's first release, X.Y.0. (Ordering against earlier
+# releases is not checked.)
+if [[ -n "${BASH_REMATCH[4]}" && "${BASH_REMATCH[3]}" != "0" ]]; then
+    echo "Error: a beta must be of an X.Y.0 release (X.Y.0bN), not of a patch"
     exit 2
 fi
 
@@ -278,7 +288,13 @@ if beta:
             "development, but there is not exactly one keyed by MANIFEST_PAYLOAD_TYPE"
         )
 elif patch == "0":
-    # The first full release of a line releases the entry under development.
+    # The first full release of a line releases the entry under development,
+    # whose literal key must not exist yet.
+    if occurrences(constants_name, LITERAL_KEY) != 0:
+        raise SystemExit(
+            f"Error: {constants_name}: an entry is already keyed by {payload_type}, "
+            "so releasing the entry under development would duplicate that key"
+        )
     rewrite(
         constants_name,
         NAME_KEY,

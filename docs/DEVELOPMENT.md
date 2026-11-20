@@ -102,7 +102,9 @@ line or the release stops.
 
 - **A beta** writes `application/vnd.asexec.X.Y.ZbN+json`, under the `FORMATS` entry under
   development. That entry is keyed by the name `MANIFEST_PAYLOAD_TYPE`, so its key moves with
-  the literal, and the script refuses a beta if there isn't exactly one such entry.
+  the literal, and the script refuses a beta if there isn't exactly one such entry. A beta is
+  of a line's first release (`X.Y.0bN`); `0.4.1b1` is refused. The script does not check that
+  a version comes after the last one released.
 - **A full release** writes its release line's format, from `RELEASE_PAYLOAD_TYPES` in the
   script: `0.4` → `application/vnd.asexec.v1+json`, so `0.4.0` and its patches write `v1`.
   A full release of a line with no entry (`0.5.0`, say) is refused: add the line once its
@@ -110,9 +112,9 @@ line or the release stops.
 - **The first full release of a line (`X.Y.0`) releases the entry under development**: the
   release commit rewrites its key from the name to the literal (`0.4.0` makes it
   `"application/vnd.asexec.v1+json"`). That key never changes again, so no later release
-  commit can re-key the released `v1` entry. A later release of the line (`0.4.1`) requires
-  the literal key, and refuses if an entry keyed by the name exists, since it would share
-  the key.
+  commit can re-key the released `v1` entry. It refuses if an entry is already keyed by
+  that literal. A later release of the line (`0.4.1`) requires the literal key, and refuses
+  if an entry keyed by the name exists, since it would share the key.
 
 **Main keeps the type the last release commit set**, until the next release commit. There is
 no revert commit. After `0.4.0b1`, main signs with `application/vnd.asexec.0.4.0b1+json`, so
@@ -127,16 +129,16 @@ vectors' format (D6b)"). In its place, `test_current_format_sign_then_verify_rou
 which runs in every build, signs two files under the current entry (one from the production
 writer, one with no `hash_alg`) and checks through `verify_paths` that they pass `format`,
 `selfsig` and `content` (the second with the entry's own default `hash_alg`), and that
-copies changed after signing fail `selfsig`. So on main after
-`0.4.0b1`, the pinned checks don't run until the `0.4.0` release commit sets `v1` again, and
-that commit's `check.sh` is the first to compare format changes made between betas against
-the frozen vectors.
+copies changed after signing fail `selfsig`. So on main after `0.4.0b1`, the pinned checks
+don't run until the `0.4.0` release commit sets `v1` again, and that commit's `check.sh` is
+the first to compare format changes made between betas against the frozen vectors.
 
-The skip covers `0.4.0` betas only, built before any format was released. Every later build,
-betas such as `0.5.0b1` included, still reads `v1`, so the frozen vectors run there. Also
-never skipped, `test_v1_is_read_by_every_build_but_a_0_4_0_beta` requires
-`application/vnd.asexec.v1+json` to be a `FORMATS` key whenever `MANIFEST_PAYLOAD_TYPE` is
-not a `0.4.0` beta type.
+The skip covers `0.4.0` betas only, built before any format was released. Any later build,
+a later line's beta included, must still read `v1`, so the frozen vectors run there. (How
+a later line's betas are released is not designed yet: after `0.4.0`, main signs with `v1`,
+and a new entry keyed by the name would duplicate that key.) Also never skipped,
+`test_v1_is_read_by_every_build_but_a_0_4_0_beta` requires `application/vnd.asexec.v1+json`
+to be a `FORMATS` key whenever `MANIFEST_PAYLOAD_TYPE` is not a `0.4.0` beta type.
 
 Pushing the tag triggers `.github/workflows/publish.yml`, which publishes with PyPI Trusted
 Publishing (OIDC; no tokens or repository secrets).
@@ -152,12 +154,13 @@ ci -> verify-release -> publish-testpypi -> smoke-testpypi -> publish-pypi -> gi
 1. `ci` - reuses `ci.yml` (lint, tests, build), so the published artifact is the one that
    passed.
 2. `verify-release` - the tag is `vX.Y.Z` or `vX.Y.ZbN`; tag, `pyproject.toml` and
-   `__version__` agree; the tag is annotated and its commit is on `main`; `dist` holds exactly one wheel and one sdist (sha256 sums
-   in the job summary).
+   `__version__` agree; the tag is annotated and its commit is on `main`; `dist` holds exactly
+   one wheel and one sdist (sha256 sums in the job summary).
 3. `publish-testpypi` - uploads to TestPyPI (environment `testpypi`).
 4. `smoke-testpypi` - installs hash-locked dependencies from PyPI, then `asexec==X.Y.Z` from
-   TestPyPI with `--no-deps` (an exact pin selects a beta without `--prerelease`) (dependencies are never resolved from TestPyPI), retrying for
-   about 5 minutes for index propagation. Runs the CLI smoke against the installed wheel,
+   TestPyPI with `--no-deps` (dependencies are never resolved from TestPyPI; the exact pin
+   selects a beta without `--prerelease`), retrying for about 5 minutes for index
+   propagation. Runs the CLI smoke against the installed wheel,
    checks `asexec --version` prints the tag version, on every Python in the `ci.yml` matrix.
 5. `publish-pypi` - uploads to PyPI (environment `pypi`). Required reviewers approve here,
    after the TestPyPI smoke passes.
