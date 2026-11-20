@@ -2803,3 +2803,31 @@ manifests all correct):
   `--evidence-file`); predates this PR.
 - `test_timely__pass__1_due_without_offset_is_read_as_utc` does not pin a local timezone. Low
   risk, since `_parse_due` is TZ-pinned by `test_due__without_offset_is_read_as_utc_and_flagged`.
+
+**Review round 2** (PR #56; the reviewer re-checked round 1's fixes and found them correct):
+1. nit (#36): `--plan-file`, `--items-file` and `--evidence-file` content still accepted
+   duplicate JSON keys (`{"name":"plan.md","name":"k.key"}` hashed `k.key`, and
+   `[{"id":"R1","id":"R2"}]` wrote `R2`). → `_shaped_arg_or_file`'s file loader now parses with
+   the same duplicate-key hook as the inline value, so such a file exits 1 (`error:
+   <path>: duplicate JSON key 'name'`), its content being no argument. Bad JSON in those files
+   still exits 1 (`<path> must contain valid JSON: …`). Test first:
+   `tests/test_cli.py::test_claim_record_file_with_a_duplicate_key_exits_EXIT_ERROR`
+   (`plan-file`, `items-file`, `evidence-file`; all three failed, exit 0). Commit `c8a03e1`.
+   **Remaining pre-existing gap:** `cli._load_json`, used by `--target-file`,
+   `--declaration-file` and `--notes-file`, still accepts a repeated key (left alone, as
+   instructed).
+2. nit (#46): `no_later_than` (on a verified ceiling record and in each `timeliness` entry)
+   was integer microseconds beside float-second `midpoint`/`radius`. → Renamed
+   `no_later_than_us`, with its readers (`verifier`'s trust line, `cli._NOT_ON_TIME`, the
+   tests). No output text changes. Test first:
+   `test_timely__pass__all_the_report_names_the_unit_of_its_times` (an `int` under
+   `no_later_than_us` in both places, and no `no_later_than` key). Commit `c5ebcc9`. The #46
+   and round 1 notes above say `no_later_than`; they are kept as written at the time.
+   - **Mistake:** the `cli.py` reader rename went into `c8a03e1`, one commit before the
+     verifier's, so `c8a03e1` alone fails two CLI tests (the late mark and the year-9999 mark
+     read `no_later_than_us` before the verifier wrote it; checked in a worktree at
+     `c8a03e1`: 2 failed, 160 passed in `tests/test_cli.py`). `c5ebcc9` completes the rename.
+     It is green, and so is every commit after it. The pushed history is not rewritten.
+
+`scripts/check.sh` (run in full, its exit status checked before each commit): clean, 882
+passed.
