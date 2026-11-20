@@ -567,6 +567,12 @@ PR push (`04dfe45`, run 44670856152): lint, build, test on 3.12, 3.13 and 3.14 p
   `✗`, with no reason beneath it (as `BDR` did). A reason line, e.g. `✗ selfsig: signature
   does not verify` or `keyid does not derive from pubkey`, would make it readable on its own.
   Left as it was.
+- `src/asexec/verifier.py:397` (`preregs[(rec["ref"], rec["keyid"])]`): verify raises
+  `TypeError: unhashable type: 'dict'` on a prereg whose `signature.keyid` is a JSON object
+  (or a list), instead of failing it. It is the same on `main` at `fd5b038` (line 361), so it
+  predates this checkpoint. A non-string keyid can never pass `selfsig`, so #44 (checkpoint
+  5), which stops a prereg that fails `selfsig` from being a commitment, should close it, and
+  should add this input as a test. Not fixed here.
 
 **Judgement calls:**
 - **Non-hex `pubkey`/`sig` stays in `format` (as #2).** D3a lists `format`'s malformed
@@ -615,3 +621,33 @@ PR push (`04dfe45`, run 44670856152): lint, build, test on 3.12, 3.13 and 3.14 p
   `--tests BDR,...` is now a usage error, so the example would have stopped working.
   `docs/FORMAT.md:25` named `BDR` as the test that checks the signature, and now names
   `selfsig`.
+
+**Review round 1** (findings on PR #51):
+- The `✓`/`✗` mark in the manifests block (`src/asexec/cli.py:258-259`) had no test. A
+  reviewer changed it to read `m["format"]["ok"]` and all 414 tests still passed. Fixed with
+  `tests/test_cli.py::test_verify_marks_each_file_by_format_and_selfsig`, which verifies four
+  files: a good prereg, a tampered postreg (`format=PASS selfsig=FAIL`), the prereg with
+  another key's `keyid` (signature valid, `selfsig` #2 fails) and a truncated file. It
+  requires `✓`, `✗`, `✗`, `✗` on their lines, and the `✗ format: malformed:` line only under
+  the truncated file. The fourth file goes beyond the finding, because with three files a
+  mark that dropped the keyid check still passed. Run against deliberately broken marks:
+  - `OK if m["format"]["ok"]` fails this test (1 failed, 416 passed).
+  - `OK if ss["signature_ok"]` fails it (1 failed).
+  - `OK if ss["keyid_ok"]` fails it (1 failed).
+  - A reason printed without the `format:` prefix fails it and
+    `test_verify_exit_codes_and_malformed_file` (2 failed).
+  - Restored: 417 passed.
+- Nothing pinned that `BDR` is gone. An alias in `parse_tests` passed the suite. Fixed by
+  adding `BDR` and `BDR,format,selfsig` cases to
+  `test_verify_bad_tests_is_a_usage_error`: exit 64, no code, and `unknown test(s): BDR;` on
+  stderr. With an alias mapping `BDR` to `format,selfsig` planted in `parse_tests`, both new
+  cases fail (2 failed, 415 passed).
+- A non-object `signature.keyid` on a prereg raises `TypeError` at `verifier.py:397`. This
+  is out of scope and predates this checkpoint, so it moved to the observations above, for
+  #44 to close and test.
+- The builder comments at `src/asexec/models.py:213` and `src/asexec/manifest.py:36` called
+  `predicateType`/`phase` "the format frame", which now reads like the `format` test. They
+  say "body frame" now (comments only, nothing renamed).
+- Commit: `b66bd01`. `scripts/check.sh`: clean, 417 passed (414 + 1 mark test + 2 `BDR`
+  cases). CI on `b66bd01` (run 44676319652): lint, python-matrix, test (3.12, 3.13, 3.14)
+  and build pass.
