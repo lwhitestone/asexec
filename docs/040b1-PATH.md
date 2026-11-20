@@ -1883,6 +1883,8 @@ unauthenticated keyid (see the observations above).
   `canonical_bytes`. The top-level `signature` and `payloadType` are gone from every model and
   writer; `Signature.alg`, `EnvelopeInput.payload`/`payloadType`/`signature` and
   `manifest.get_body` are removed.
+- CI on PR #55 at `618be15` (run 44741202075): lint, python-matrix, test (3.12, 3.13, 3.14)
+  and build pass.
 
 **Release-note entries** (for #40, in the `tests/test_constants.py` header format):
 
