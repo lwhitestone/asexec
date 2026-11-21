@@ -3367,3 +3367,66 @@ pass.
 
 Carried to checkpoint 9 (#45): the error-message gaps in the shared JSON helpers listed in
 the review round 1 notes above.
+
+### Checkpoint 9: #45
+
+Written as the work landed. Baseline: `feature/0321-checkpoint9` at `ba32bba`,
+`scripts/check.sh` clean, **1023 passed**.
+
+#### Triage of #45's cases against `ba32bba`
+
+#45 was written against 0.3.x. Each case was re-run on the CLI at `ba32bba` (scratch dir:
+`keygen`; `prereg --target t`; hand-signed bodies through a scratch signer) before any test
+was written:
+
+| #45 case | At `ba32bba` | Verdict |
+|---|---|---|
+| `postreg --target ""` inherits the prereg's target | exit 0; the postreg's target is the prereg's `t` | still broken |
+| `--notes-file ""`, `--declaration-file ""` are dropped | exit 0, signed without them | still broken |
+| `identity match --keyid ""` fetches | fetches (exit 1 offline, 2 against a real domain) | still broken |
+| `--repro-recipe '[1]'` prints a traceback | exit 1, `error: repro_recipe: Input should be a valid dictionary` | changed by checkpoint 7 (`cli._built`, `0d2df7f`): no traceback, but exit 1 where an argument wrong on its own is 64 |
+| a `--target-file` holding `""`, `[]` or a non-object prints a pydantic traceback | exit 1, one line each: `""` and `{}` → `error: body: Value error, manifest body missing mandatory 'target'`; `[]`, `5` → `error: target.str: Input should be a valid string; target.dict[str,any]: …` | traceback fixed by checkpoint 7 (`cli._built`); the message is pydantic's text |
+| `postreg --fulfills` a manifest with no `target` raises `KeyError` when inherited | `KeyError: 'target'` traceback, exit 1 | still broken |
+| a `.well-known/asexec.json` that is not an object: `AttributeError` | `match_binding` still calls `doc.get` on whatever `json.load` returns | still broken |
+| `verify … \| head -1` exits 1 | 300 manifests: `error: [Errno 32] Broken pipe`, exit 1 (a verdict of 0 or 2 lost); with stdout already closed and a short report, Python's exit flush fails instead: `Exception ignored … BrokenPipeError`, exit 120 | still broken |
+| `--due` parsed in `cli._due_arg` and `verifier._parse_due` | two copies (`verifier._parse_due` returns µs since checkpoint 7) | still broken |
+
+Added by the brief and the earlier checkpoints:
+- `--fulfills` and the DSSE envelope (checkpoint 6): a `--fulfills` file that is not JSON, has
+  no readable body or is not UTF-8 gives `error: --fulfills … is not a readable manifest: …`,
+  exit 1 (`test_fulfills_file_with_no_readable_body_is_a_clean_error`). But a file **of an
+  unknown format** (`dsse.payloadType` `…v2+json`) and one that **fails `selfsig`** (one
+  character of `sig` changed) are both accepted: exit 0, a postreg is signed fulfilling them.
+  `_load_manifest_body` reads `dsse.payload` without `format` #3 or `selfsig`.
+- Checkpoint 7: `cli._load_json` (`--target-file`, `--declaration-file`, `--notes-file`)
+  accepts a repeated key: still so.
+- Checkpoint 8's three helper gaps: all three still so (an inline integer past the digit limit
+  lacks `not valid JSON:`; the file variant's message comes from the duplicate-key branch; a
+  non-UTF-8 `--…-file` prints a `UnicodeDecodeError` traceback).
+
+**Fuzzer, before** (scratch, `cp9/fuzz.py` in the session scratchpad, not in the repo). It runs
+every subcommand and option, one at a time, in a subprocess from a valid base command, with
+19 inline junk values (empty, a space, a newline, 100,000 characters, not JSON, `[]`, `[1]`,
+`5`, `null`, `"s"`, `{}`, `NaN`, `{"a": NaN}`, a duplicate key, a 5,000-digit integer bare and
+in an object, 40,000-deep nesting, a non-UTF-8 argv byte, `-`) and 23 junk files (empty,
+whitespace, non-UTF-8, Latin-1, UTF-16, a BOM, not JSON, each JSON type, `""`, `NaN`, a
+duplicate key, a 5,000-digit integer, 100,000-deep nesting, 5 MB, a directory, a missing file,
+a FIFO, an empty path), and a few output paths (empty, a space, a directory, a missing
+directory, a FIFO). It checks: status in {0, 1, 2, 64} (2 for `verify` and `identity match`
+only); no `Traceback` or `Exception ignored` on stderr; exit 1 prints exactly one line, `error:
+…`; exit 64 prints `usage:` first; an empty value of an option that cannot mean empty exits
+64; and a 20 s timeout. At `ba32bba`, **974 runs, 202 with a problem**:
+- **60 tracebacks**: 33 `UnicodeDecodeError` (non-UTF-8, Latin-1 and UTF-16 `--…-file`s), 21
+  `RecursionError` (deep nesting in every `--…-file`, in `--key`, and inline `--plan` /
+  `--items` / `--evidence` / `--floor-round`), 6 `ValueError: Exceeds the limit (4300
+  digits)` (`--target-file`, `--declaration-file`, `--notes-file`). Each also counts under
+  "exit 1 not one error line" (61, with the newline `--domain` below).
+- **84 exit 64 without a `usage:` line**: every inline `--plan`, `--items`, `--evidence` and
+  `--floor-round` refusal (checkpoint 7's observation).
+- **38 empty values not a usage error**: 23 exit 0 (`--declaration`, `--notes`, their `-file`s,
+  `--plan`, `--items`, `--evidence`, their `-file`s, `--prev`, `--item-id`, `--target`
+  (postreg), `--domain` (emit), `keygen --out`, …), 15 exit 1 (`--key ""`, `--out ""`,
+  `--subject ""`, `--fulfills ""`, `--target-file ""`, `identity match --domain/--keyid/
+  --pubkey/--key ""`).
+- **19 hangs (FIFOs)**: every `--…-file`, `--key`, `--out`, and a `verify` path.
+- `identity match --domain $'\n'`: `error: could not fetch https://` and a second line.
