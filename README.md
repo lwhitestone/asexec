@@ -203,8 +203,8 @@ For a worked end-to-end run, with faults replayed against the verifier, see
 | `64` | Usage error: the arguments themselves are wrong, whatever the files hold. For example: an unknown command or option; a missing argument; an empty value, for any option or path; two that exclude each other, such as `--target` and `--target-file`, or `--floor` and `--floor-round`; a `--due` that is not an ISO-8601 time with an explicit offset; a `--tests` that names an unknown test, names none, or omits `format` or `selfsig`; an inline `--plan`, `--items`, `--evidence`, `--floor-round` or `--repro-recipe` value that is not JSON, repeats a key, nests more than 64 deep, or is not of its shape (`--repro-recipe` is an object), or an inline `--floor-round` that does not verify (`--best-effort` does not sign without it); a `--status` other than `reported`, `excluded` or `blocked`; a `--domain` holding whitespace or a control character; or for `identity match`, not exactly one of `--keyid`, `--pubkey` and `--key`. Usage is printed and nothing runs (`verify` prints no code). |
 
 For `verify`, malformed manifest input is a `FAIL`, never an error. Its exit status is its
-verdict even when stdout closes before the report is printed, as in `asexec verify … | head
--1`.
+verdict even when stdout closes before the report is printed, as in
+`asexec verify … | head -1`.
 
 ### Verification output
 
