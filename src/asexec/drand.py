@@ -69,12 +69,11 @@ def round_at_time(ts: int, chain_hash: str) -> int:
     return (ts - p["genesis_time"]) // p["period"] + 1
 
 
-def fetch_round(round_no: int | None = None, *, chain_hash: str) -> dict:
-    """Fetch a round (default: latest) from a public drand mirror. SIGN-TIME ONLY."""
-    suffix = "latest" if round_no is None else str(round_no)
+def fetch_latest_round(chain_hash: str) -> dict:
+    """Fetch the latest round of ``chain_hash`` from a public drand mirror. SIGN-TIME ONLY."""
     last_err = None
     for base in _API_MIRRORS:
-        url = f"{base}/{chain_hash}/public/{suffix}"
+        url = f"{base}/{chain_hash}/public/latest"
         try:
             with urllib.request.urlopen(url, timeout=10) as resp:
                 data = json.load(resp)
@@ -142,7 +141,7 @@ def verified_floor(round_data: dict, chain_hash: str) -> dict:
 def fetch_floor(chain_hash: str) -> dict:
     """Fetch the latest round of ``chain_hash`` as an ``anchor.floor`` record. SIGN-TIME
     ONLY."""
-    return floor_record(fetch_round(chain_hash=chain_hash))
+    return floor_record(fetch_latest_round(chain_hash))
 
 
 def verify_floor(floor: FloorInput) -> dict:

@@ -3979,3 +3979,7 @@ trigger, not the 0.5.0 version number itself.
   `cli.py` passes `drand.SIGNING_CHAIN` from its two call sites, so the choice is made in one
   place. No behaviour change. `roughtime`'s `servers=SERVERS` default stays, because it is
   the pinned set of trusted servers, not a choice made for a manifest.
+- **`drand.fetch_round(round_no=None, …)` becomes `drand.fetch_latest_round(chain_hash)`.**
+  Its one caller, `fetch_floor` (`--floor`), always fetched the latest round; only the tests
+  asked for a numbered round. A run that signs with an earlier round saves it itself and
+  passes it with `--floor-round`. No behaviour change.

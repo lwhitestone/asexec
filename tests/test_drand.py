@@ -133,7 +133,7 @@ def test_verify_floor_tampered_round_is_invalid():
     assert drand.verify_floor(_floor(round=ROUND + 1))["status"] == "invalid"
 
 
-# --- fetch_round / fetch_floor (urlopen mocked) ------------------------------- #
+# --- fetch_latest_round / fetch_floor (urlopen mocked) ------------------------ #
 class _Resp(io.BytesIO):
     def __enter__(self):
         return self
@@ -146,7 +146,7 @@ def _payload(round_no=ROUND):
     return _Resp(json.dumps({"round": round_no, "randomness": RAND, "signature": SIG}).encode())
 
 
-def test_fetch_round_builds_url_and_maps_fields(monkeypatch):
+def test_fetch_latest_round_builds_url_and_maps_fields(monkeypatch):
     seen = []
 
     def fake(url, timeout):
@@ -154,8 +154,8 @@ def test_fetch_round_builds_url_and_maps_fields(monkeypatch):
         return _payload()
 
     monkeypatch.setattr(drand.urllib.request, "urlopen", fake)
-    got = drand.fetch_round(ROUND, chain_hash=CHAIN)
-    assert seen == [(f"https://api.drand.sh/{drand.QUICKNET_HASH}/public/{ROUND}", 10)]
+    got = drand.fetch_latest_round(CHAIN)
+    assert seen == [(f"https://api.drand.sh/{drand.QUICKNET_HASH}/public/latest", 10)]
     assert got == {
         "beacon": "quicknet",
         "chain_hash": drand.QUICKNET_HASH,
@@ -165,16 +165,7 @@ def test_fetch_round_builds_url_and_maps_fields(monkeypatch):
     }
 
 
-def test_fetch_round_default_is_latest(monkeypatch):
-    urls = []
-    monkeypatch.setattr(
-        drand.urllib.request, "urlopen", lambda url, timeout: urls.append(url) or _payload()
-    )
-    drand.fetch_round(chain_hash=CHAIN)
-    assert urls[0].endswith("/public/latest")
-
-
-def test_fetch_round_falls_back_to_next_mirror(monkeypatch):
+def test_fetch_latest_round_falls_back_to_next_mirror(monkeypatch):
     urls = []
 
     def fake(url, timeout):
@@ -184,26 +175,26 @@ def test_fetch_round_falls_back_to_next_mirror(monkeypatch):
         return _payload()
 
     monkeypatch.setattr(drand.urllib.request, "urlopen", fake)
-    assert drand.fetch_round(ROUND, chain_hash=CHAIN)["round"] == ROUND
+    assert drand.fetch_latest_round(CHAIN)["round"] == ROUND
     assert urls[0].startswith("https://api.drand.sh/")
     assert urls[1].startswith("https://api2.drand.sh/")
 
 
-def test_fetch_round_all_mirrors_fail_raises_network_error(monkeypatch):
+def test_fetch_latest_round_all_mirrors_fail_raises_network_error(monkeypatch):
     def fake(url, timeout):
         raise OSError("down")
 
     monkeypatch.setattr(drand.urllib.request, "urlopen", fake)
     with pytest.raises(NetworkError, match="any mirror"):
-        drand.fetch_round(ROUND, chain_hash=CHAIN)
+        drand.fetch_latest_round(CHAIN)
 
 
-def test_fetch_round_malformed_body_is_network_error(monkeypatch):
+def test_fetch_latest_round_malformed_body_is_network_error(monkeypatch):
     monkeypatch.setattr(
         drand.urllib.request, "urlopen", lambda url, timeout: _Resp(b'{"round": 1}')
     )
     with pytest.raises(NetworkError):
-        drand.fetch_round(ROUND, chain_hash=CHAIN)
+        drand.fetch_latest_round(CHAIN)
 
 
 @pytest.mark.parametrize(
@@ -214,7 +205,7 @@ def test_fetch_round_malformed_body_is_network_error(monkeypatch):
         pytest.param({"randomness": "zz"}, id="randomness-not-hex"),
     ],
 )
-def test_fetch_round_malformed_round_falls_back_to_next_mirror(monkeypatch, bad):
+def test_fetch_latest_round_malformed_round_falls_back_to_next_mirror(monkeypatch, bad):
     """A mirror's malformed round is never signed into a floor: the next mirror is tried."""
     bodies = [{"round": ROUND, "randomness": RAND, "signature": SIG, **bad}]
     bodies.append({"round": ROUND, "randomness": RAND, "signature": SIG})

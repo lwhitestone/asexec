@@ -2109,7 +2109,7 @@ def test_floor_round_signs_with_a_round_fetched_earlier(
     """--floor-round (inline JSON) or --floor-round-file: a round as drand's HTTP API returns
     it, verified at signing and signed as the floor, with nothing fetched."""
     monkeypatch.setattr(drand, "fetch_floor", _boom)
-    monkeypatch.setattr(drand, "fetch_round", _boom)
+    monkeypatch.setattr(drand, "fetch_latest_round", _boom)
     if how == "inline":
         given = ["--floor-round", json.dumps(SAVED_ROUND)]
     else:
