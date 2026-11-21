@@ -3673,3 +3673,15 @@ Action: none
 `selfsig` (or `format`); empty `{}`/`""` free-form files are refused; every JSON input is held
 to the 64-deep file rule, and signing refuses a body deeper than that; `--domain` refuses
 whitespace and control characters; what a closed stdout means for the other commands.
+
+**CI round 1** (PR #58, run 44857776262 at `082b20d`): lint, python-matrix and test on 3.12 and
+3.13 passed; **test (3.14) failed** `test_a_key_file_nested_too_deep_is_one_error_line`. A
+100,000-deep key file read as `not valid JSON` on 3.12 and 3.13, which hit their recursion
+limit, but 3.14's parser reads it, so it read as `not a JSON object` there. That is the
+version dependence the 64-deep rule exists to remove. → `keys.load_signing_key` reads the key
+file with `manifest.parse_json`, as every other JSON input is, so the depth (and a repeated
+key, now refused in a key file as well) is checked before any parser runs. The test is now
+`test_a_key_file_that_breaks_the_json_rules_is_one_error_line[deep|duplicate-key]` and pins the
+whole line. `tests/test_cli.py` was run locally on 3.14 (453 passed) before pushing. Commit
+`42a15bb`. `scripts/check.sh`: clean, 1271 passed. CI on `42a15bb` (run 44858156292): lint,
+python-matrix, test (3.12, 3.13, 3.14) and build pass.
