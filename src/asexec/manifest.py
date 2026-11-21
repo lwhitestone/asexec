@@ -148,6 +148,12 @@ def sign(body: dict[str, Any], private_key: bytes, public_key: bytes) -> dict[st
     unsigned ``untrusted.asexec_version`` of this release beside them."""
     _check_bedrock(body)
     body_bytes = canonical_bytes(body)
+    try:  # a body deeper than this would fail format #2 (and parse_body) when verified
+        _check_nesting(body_bytes.decode("utf-8"))
+    except ManifestError:
+        raise ManifestError(
+            f"the body would be nested more than {MAX_NESTING_DEPTH} deep"
+        ) from None
     sig = keys.sign(private_key, signing_input(body_bytes))
     dsse = Dsse(
         payload=b64encode(body_bytes),
@@ -258,24 +264,32 @@ MAX_NESTING_DEPTH = 64
 _STRING_OR_BRACKET = re.compile(r'"(?:[^"\\]|\\.)*"|[\[\]{}]', re.DOTALL)
 
 
-def _check_nesting(text: str) -> None:
+def _check_nesting(text: str, max_depth: int = MAX_NESTING_DEPTH) -> None:
     depth = 0
     for match in _STRING_OR_BRACKET.finditer(text):
         token = match.group()
         if token in ("[", "{"):
             depth += 1
-            if depth > MAX_NESTING_DEPTH:
-                raise ManifestError(f"nested more than {MAX_NESTING_DEPTH} deep")
+            if depth > max_depth:
+                raise ManifestError(f"nested more than {max_depth} deep")
         elif token in ("]", "}"):
             depth -= 1
 
 
+def parse_json(text: str, max_depth: int = MAX_NESTING_DEPTH) -> Any:
+    """A JSON value held to the JSON rules of a manifest file: unique keys, nested at most
+    ``max_depth`` deep (``MAX_NESTING_DEPTH`` unless the value is to sit inside a body). Raises
+    ``ManifestError`` for either rule, else a ``ValueError`` if ``text`` is not JSON
+    (``json.JSONDecodeError``, or an integer of more digits than Python reads). The CLI holds
+    every JSON value it is given to these rules."""
+    _check_nesting(text, max_depth)
+    return json.loads(text, object_pairs_hook=_reject_duplicate_keys)
+
+
 def _parse_object(text: str, what: str) -> dict[str, Any]:
-    """The JSON rules a file and a body are both held to: a JSON object with unique keys,
-    nested at most ``MAX_NESTING_DEPTH`` deep. Raises ``ManifestError`` or
-    ``json.JSONDecodeError`` (a ``ValueError``)."""
-    _check_nesting(text)
-    data = json.loads(text, object_pairs_hook=_reject_duplicate_keys)
+    """The JSON rules a file and a body are both held to (``parse_json``), and a JSON object.
+    Raises ``ManifestError`` or ``json.JSONDecodeError`` (a ``ValueError``)."""
+    data = parse_json(text)
     if not isinstance(data, dict):
         raise ManifestError(f"{what} must be a JSON object")
     return data

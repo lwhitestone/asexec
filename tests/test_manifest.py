@@ -86,6 +86,19 @@ def test_sign_refuses_a_body_with_no_utf8_form():
         manifest.sign(body, priv, pub)
 
 
+def test_sign_refuses_a_body_nested_deeper_than_format_reads():
+    """A body more than 64 deep would fail format #2: the writer refuses it (the CLI's inputs
+    are held to 63 for a value inside the body, so this is the backstop)."""
+    priv, pub = keys.generate()
+    deep: dict = {}
+    for _ in range(63):  # 64 deep, so the body holding it is 65
+        deep = {"a": deep}
+    body = manifest.build_prereg(_target(), notes=deep)
+    with pytest.raises(ManifestError, match="the body would be nested more than 64 deep"):
+        manifest.sign(body, priv, pub)
+    manifest.sign(manifest.build_prereg(_target(), notes=deep["a"]), priv, pub)  # 64: signed
+
+
 @pytest.mark.parametrize(
     "mani",
     [

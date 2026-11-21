@@ -68,11 +68,32 @@ def hash_file(path: str, alg: str = SUBJECT_DEFAULT_HASH_ALG, chunk: int = 1 << 
     return h.hexdigest()
 
 
+def name_problem(text: str) -> str | None:
+    """Why ``text`` names no file a manifest can hold, or None: it has a NUL character (no
+    path has one), or a character with no UTF-8 form (a lone surrogate, or a byte that is not
+    UTF-8 as the OS decodes it), which no body can hold."""
+    if "\x00" in text:
+        return "a NUL character"
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return "a character with no UTF-8 form"
+    return None
+
+
+def _check_holdable(path: str) -> None:
+    why = name_problem(path)
+    if why:
+        raise ManifestError(f"{path!r} names no file a manifest can hold: it has {why}")
+
+
 def entry_name(path: str) -> str:
     """The ``name`` of the file at ``path`` (as given, relative to the current directory):
     normalized and ``/``-separated. Raises ``ManifestError`` for a path that no normalized
     relative name can stand for: absolute, with a ``..`` component, or (where ``\\`` is not
-    a separator) with a backslash, which another system would read as a separator."""
+    a separator) with a backslash, which another system would read as a separator, or one a
+    manifest cannot hold (``name_problem``)."""
+    _check_holdable(path)
     if os.path.isabs(path) or os.path.splitdrive(path)[0]:
         raise ManifestError(
             f"{path!r} is an absolute path; name a file by its path relative to the current "
@@ -98,6 +119,7 @@ def build_entry(path: str, alg: str = SUBJECT_DEFAULT_HASH_ALG) -> dict[str, Any
     Refuses (``ManifestError``) a directory, anything else that exists but is not a regular
     file, and a path ``entry_name`` refuses. A symlink is hashed through to its target. A
     missing file raises ``FileNotFoundError``."""
+    _check_holdable(path)  # before the filesystem is asked, which can't take such a path
     if os.path.isdir(path):
         raise ManifestError(
             f"{path!r} is a directory; list its files, or pack it (a tar, say) and list that"

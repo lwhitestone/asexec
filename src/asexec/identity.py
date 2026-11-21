@@ -21,7 +21,8 @@ from .constants import (
     IDENTITY_WELL_KNOWN_PATH,
     MANIFEST_PAYLOAD_TYPE,
 )
-from .errors import NetworkError
+from .errors import AsexecError, NetworkError
+from .manifest import parse_json
 
 
 def build_wellknown(keyid_pubkey_pairs: list[dict[str, str]], domain: str | None = None) -> dict:
@@ -44,14 +45,29 @@ def write_wellknown(doc: dict, path: str) -> None:
         f.write("\n")
 
 
+def _wellknown_url(domain: str) -> str:
+    return f"https://{domain.rstrip('/')}/{IDENTITY_WELL_KNOWN_PATH}"
+
+
 def fetch_wellknown(domain: str, timeout: int = 10) -> dict:
     """HTTPS GET https://<domain>/.well-known/asexec.json (network; identity-check only)."""
-    url = f"https://{domain.rstrip('/')}/{IDENTITY_WELL_KNOWN_PATH}"
+    url = _wellknown_url(domain)
     try:
         with urllib.request.urlopen(url, timeout=timeout) as resp:
-            return json.load(resp)
+            data = resp.read()
     except Exception as e:
         raise NetworkError(f"could not fetch {url}: {e}") from e
+    try:  # JSON's encodings, as json.load of bytes reads them: UTF-8 (a BOM dropped), -16, -32
+        text = data.decode(json.detect_encoding(data))
+    except UnicodeDecodeError as e:
+        raise AsexecError(
+            f"{url} is not an asexec identity document: not JSON text in UTF-8, UTF-16 or "
+            f"UTF-32 ({e})"
+        ) from None
+    try:  # a manifest file's JSON rules, so a document reads the same on every Python
+        return parse_json(text)
+    except (ValueError, AsexecError) as e:
+        raise AsexecError(f"{url} is not an asexec identity document: {e}") from None
 
 
 def match_binding(
@@ -59,7 +75,7 @@ def match_binding(
 ) -> dict:
     """Check whether a key is asserted by a domain. Returns a result dict."""
     doc = fetch_wellknown(domain, timeout=timeout)
-    listed = doc.get("keys", [])
+    listed = _listed_keys(doc, _wellknown_url(domain))
     match = None
     for k in listed:
         if keyid and k.get("keyid") == keyid:
@@ -76,3 +92,21 @@ def match_binding(
         "caveat": "point-in-time: the domain can change its published keys; "
         "a historical binding needs an archived snapshot.",
     }
+
+
+def _listed_keys(doc, url: str) -> list[dict]:
+    """The key entries an identity document lists (none if it has no ``keys``). A document
+    that is not an object holding an array of objects raises ``AsexecError``: what a domain
+    serves is not trusted to have the shape it should."""
+    why = None
+    if not isinstance(doc, dict):
+        why = "not a JSON object"
+    else:
+        listed = doc.get("keys")
+        if listed is None:
+            return []
+        if not (isinstance(listed, list) and all(isinstance(k, dict) for k in listed)):
+            why = "'keys' is not an array of objects"
+    if why:
+        raise AsexecError(f"{url} is not an asexec identity document: {why}")
+    return listed

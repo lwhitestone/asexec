@@ -195,7 +195,7 @@ breaks any vector that hardcodes it. The options:
 - [x] 6. #32: DSSE envelope (on feature/0321)
 - [x] 7. #33 → #36 → #46 → #37 (on feature/0321)
 - [x] 8. #34 and #38 (on feature/0321)
-- [ ] 9. #45 (after #38)
+- [x] 9. #45 (after #38) (on feature/0321)
 - [ ] 10. #39 → #40
 
 ## Execution brief
@@ -3367,3 +3367,490 @@ pass.
 
 Carried to checkpoint 9 (#45): the error-message gaps in the shared JSON helpers listed in
 the review round 1 notes above.
+
+### Checkpoint 9: #45
+
+Written as the work landed. Baseline: `feature/0321-checkpoint9` at `ba32bba`,
+`scripts/check.sh` clean, **1023 passed**.
+
+#### Triage of #45's cases against `ba32bba`
+
+#45 was written against 0.3.x. Each case was re-run on the CLI at `ba32bba` (scratch dir:
+`keygen`; `prereg --target t`; hand-signed bodies through a scratch signer) before any test
+was written:
+
+| #45 case | At `ba32bba` | Verdict |
+|---|---|---|
+| `postreg --target ""` inherits the prereg's target | exit 0; the postreg's target is the prereg's `t` | still broken |
+| `--notes-file ""`, `--declaration-file ""` are dropped | exit 0, signed without them | still broken |
+| `identity match --keyid ""` fetches | fetches (exit 1 offline, 2 against a real domain) | still broken |
+| `--repro-recipe '[1]'` prints a traceback | exit 1, `error: repro_recipe: Input should be a valid dictionary` | changed by checkpoint 7 (`cli._built`, `0d2df7f`): no traceback, but exit 1 where an argument wrong on its own is 64 |
+| a `--target-file` holding `""`, `[]` or a non-object prints a pydantic traceback | exit 1, one line each: `""` and `{}` → `error: body: Value error, manifest body missing mandatory 'target'`; `[]`, `5` → `error: target.str: Input should be a valid string; target.dict[str,any]: …` | traceback fixed by checkpoint 7 (`cli._built`); the message is pydantic's text |
+| `postreg --fulfills` a manifest with no `target` raises `KeyError` when inherited | `KeyError: 'target'` traceback, exit 1 | still broken |
+| a `.well-known/asexec.json` that is not an object: `AttributeError` | `match_binding` still calls `doc.get` on whatever `json.load` returns | still broken |
+| `verify … \| head -1` exits 1 | 300 manifests: `error: [Errno 32] Broken pipe`, exit 1 (a verdict of 0 or 2 lost); with stdout already closed and a short report, Python's exit flush fails instead: `Exception ignored … BrokenPipeError`, exit 120 | still broken |
+| `--due` parsed in `cli._due_arg` and `verifier._parse_due` | two copies (`verifier._parse_due` returns µs since checkpoint 7) | still broken |
+
+Added by the brief and the earlier checkpoints:
+- `--fulfills` and the DSSE envelope (checkpoint 6): a `--fulfills` file that is not JSON, has
+  no readable body or is not UTF-8 gives `error: --fulfills … is not a readable manifest: …`,
+  exit 1 (`test_fulfills_file_with_no_readable_body_is_a_clean_error`). But a file **of an
+  unknown format** (`dsse.payloadType` `…v2+json`) and one that **fails `selfsig`** (one
+  character of `sig` changed) are both accepted: exit 0, a postreg is signed fulfilling them.
+  `_load_manifest_body` reads `dsse.payload` without `format` #3 or `selfsig`.
+- Checkpoint 7: `cli._load_json` (`--target-file`, `--declaration-file`, `--notes-file`)
+  accepts a repeated key: still so.
+- Checkpoint 8's three helper gaps: all three still so (an inline integer past the digit limit
+  lacks `not valid JSON:`; the file variant's message comes from the duplicate-key branch; a
+  non-UTF-8 `--…-file` prints a `UnicodeDecodeError` traceback).
+
+**Fuzzer, before** (scratch, `cp9/fuzz.py` in the session scratchpad, not in the repo). It runs
+every subcommand and option, one at a time, in a subprocess from a valid base command, with
+19 inline junk values (empty, a space, a newline, 100,000 characters, not JSON, `[]`, `[1]`,
+`5`, `null`, `"s"`, `{}`, `NaN`, `{"a": NaN}`, a duplicate key, a 5,000-digit integer bare and
+in an object, 40,000-deep nesting, a non-UTF-8 argv byte, `-`) and 23 junk files (empty,
+whitespace, non-UTF-8, Latin-1, UTF-16, a BOM, not JSON, each JSON type, `""`, `NaN`, a
+duplicate key, a 5,000-digit integer, 100,000-deep nesting, 5 MB, a directory, a missing file,
+a FIFO, an empty path), and a few output paths (empty, a space, a directory, a missing
+directory, a FIFO). It checks: status in {0, 1, 2, 64} (2 for `verify` and `identity match`
+only); no `Traceback` or `Exception ignored` on stderr; exit 1 prints exactly one line, `error:
+…`; exit 64 prints `usage:` first; an empty value of an option that cannot mean empty exits
+64; and a 20 s timeout. At `ba32bba`, **974 runs, 202 with a problem**:
+- **60 tracebacks**: 33 `UnicodeDecodeError` (non-UTF-8, Latin-1 and UTF-16 `--…-file`s), 21
+  `RecursionError` (deep nesting in every `--…-file`, in `--key`, and inline `--plan` /
+  `--items` / `--evidence` / `--floor-round`), 6 `ValueError: Exceeds the limit (4300
+  digits)` (`--target-file`, `--declaration-file`, `--notes-file`). Each also counts under
+  "exit 1 not one error line" (61, with the newline `--domain` below).
+- **84 exit 64 without a `usage:` line**: every inline `--plan`, `--items`, `--evidence` and
+  `--floor-round` refusal (checkpoint 7's observation).
+- **38 empty values not a usage error**: 23 exit 0 (`--declaration`, `--notes`, their `-file`s,
+  `--plan`, `--items`, `--evidence`, their `-file`s, `--prev`, `--item-id`, `--target`
+  (postreg), `--domain` (emit), `keygen --out`, …), 15 exit 1 (`--key ""`, `--out ""`,
+  `--subject ""`, `--fulfills ""`, `--target-file ""`, `identity match --domain/--keyid/
+  --pubkey/--key ""`).
+- **19 hangs (FIFOs)**: every `--…-file`, `--key`, `--out`, and a `verify` path.
+- `identity match --domain $'\n'`: `error: could not fetch https://` and a second line.
+
+#### #45: what landed
+
+**Landed** (branch `feature/0321-checkpoint9`):
+- `5aec428`: every argument is checked at parse time. Every option and path whose empty value
+  cannot be meant refuses it (`must not be empty`, 64, usage printed); the full list is below.
+  The inline `--plan`, `--items`, `--evidence`, `--floor-round` and `--repro-recipe` values are
+  parsed and shaped by their argparse `type` (`cli._json_arg`), so their refusals print the
+  usage line as every other usage error does (checkpoint 7's observation). `--repro-recipe`
+  must be a JSON object. Inline JSON is held to a manifest file's JSON rules through the new
+  `manifest.parse_json` (no duplicate key, at most 64 deep), and an integer past Python's digit
+  limit reads `not valid JSON: Exceeds the limit …` (checkpoint 8's first gap). A `--domain`
+  holding whitespace or a control character is a usage error.
+- `aabdc13`: every file an argument names is one error line. One reader for every `--…-file`
+  (`cli._read_json`): UTF-8 JSON text, no duplicate key, at most 64 deep, with `<path> must
+  contain valid JSON: …` (not JSON, not UTF-8, a BOM, an integer past the digit limit) or
+  `<path>: …` (the two JSON rules); checkpoint 8's second and third gaps, and checkpoint 7's
+  `_load_json` duplicate keys. A `--…-file` that is not a regular file is refused before it is
+  opened (`--<flag> is not a file: <path>`), which ends the FIFO hang for those options.
+  `--target-file`, `--declaration-file` and `--notes-file` must hold a non-empty JSON object or
+  string (`cli._free_form_file`). `postreg --fulfills` reads the file as verify does
+  (`cli._read_prereg`: `manifest.load`, `verifier.verify_format`, `verifier.verify_selfsig`);
+  an inherited target that is absent or not a non-empty string or object is one line naming
+  the fix. `manifest.sign` refuses a body that would be nested more than 64 deep.
+  `identity._listed_keys` refuses a `.well-known` document that is not an object holding an
+  array of objects. `keys.load_signing_key` reads a key file nested too deep as not valid JSON.
+- `69e5796`: `cmd_verify` decides its status before it prints; a `BrokenPipeError` while
+  printing points stdout at the null device (`cli._drop_stdout`) and returns the verdict.
+  `main` flushes stdout before it returns, so a finished command keeps its status; a stdout
+  that closes while a command still prints exits 1 with one line.
+- `47fcce6`: `verifier.parse_due(text) -> (instant, naive)` is the one parse of `due`.
+  `verifier._parse_due` derives its seconds and microseconds from it; `cli._due_arg` refuses
+  what it cannot parse or what is naive. `cli.py` no longer imports `datetime`.
+- `8f86d68`: README *Exit status* states the guarantees without the #45 caveat.
+- `4b6f0b0`: the triage above.
+
+**Options that refuse an empty value** (`_nonempty_arg`, or a `type` that calls it):
+`keygen --out`; `prereg` `--key`, `--target`, `--target-file`, `--declaration`,
+`--declaration-file`, `--subject` (each path), `--notes`, `--notes-file`, `--plan`,
+`--plan-file`, `--items`, `--items-file`, `--floor-round`, `--floor-round-file`, `--out`;
+`postreg` the same plus `--fulfills`, `--prev`, `--repro-recipe`, `--item-id`, `--evidence`,
+`--evidence-file` (and no `--plan`/`--items`); `verify` each path and `--artifacts`;
+`identity emit` `--key`, `--domain`, `--out`; `identity match` `--domain`, `--keyid`,
+`--pubkey`, `--key`. Already refused before, by their own checks: `--due` (not ISO-8601),
+`--tests` (no tests), `--hash-alg`, `--provenance`, `--status` (argparse `choices`).
+
+**Evidence:**
+- `scripts/check.sh`, run in full and its exit status checked before every commit but the
+  first: **1023 passed** (baseline) → 1089 (`5aec428`) → 1253 (`aabdc13`) → 1258 (`69e5796`)
+  → 1270 (`47fcce6`, `8f86d68`), all in `tests/test_cli.py` (+247). **Mistake:** the triage
+  commit `4b6f0b0` (notes only) was committed and pushed before `check.sh` ran; run straight
+  after on that commit, it was clean, 1023 passed.
+- Red first:
+  - `5aec428`: with only the tests changed, **98 failed, 173 passed** in `tests/test_cli.py`:
+    `DID NOT RAISE SystemExit` (empty values signed or fetched), exit 1 where 64 was expected
+    (`--target-file ""`, `--fulfills ""`), the 36 inline `--plan`/`--items`/`--evidence`/
+    `--floor-round` refusals whose stderr did not start with `usage:` (the existing tests now
+    require it), `--repro-recipe` shapes, and a `RecursionError` for deep inline JSON. Two
+    existing cases (`plan-and-file`, `evidence-and-file`) then failed for a test reason:
+    argparse checks each value's `type` as it reads it, before the mutual exclusion, so their
+    inline values (`{}`, `[]`) were refused first; they now give values of the right shape,
+    and still read `not allowed with argument`.
+  - `aabdc13`: **128 failed, 297 passed**, with the 10 FIFO cases deselected because the old
+    code blocked on them (the run had to be stopped). The failures: `UnicodeDecodeError` and
+    `RecursionError` tracebacks, pydantic text or silent acceptance for the free-form files,
+    `KeyError: 'target'`, postregs signed against an unknown-format or `selfsig`-failing
+    prereg (exit 0), `AttributeError`/`TypeError` from `identity`, the unsigned deep body.
+  - `69e5796`: **5 failed**: `(120, 'Exception ignored … Broken pipe')` for the short
+    reports and the prereg, `(1, 'error: [Errno 32] Broken pipe')` for the long ones.
+  - `47fcce6`: the 12 due cases are a pin of today's behaviour and passed before the change and
+    after it. Mutants show they bind both sides: `parse_due` reading a naive due as local time
+    (1 failed), `_due_arg` accepting a naive due (2 failed), `_due_arg` with a parser of its
+    own (`strptime("%Y-%m-%dT%H:%M:%S%z")`, 4 failed). The verify suite (`test_verify_timely.py`,
+    `test_verify_commitment_states.py`, the run rules) passes unchanged, so no verdict moved.
+- Tests (all `tests/test_cli.py`):
+  - parse time: `test_an_empty_value_is_a_usage_error` (36: the list above),
+    `test_an_empty_path_in_a_list_is_a_usage_error` (3), `test_repro_recipe_not_an_object_is_a_usage_error`
+    (7), `test_identity_domain_with_whitespace_or_control_characters_is_a_usage_error` (8),
+    `test_an_inline_integer_past_the_digit_limit_is_not_valid_json` (4),
+    `test_an_inline_value_nested_too_deep_is_a_usage_error` (4); `usage:` now required by
+    `test_claim_record_argument_errors_are_usage_errors` and
+    `test_floor_round_argument_errors_are_usage_errors`.
+  - file content (each through `_error_line`: exit 1, exactly one `error:` line, no traceback):
+    `test_a_json_file_that_breaks_the_json_rules_is_one_error_line` (80: ten `--…-file`
+    options × not UTF-8, Latin-1, UTF-16, a BOM, a 5,000-digit integer, 100,000-deep nesting, a
+    duplicate key, not JSON), `test_a_json_file_that_is_not_a_regular_file_is_one_error_line`
+    (20: a directory, a FIFO), `test_a_free_form_file_holds_a_non_empty_object_or_string`
+    (42), `test_a_free_form_file_holding_a_string_or_object_is_signed_as_it_is` (2),
+    `test_a_body_nested_deeper_than_format_reads_is_not_signed`,
+    `test_a_key_file_nested_too_deep_is_one_error_line`,
+    `test_postreg_refuses_to_fulfil_a_prereg_verify_would_not_read_as_a_commitment` (6: newer
+    and beta formats, no `payloadType`, a changed `sig`, a keyid that does not derive, two
+    signatures), `test_postreg_inheriting_no_usable_target_is_one_error_line` (6),
+    `test_identity_match_on_a_document_that_is_not_an_identity_document` (6).
+  - closed stdout: `test_verify_keeps_its_verdict_when_stdout_closes` (pass 0 / fail 2 × a
+    one-file report and a 300-file one; nothing on stderr),
+    `test_signing_succeeds_when_stdout_closes`.
+  - due: `test_due_is_parsed_once_for_signing_and_verify` (12, under `TZ=Pacific/Kiritimati`:
+    `Z` and an offset at T, one microsecond before T, a negative offset, 7 fractional digits
+    truncated to T and not rounded up to it, naive and date-only read as UTC and flagged, a
+    trailing space, `+24:00`, February 30, words).
+- **Fuzzer, after** (same script, same 974 runs): **8 with a problem, all hangs** on a FIFO
+  named by `--key` (prereg, postreg, `identity emit`, `identity match`), `--out` (prereg,
+  postreg, `identity emit`) or a `verify` path (observations below). **0 tracebacks** (60
+  before), **0 exit-1 runs that are not one `error:` line** (61), **0 exit-64 runs without
+  usage** (84), **0 empty values that are not a usage error** (38), 8 hangs (19). Statuses:
+  before 234 × 0, 468 × 1, 22 × 2, 231 × 64; after 184 × 0, 467 × 1, 21 × 2, 294 × 64.
+- CLI demonstrations (scratch dir: `keygen`; `prereg --target t`; `postreg --fulfills
+  pre.json`; `badsig.json` is `pre.json` with one character of `sig` changed, `v2.json` with
+  `dsse.payloadType` `…v2+json`, `notarget.json` a validly signed prereg body without
+  `target`; `many/` holds 300 copies of `pre.json`):
+  - `postreg … --fulfills pre.json --target ""` → `asexec postreg: error: argument --target:
+    must not be empty`, exit 64 (before: exit 0, target `t` inherited). The same for
+    `prereg … --notes-file ""` and `identity match --domain lab.example --keyid ""` (before:
+    signed without notes; fetched).
+  - `--repro-recipe '[1]'` → `argument --repro-recipe: --repro-recipe must be a JSON object,
+    like {"seed": 0}: [1]`, exit 64.
+  - `--target-file list.json` (`[]`) → `error: --target-file list.json must hold a non-empty
+    JSON object or string: []`, exit 1; `--target-file dup.json` → `error: dup.json: duplicate
+    JSON key 'a'`, exit 1 (before: signed with `a: 2`).
+  - `--floor-round-file nonutf8.json` → `error: nonutf8.json must contain valid JSON: it is not
+    UTF-8 text ('utf-8' codec can't decode byte 0xff in position 0: invalid start byte)`,
+    exit 1 (before: a `UnicodeDecodeError` traceback). A 5,001-digit round inline → `argument
+    --floor-round: not valid JSON: Exceeds the limit (4300 digits) …`, exit 64; from the file
+    → `error: big.json must contain valid JSON: Exceeds the limit …`, exit 1.
+  - `postreg --fulfills notarget.json` → `error: --fulfills notarget.json has no target to
+    inherit (a non-empty string or JSON object); give --target or --target-file`, exit 1
+    (before: `KeyError: 'target'`). `--fulfills v2.json` → `error: --fulfills v2.json is not a
+    readable manifest: payloadType names a format newer than this release: upgrade asexec to
+    read it`; `--fulfills badsig.json` → `error: --fulfills badsig.json fails selfsig, so it
+    is no commitment: a postreg fulfilling it never counts`; exit 1, nothing written (before:
+    both exit 0).
+  - `--notes-file ff` (a FIFO) → `error: --notes-file is not a file: ff`, exit 1 (before:
+    blocked).
+  - **`| head -1`:** `asexec verify many --tests format,selfsig | head -1` prints `===
+    manifests ===` and exits **0** (before: `error: [Errno 32] Broken pipe`, exit 1);
+    `asexec verify many badsig.json --tests format,selfsig | head -1` exits **2**, stderr
+    empty (before: 1).
+- README *Exit status*, before → after:
+  - `1`, before: "… e.g. a missing or invalid key file, an unreadable `--subject` or
+    `--target-file`, a key file it refuses to overwrite, a `--floor-round-file` that does not
+    hold a round that verifies, a failed `identity match` fetch, or a failed
+    `--floor`/`--ceiling` fetch without `--best-effort`. An `error: ...` line is printed; a few
+    bad inputs still print a traceback instead (#45)."
+  - `1`, after: "… e.g. a missing or invalid key file; an unreadable `--subject`; a `--…-file`
+    that is missing, not a regular file, or does not hold what its option takes (UTF-8 JSON
+    text with no repeated key, nested at most 64 deep, of the option's shape: a non-empty JSON
+    object or string for `--target-file`, `--declaration-file` and `--notes-file`, a round that
+    verifies for `--floor-round-file`); a `--fulfills` file that fails `format` or `selfsig` (a
+    postreg fulfilling it could never count), or that has no target to inherit when none is
+    given; a key file it refuses to overwrite; a failed `identity match` fetch, or a document
+    there that is not an identity document; or a failed `--floor`/`--ceiling` fetch without
+    `--best-effort`. One `error: ...` line is printed (after any `--best-effort` warning),
+    never a traceback."
+  - `64`: adds "an empty value, for any option or path", "a `--due` that is not an ISO-8601
+    time with an explicit offset", `--repro-recipe` beside the inline JSON options with
+    "repeats a key, nests more than 64 deep, or is not of its shape", and "a `--domain`
+    holding whitespace or a control character"; "A few argument mistakes, such as an empty
+    value, are not caught yet (#45)" is removed.
+  - After the table: "Its exit status is its verdict even when stdout closes before the report
+    is printed, as in `asexec verify … | head -1`."
+- Nothing left behind: `git grep -n -e '#45' -e 'issues/45' -e 'not caught yet' -e 'still print
+  a traceback'` outside this file finds nothing; `git grep -n -e _load_json -e
+  'datetime.fromisoformat'` finds only `verifier.parse_due`; `cli._reject_duplicate_keys` is
+  gone (`manifest._reject_duplicate_keys` is the one hook).
+- `uv run python examples/adequacy-test/run.py`: exit 0, the same codes and caught/missed
+  results as after checkpoint 8 (`content=FAIL` for the swapped plants, caught; the other two
+  faults missed as before).
+
+**Observations (out of scope):**
+- **Hangs left:** a FIFO named by `--key` (`keys.load_signing_key`, `src/asexec/keys.py:86`),
+  by `--out` (`manifest.save`, `identity.write_wellknown`, `keys.save`: opening a FIFO to
+  write blocks until a reader comes), or as a `verify` path (`verifier._expand` and
+  `manifest.load`, `src/asexec/manifest.py` `load`) blocks forever, as on the base. A `verify`
+  path that is not a regular file is a verify contract question (format #1, "readable"), so
+  it is left for a later change.
+- `--prev` still goes through `cli._load_manifest_body` (`src/asexec/cli.py`, `_resolve_ref`):
+  a `--prev` file of an unknown format gives a ref under this release's rules, and one that
+  fails `selfsig` is accepted; `chain` judges it at verify. A `--fulfills` file that is a
+  postreg, or a prereg signed by another key, is accepted too (verify then reports the postreg
+  as notarization-only, or rejected for "signed by a different key").
+- `NaN` and `Infinity` are accepted in every JSON value and file the CLI reads, and signed into
+  the body: `docs/VERIFICATION.md` (*JSON*) defines valid JSON as what Python's `json` accepts.
+  Other JSON tools refuse such a body.
+- Whitespace-only values (`--target " "`, `--keyid " "`) are values, not empty: accepted.
+- `--items '[]'` signs `"items": []`, which `complete` does not examine (checkpoint 7's call);
+  `--evidence '[]'` is refused. `--repro-recipe` must be an object, but its keys are not
+  checked against `{seed, decode, runtime}`.
+- Inline shape errors still read `argument --plan: --plan must be …` (checkpoint 8's note).
+- `verify --artifacts` naming something that is not a directory is not refused; with `content`
+  requested its entries are not found.
+
+**Judgement calls:**
+- **postreg refuses to fulfil a prereg that fails `selfsig`** (exit 1). Under D2 it is no
+  commitment: verify lists every postreg naming it as rejected, so a postreg signed against it
+  could never count. A literal `--fulfills sha-256:…` ref is still signed against, unchecked,
+  as before. A file of an unknown format is refused too, with `format`'s own reason.
+- **Free-form files must hold a non-empty object or string**, `{}` and `""` included, for
+  `--declaration-file` and `--notes-file` as for `--target-file`: an empty one is the same
+  "empty value" the inline options refuse, and `""` was dropped or inherited silently.
+- **Every inline JSON value and `--…-file` is held to a manifest file's JSON rules**, the
+  64-deep limit included, rather than only catching `RecursionError`: a value deeper than the
+  limit would make a body that fails format #2, and the check runs before any parser.
+  Signing also refuses a body that would be deeper than 64 (a 64-deep `--target-file` is one
+  deeper inside the body).
+- **A `--…-file` that is not a regular file is refused** before it is opened. It fell out of
+  the shared reader (the stat that gives `not found` also gives the file type), so the FIFO
+  hang of those options is fixed; the other hangs are not.
+- **`--domain`** refuses whitespace and control characters (it goes into a URL, and a newline
+  split the error message over two lines); nothing else about a domain name is checked.
+- **Closed stdout**, beyond verify: a command that finished keeps its status (prereg's file is
+  written); one whose stdout closes before it ends (its output outgrew the buffer) exits 1 with
+  `error: stdout was closed before the command finished`. Only verify's case is tested
+  end to end beyond the prereg case.
+- **`parse_due` lives in `verifier.py`**, public, beside `_parse_due` (the issue's scope), and
+  the CLI imports it, as it already imports `verifier.parse_tests`.
+
+#### Checkpoint 9 summary
+
+**Landed** (branch `feature/0321-checkpoint9`, all `Refs #45`): `4b6f0b0` (triage notes),
+`5aec428` (parse time), `aabdc13` (file contents, `--fulfills`, identity), `69e5796` (closed
+stdout), `47fcce6` (one `due` parse), `8f86d68` (README), and the notes commit that follows.
+
+**pytest counts:** 1023 → 1089 → 1253 → 1258 → 1270, `scripts/check.sh` clean after each.
+
+**Release-note entries** (for #40, in the `tests/test_constants.py` header format):
+
+```
+Identifier: the CLI's argument checks (no constant): empty values, inline JSON shapes, --repro-recipe, --domain
+Impact: BREAKS_USERS
+Affected: scripts that pass an empty value (it was read as absent: inherited, dropped or defaulted; now exit 64), a --repro-recipe that is not an object (exit 1 -> 64), a JSON value or --…-file with a repeated key or nested more than 64 deep (now refused), or a postreg --fulfills file that fails format or selfsig (it was signed against; now exit 1)
+Action: pass a value or leave the option out; fix the file
+
+Identifier: verify's exit status when stdout closes (no constant)
+Impact: NEW_OUTPUT
+Affected: `verify ... | head -1` now exits with the verdict (0 or 2), where it exited 1 or 120
+Action: none
+```
+
+**Judgement calls needing the human's eye:** postreg refuses a `--fulfills` file that fails
+`selfsig` (or `format`); empty `{}`/`""` free-form files are refused; every JSON input is held
+to the 64-deep file rule, and signing refuses a body deeper than that; `--domain` refuses
+whitespace and control characters; what a closed stdout means for the other commands.
+
+**CI round 1** (PR #58, run 44857776262 at `082b20d`): lint, python-matrix and test on 3.12 and
+3.13 passed; **test (3.14) failed** `test_a_key_file_nested_too_deep_is_one_error_line`. A
+100,000-deep key file read as `not valid JSON` on 3.12 and 3.13, which hit their recursion
+limit, but 3.14's parser reads it, so it read as `not a JSON object` there. That is the
+version dependence the 64-deep rule exists to remove. → `keys.load_signing_key` reads the key
+file with `manifest.parse_json`, as every other JSON input is, so the depth (and a repeated
+key, now refused in a key file as well) is checked before any parser runs. The test is now
+`test_a_key_file_that_breaks_the_json_rules_is_one_error_line[deep|duplicate-key]` and pins the
+whole line. `tests/test_cli.py` was run locally on 3.14 (453 passed) before pushing. Commit
+`42a15bb`. `scripts/check.sh`: clean, 1271 passed. CI on `42a15bb` (run 44858156292): lint,
+python-matrix, test (3.12, 3.13, 3.14) and build pass.
+
+**Review round 1** (findings on PR #58; every fix is in `8dd74d7`, test first. With only the
+tests changed, **196 failed** in `tests/test_cli.py`, `tests/test_identity.py` and
+`tests/test_manifest.py`, mostly the quoted-path messages, then each finding's cases below):
+1. **blocking: a closed or full stdout gave a traceback** (`69e5796` called `sys.stdout.flush()`,
+   which is `None` under `>&-`, and flushed in a `finally`). `verify … >&-` exited 1 with an
+   `AttributeError` where the base exits 0/2, and so did prereg, keygen, `--help` and usage
+   errors (64 → 1). `>/dev/full` printed `error: [Errno 28]` and then a traceback, exit 120.
+   → `main` wraps stdout (`cli._GuardedStdout`), so a failed write or flush raises
+   `_StdoutError`, which is not an `OSError` and so is never taken for an input file's error.
+   With `sys.stdout` `None` nothing is flushed. A broken pipe keeps verify's verdict and a
+   finished command's status, as before. Any other write failure gives one line, `error: could
+   not write the output: [Errno 28] No space left on device`, exit 1, flushed inside the try,
+   and stdout is then pointed at the null device so Python's exit flush can't fail again.
+   Tests: `test_verify_with_stdout_closed_keeps_its_verdict[pass|fail]` (`>&-`: 0 / 2, stderr
+   empty), `test_other_commands_with_stdout_closed[keygen|prereg|help|usage-error]`,
+   `test_a_full_stdout_is_one_error_line[verify|prereg]`,
+   `test_a_usage_error_with_a_full_stdout_is_still_a_usage_error` (`/dev/full`, skipped where
+   it doesn't exist).
+2. **blocking: a NUL or a lone surrogate in a `--plan`/`--evidence` name gave a traceback**
+   (`os.path.isdir`/`exists` swallow the error, then `open` raised `ValueError` or
+   `UnicodeEncodeError`). → `hashing.name_problem`: a name holding a NUL, or a character with
+   no UTF-8 form, names no file a manifest can hold. `cli._spec_shape` refuses it (inline 64,
+   file 1), and `hashing.entry_name` and `build_entry` refuse it before asking the filesystem
+   (`--subject`, exit 1, including a non-UTF-8 argv byte, which Python decodes to a
+   surrogate). Tests: `test_a_name_no_file_can_have_is_refused` (8: plan and evidence × NUL and
+   surrogate × inline and file), `test_a_subject_no_manifest_can_name_is_refused` (3).
+3. should-fix: **the regular-file check refused pipes**, so `--target-file <(echo …)`,
+   `--declaration-file /dev/stdin` and README's own `--floor-round-file <(curl …)` failed.
+   → only a directory is refused (`--<flag> is a directory: '<path>'`); a pipe, a character
+   device or anything else is opened and read, and an `OSError` from that is one line. **This
+   brings back the FIFO hang for every `--…-file` whose FIFO has no writer**, which is
+   ordinary Unix behaviour (observation below). Tests:
+   `test_a_json_file_that_is_a_directory_is_one_error_line` (10),
+   `test_a_json_file_may_be_a_pipe` (10: a FIFO with a writer thread, each option signs),
+   `test_a_json_file_may_be_a_character_device` (`/dev/null`: read, and not JSON). It replaces
+   `test_a_json_file_that_is_not_a_regular_file_is_one_error_line`.
+4. should-fix: **a newline in a path split the error line.** → Every error that names a path
+   shows it quoted (`{path!r}`): `_get_arg_or_file`, `_read_json`, `_free_form_file`,
+   `_read_prereg`, `_load_manifest_body`, the no-target message, `keygen`'s already-exists
+   message, and `keys.load_signing_key`'s three. Test:
+   `test_a_path_with_a_newline_stays_on_one_error_line` (6: not found, a directory, bad JSON,
+   a free-form shape, `--fulfills`, a key file). The tests that pin those messages now expect
+   the quoted path.
+5. should-fix: **the 64-deep limit was one off for a value the body holds.** A 64-deep
+   `--target-file` exited 1 at signing ("body would be nested more than 64 deep"), and a 64-deep
+   inline `--repro-recipe` parsed and then exited 1 at signing instead of 64. → A value that sits
+   one level down in the body (`--target-file`, `--declaration-file`, `--notes-file`,
+   `--repro-recipe`) is held to 63 when it is read (`manifest.parse_json(text, max_depth)`,
+   `cli._IN_BODY_DEPTH`), with the reason `nested more than 63 deep (its value sits one level
+   down in a body, which is at most 64)`: inline 64, file 1. README now says what the 64
+   counts (the outermost array or object is 1) and that these hold 63. The signing check stays
+   as a backstop, now pinned in `tests/test_manifest.py::
+   test_sign_refuses_a_body_nested_deeper_than_format_reads` (65 refused, 64 signed). Tests:
+   `test_a_free_form_file_is_at_most_63_deep_so_its_body_is_at_most_64` (6: 64 refused, 63
+   signed and passing `format`), `test_an_inline_repro_recipe_is_at_most_63_deep`. The
+   earlier `test_a_body_nested_deeper_than_format_reads_is_not_signed` is replaced by these.
+6. should-fix: **`identity.fetch_wellknown` used bare `json.load`**, so a deep document was
+   exit 1 on 3.12 and exit 0 on 3.14. → It reads the bytes, then parses them with
+   `manifest.parse_json`. A broken rule, bytes that are not UTF-8 or not JSON give `<url> is
+   not an asexec identity document: …` (an `AsexecError`; a failed fetch is still a
+   `NetworkError`). Tests: `test_identity_match_reads_the_document_under_the_json_rules` (4:
+   deep, a duplicate key, not JSON, not UTF-8, through a monkeypatched `urlopen`), and
+   `tests/test_identity.py::test_fetch_wellknown_refuses_a_document_that_is_not_json`. That
+   case was split out of `test_fetch_wellknown_errors_map_to_network_error`, which had pinned
+   it as a `NetworkError`.
+7. should-fix: **`PYTHONIOENCODING=ascii` gave a `UnicodeEncodeError` traceback** on `✓` (the
+   base too). → `main` reconfigures stdout and stderr with `errors="backslashreplace"`, guarded
+   for `None` and for streams that can't be reconfigured. Test:
+   `test_verify_on_an_ascii_stdout_escapes_what_it_cannot_encode` (exit 0, `✓
+   format=PASS`, stderr empty).
+8. nit: **any `BrokenPipeError` was reported as "stdout was closed"**, including one from an
+   `--out` FIFO whose reader left. → Only `_StdoutError` is; a file's `BrokenPipeError` is its
+   own `error: [Errno 32] Broken pipe`. Test:
+   `test_a_broken_pipe_writing_a_file_is_not_reported_as_stdout`.
+
+**Scope decisions (orchestrator), applied in `8dd74d7`:**
+- **Reverted: postreg refusing a `--fulfills` prereg that fails `selfsig`.** That is a D2
+  policy choice, beyond #45. Postreg still refuses a file it can't read (malformed, or of an
+  unknown or beta format), since no ref or inherited target can be computed from one. A
+  `selfsig`-failing prereg is fulfilled as before:
+  `test_postreg_fulfils_a_prereg_that_fails_selfsig_as_before` (a changed `sig`, a keyid that
+  does not derive, two signatures: exit 0, `fulfills` its ref, the target inherited).
+  `test_postreg_refuses_to_fulfil_a_prereg_it_cannot_read` keeps the three format cases.
+  **OPEN FOR THE HUMAN GATE**: whether postreg should refuse to fulfil a prereg that fails
+  `selfsig`. `--prev` isn't checked for `format` or `selfsig` either.
+- **Kept: `{}` and `""` refused in `--target-file`, `--declaration-file` and `--notes-file`.**
+  **OPEN FOR THE HUMAN GATE.**
+- **Kept: a key file that repeats a key is refused** (a side effect of `42a15bb`). It is added
+  to the release-note entry below.
+- **Kept:** `--domain` refusing whitespace and control characters, and signing refusing a
+  body deeper than 64.
+- The judgement calls above that say otherwise (postreg refusing a `selfsig`-failing prereg,
+  the regular-file check) are kept as written at the time. This list is what holds now.
+
+**Release-note entry, amended** (it replaces the first entry in the checkpoint 9 summary):
+
+```
+Identifier: the CLI's argument checks (no constant): empty values, inline JSON shapes, --repro-recipe, --domain, JSON rules on every JSON input
+Impact: BREAKS_USERS
+Affected: scripts that pass an empty value (it was read as absent: inherited, dropped or defaulted; now exit 64); a --repro-recipe that is not an object (exit 1 -> 64); any JSON value, --…-file, key file or .well-known document with a repeated key or nested more than 64 deep (63 for a value the body holds: --target-file, --declaration-file, --notes-file, --repro-recipe), now refused; a postreg --fulfills file that fails format (it was signed against; now exit 1)
+Action: pass a value or leave the option out; fix the file
+```
+
+**Evidence (round 1):**
+- `scripts/check.sh`, in full, exit status checked: clean, **1311 passed** at `8dd74d7` (1271
+  before the round). `tests/test_cli.py` and `tests/test_identity.py` on Python 3.14 (a
+  separate scratch environment, so the project's `.venv` stays 3.12): 498 passed.
+- **Fuzzer, rerun** (974 runs): **19 problems, all FIFO hangs** with no writer: every
+  `--…-file` again (finding 3), `--key`, `--out` and a `verify` path. No traceback, no exit 1
+  that is not one line, no exit 64 without usage, no empty value accepted.
+- **Reviewer's probe classes** (scratch, `cp9/fuzz2.py`, 105 probes, **0 problems**):
+  - a newline in the path for every file option (missing, a directory, bad content): one
+    `error:` line each;
+  - `>&-` and `>/dev/full` for prereg, postreg, verify pass and fail, keygen, `identity emit`,
+    a usage error and `--help`: `>&-` keeps each status (0, 2, 64), and `/dev/full` gives 1 and
+    one line, or 64 for the usage error;
+  - NUL, lone-surrogate and non-UTF-8-byte names in `--plan`/`--evidence` (inline 64, file 1)
+    and `--subject` (1);
+  - every `--…-file` as `<(printf …)` and as `/dev/stdin` with a writer: exit 0;
+  - `PYTHONIOENCODING=ascii` for each command: its usual status, no traceback.
+
+**Observations added in review round 1 (out of scope):**
+- **FOR THE HUMAN GATE: `due` is parsed differently by Python version** (`datetime.fromisoformat`,
+  on the base too). `2023-11-14T24:00:00Z` parses on 3.14 (as 2023-11-15T00:00:00Z) and is
+  refused on 3.12 and 3.13; `2023-11-14T22:13:21.Z` parses on 3.12 only. A signed prereg with
+  such a `due` therefore reads as `elapsed-no-postreg` (or on time / late) on one version and
+  `invalid-due` on another, and `timely` and `complete` can flip. Now that `verifier.parse_due`
+  is the one parse, its grammar can be pinned there (a fixed ISO-8601 subset, rather than
+  whatever `fromisoformat` takes); checked on 3.12.3, 3.13.15 and 3.14.7.
+- `scripts/check.sh` runs on one interpreter only (the project's `.venv`); the 3.14 failure in
+  CI round 1 was found by CI, not locally.
+- A lone-surrogate object **key** in a value the CLI signs (`--notes-file {"\ud800": 1}`) is not
+  refused like a lone-surrogate string: `--notes-file` holding `{"\ud800": 1}` exits 0 and signs
+  `"notes":{"\ufffd\ufffd\ufffd":1}` (checked on the CLI), so the signed body differs from the
+  input without a word.
+- `--status` without `--item-id`, and `--provenance reproducible` without `--repro-recipe`, are
+  signed without complaint.
+- **The FIFO hangs** (as in the observations above, plus every `--…-file` again): a FIFO with no
+  writer blocks `open`, as it does for any Unix tool.
+
+**Review round 2** (PR #58; the reviewer re-checked round 1's fixes and found them correct, and
+the PR mergeable. Two nits, both restoring what the base did, are in `d939b28`, test first.
+With only the tests changed, **8 failed**; the usage-error case already passed):
+1. nit: **`identity` refused a `.well-known` document with a UTF-8 BOM, or in UTF-16**, which
+   the base accepted (`json.load` of bytes detects the encoding). Round 1's decode was UTF-8
+   only. → The bytes are decoded with `json.detect_encoding` (UTF-8 with a BOM dropped,
+   UTF-16, UTF-32) before `manifest.parse_json`. Bytes that decode in none of these stay one
+   line: `… is not an asexec identity document: not JSON text in UTF-8, UTF-16 or UTF-32 (…)`.
+   Test: `test_identity_match_reads_a_document_in_any_json_encoding[utf-8-bom|utf-16|utf-16-le|utf-32]`
+   (each matches the key, exit 0). The `not-utf8` case of
+   `test_identity_match_reads_the_document_under_the_json_rules` now pins the new wording.
+2. nit: **`asexec --version | true` and `asexec verify --help | true` exited 1** with "stdout
+   was closed before the command finished" (base: 120), while `prereg … | true` exited 0. →
+   `main`'s `except SystemExit` branch flushes through `cli._flush_finished_output`, the
+   helper `_run` uses after a finished command: a broken pipe drops stdout, and the
+   `SystemExit` code stands. Any other write failure is still one `error:` line, exit 1. Test:
+   `test_what_argparse_prints_keeps_its_status_when_stdout_closes[version|help|verify-help|usage-error]`
+   (0, 0, 0, 64 into a pipe whose reader has gone, and no "stdout was closed").
+3. notes only, **a consistency point:** inline `--plan` (and `--evidence`) splits its name
+   refusals two ways. A NUL or a character with no UTF-8 form is refused by the shape check,
+   on the argument alone: exit 64. A `..` component or an absolute name is refused when the
+   file is hashed (`hashing.entry_name`, checkpoint 7's rule, which `--subject` shares): exit
+   1. README states each case as it behaves. Both refusals need only the argument, so a later
+   change could move the `..` and absolute checks into the shape (64) for inline values.
+
+`scripts/check.sh`, in full, exit status checked: clean, **1319 passed** at `d939b28`.
+`uv run --python 3.14 pytest tests/test_cli.py tests/test_identity.py` (in a scratch
+environment): 506 passed.

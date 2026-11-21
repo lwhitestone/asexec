@@ -6,7 +6,7 @@ import json
 import pytest
 
 from asexec import identity, keys
-from asexec.errors import NetworkError
+from asexec.errors import AsexecError, NetworkError
 
 
 def test_build_wellknown_shape():
@@ -54,16 +54,21 @@ def test_fetch_wellknown_builds_https_url_and_parses(monkeypatch):
     assert seen == [("https://lab.example/.well-known/asexec.json", 3)]
 
 
-@pytest.mark.parametrize("body", [None, b"not json"])
-def test_fetch_wellknown_errors_map_to_network_error(monkeypatch, body):
+def test_fetch_wellknown_errors_map_to_network_error(monkeypatch):
     def fake(url, timeout):
-        if body is None:
-            raise OSError("tls handshake failed")
-        return _Resp(body)
+        raise OSError("tls handshake failed")
 
     monkeypatch.setattr(identity.urllib.request, "urlopen", fake)
     with pytest.raises(NetworkError, match="lab.example"):
         identity.fetch_wellknown("lab.example")
+
+
+def test_fetch_wellknown_refuses_a_document_that_is_not_json(monkeypatch):
+    """What was fetched is not JSON: the fetch worked, the document is not one."""
+    monkeypatch.setattr(identity.urllib.request, "urlopen", lambda url, timeout: _Resp(b"no"))
+    with pytest.raises(AsexecError, match="is not an asexec identity document") as e:
+        identity.fetch_wellknown("lab.example")
+    assert not isinstance(e.value, NetworkError)
 
 
 def test_match_binding_by_pubkey(monkeypatch):

@@ -12,11 +12,11 @@ import argparse
 import json
 import os
 import re
+import stat
 import sys
 import uuid
 from collections import Counter
 from collections.abc import Callable
-from datetime import datetime
 
 from pydantic import ValidationError
 
@@ -44,62 +44,95 @@ EXIT_USAGE = 64  # usage error (sysexits EX_USAGE): the arguments themselves are
 # --------------------------------------------------------------------------- #
 # input helpers
 # --------------------------------------------------------------------------- #
-def _load_json(path: str) -> str | dict:
-    """Load JSON from the given path."""
+# How deep a JSON value may nest: a manifest file's limit, or one less for a value that sits one
+# level down in the body (target, declaration, notes, repro_recipe), so the body is at most 64.
+_FILE_DEPTH = manifest.MAX_NESTING_DEPTH
+_IN_BODY_DEPTH = manifest.MAX_NESTING_DEPTH - 1
+
+
+def _rule_broken(e: ManifestError, max_depth: int) -> str:
+    """A JSON rule's message (``manifest.parse_json``), saying why a value inside the body is
+    held one level shallower."""
+    if max_depth < _FILE_DEPTH and str(e).startswith("nested more than"):
+        return f"{e} (its value sits one level down in a body, which is at most {_FILE_DEPTH})"
+    return str(e)
+
+
+def _read_json(path: str, max_depth: int = _FILE_DEPTH):
+    """The JSON value a ``--…-file`` holds, held to a manifest file's JSON rules: UTF-8 JSON
+    text (RFC 8259), no duplicate key, at most ``max_depth`` deep (``manifest.parse_json``).
+    Raises ``ManifestError`` (exit 1, one line) otherwise: what a file holds is not an
+    argument. Paths are shown quoted, so a newline in one can't split the error line."""
+    with open(path, "rb") as f:
+        data = f.read()
     try:
-        with open(path) as f:
-            return json.load(f)
-    except json.JSONDecodeError as e:
-        raise SystemExit(f"error: {path} must contain valid JSON: {e}") from e
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise ManifestError(
+            f"{path!r} must contain valid JSON: it is not UTF-8 text ({e})"
+        ) from None
+    try:
+        return manifest.parse_json(text, max_depth)
+    except ManifestError as e:  # a duplicate key, or nested too deep
+        raise ManifestError(f"{path!r}: {_rule_broken(e, max_depth)}") from None
+    except ValueError as e:  # not JSON, or an integer of more digits than Python reads
+        raise ManifestError(f"{path!r} must contain valid JSON: {e}") from None
+
+
+def _free_form_file(flag: str) -> Callable[[str], str | dict]:
+    """A loader for ``--target-file``, ``--declaration-file`` or ``--notes-file``: what the
+    field is, a JSON object or a string, and not an empty one."""
+
+    def load(path: str) -> str | dict:
+        value = _read_json(path, _IN_BODY_DEPTH)
+        if not (isinstance(value, str | dict) and value):
+            raise ManifestError(
+                f"{flag} {path!r} must hold a non-empty JSON object or string: {_short(value)}"
+            )
+        return value
+
+    return load
 
 
 def _get_arg_or_file[T](
-    args,
-    arg_name: str,
-    file_arg_name: str,
-    load_file: Callable[[str], T],
-    parse_value: Callable[[str], T] | None = None,
+    args, arg_name: str, file_arg_name: str, load_file: Callable[[str], T]
 ) -> str | T | None:
     """Load a value from ``--<arg>`` or ``--<file-arg>`` (argparse allows at most one).
 
-    ``parse_value``, if given, parses the inline ``--<arg>`` value into ``T`` (for example
-    ``_strict_json`` and a shape check), as ``load_file`` reads the file. A ``ValueError``
-    from it is a usage error: only the argument is wrong, so it exits ``EXIT_USAGE`` and
-    nothing runs. What a file holds is not an argument: ``load_file`` fails with exit 1."""
+    The inline ``--<arg>`` value is already parsed and checked by its argparse ``type``
+    (``_add_arg_or_file``), so a bad one was a usage error before anything ran. What a file
+    holds is not an argument: ``load_file`` fails with exit 1."""
     value = getattr(args, arg_name, None)
     file_path = getattr(args, file_arg_name, None)
-    if value:
-        if parse_value is None:
-            return value
+    if value is not None:
+        return value
+    if file_path is not None:
+        flag = "--" + file_arg_name.replace("_", "-")
         try:
-            return parse_value(value)
-        except ValueError as e:
-            flag = "--" + arg_name.replace("_", "-")
-            sys.stderr.write(f"asexec {args.cmd}: error: argument {flag}: {e}\n")
-            raise SystemExit(EXIT_USAGE) from None
-    if file_path:
-        try:
-            return load_file(file_path)
+            mode = os.stat(file_path).st_mode
         except FileNotFoundError:
-            raise SystemExit(
-                f"error: --{file_arg_name.replace('_', '-')} not found: {file_path}"
-            ) from None
+            raise SystemExit(f"error: {flag} not found: {file_path!r}") from None
+        if stat.S_ISDIR(mode):  # anything else is read: a file, a pipe, /dev/stdin
+            raise SystemExit(f"error: {flag} is a directory: {file_path!r}")
+        return load_file(file_path)
     return None
 
 
 def _get_target(args) -> str | dict | None:
     """Retrieve the target value (from arg xor file), if any."""
-    return _get_arg_or_file(args, "target", "target_file", _load_json)
+    return _get_arg_or_file(args, "target", "target_file", _free_form_file("--target-file"))
 
 
 def _get_declaration(args) -> str | dict | None:
     """Retrieve the declaration value (from arg xor file), if any."""
-    return _get_arg_or_file(args, "declaration", "declaration_file", _load_json)
+    return _get_arg_or_file(
+        args, "declaration", "declaration_file", _free_form_file("--declaration-file")
+    )
 
 
 def _get_notes(args) -> str | dict | None:
     """Retrieve the notes value (from arg xor file), if any."""
-    return _get_arg_or_file(args, "notes", "notes_file", _load_json)
+    return _get_arg_or_file(args, "notes", "notes_file", _free_form_file("--notes-file"))
 
 
 # What a --plan / --evidence entry may say. asexec hashes the file at ``name`` and fills in
@@ -109,20 +142,15 @@ _PLAN_FIELDS = ("name", "media_type", "label")
 _EVIDENCE_FIELDS = ("name", "media_type", "uri")
 
 
-def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:
-    out: dict = {}
-    for key, value in pairs:
-        if key in out:  # parsers disagree on which value wins, so neither is taken
-            raise ValueError(f"duplicate JSON key {key!r}")
-        out[key] = value
-    return out
-
-
-def _strict_json(text: str):
-    """An inline JSON value: valid JSON with no duplicate key (``ValueError`` otherwise)."""
+def _strict_json(text: str, max_depth: int = _FILE_DEPTH):
+    """A JSON value held to a manifest file's JSON rules (``manifest.parse_json``: no
+    duplicate key, since parsers disagree on which value wins, and at most ``max_depth``
+    deep); ``ValueError`` otherwise."""
     try:
-        return json.loads(text, object_pairs_hook=_reject_duplicate_keys)
-    except json.JSONDecodeError as e:
+        return manifest.parse_json(text, max_depth)
+    except ManifestError as e:  # a duplicate key, or nested too deep
+        raise ValueError(_rule_broken(e, max_depth)) from None
+    except ValueError as e:  # not JSON, or an integer of more digits than Python reads
         raise ValueError(f"not valid JSON: {e}") from None
 
 
@@ -130,6 +158,9 @@ def _spec_shape(spec, flag: str, allowed: tuple[str, ...]) -> dict:
     """A file described as ``{"name": <path>, ...}``; ``ValueError`` if it is not one."""
     if not isinstance(spec, dict) or not isinstance(spec.get("name"), str):
         raise ValueError(f"{flag} needs a 'name' (a file path) in each entry: {spec!r}")
+    why = hashing.name_problem(spec["name"])
+    if why:  # no path, or no body, can hold it
+        raise ValueError(f"{flag}: {spec['name']!r} names no file: it has {why}")
     if "hash_alg" in spec or "digest" in spec:
         raise ValueError(
             f"{flag}: asexec hashes the file and fills in hash_alg and digest "
@@ -190,22 +221,27 @@ def _shaped_arg_or_file(args, name: str, shape: Callable):
     fails it is a usage error (64); a file's content that fails it exits 1."""
 
     def load_file(path: str):
-        with open(path) as f:
-            text = f.read()
-        try:  # the same JSON rules as an inline value: no duplicate key
-            value = json.loads(text, object_pairs_hook=_reject_duplicate_keys)
-        except json.JSONDecodeError as e:
-            raise ManifestError(f"{path} must contain valid JSON: {e}") from None
-        except ValueError as e:  # a duplicate key
-            raise ManifestError(f"{path}: {e}") from None
+        value = _read_json(path)  # the same JSON rules as an inline value
         try:
             return shape(value)
         except ValueError as e:
             raise ManifestError(str(e)) from None
 
-    return _get_arg_or_file(
-        args, name, f"{name}_file", load_file, lambda text: shape(_strict_json(text))
-    )
+    return _get_arg_or_file(args, name, f"{name}_file", load_file)
+
+
+def _repro_recipe_shape(value) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError(
+            f'--repro-recipe must be a JSON object, like {{"seed": 0}}: {_short(value)}'
+        )
+    return value
+
+
+def _short(value) -> str:
+    """``value`` for an error message: its repr, cut to a line's length."""
+    text = repr(value)
+    return text if len(text) <= 80 else text[:77] + "..."
 
 
 def _described_entries(specs: list, alg: str) -> list[dict]:
@@ -319,7 +355,23 @@ def _load_manifest_body(path: str, flag: str) -> tuple[bytes, dict]:
     try:
         return manifest.read_body(manifest.load(path))
     except Exception as e:
-        raise SystemExit(f"error: {flag} {path} is not a readable manifest: {e}") from e
+        raise SystemExit(f"error: {flag} {path!r} is not a readable manifest: {e}") from e
+
+
+def _read_prereg(path: str) -> tuple[str, dict]:
+    """The ref and body of the ``--fulfills`` file, read as verify reads it. It must pass
+    ``format``: a file of a format this release does not read, or a malformed one, has no ref
+    or body it can take. Its signature is not checked here: verify judges it."""
+    try:
+        mani = manifest.load(path)
+    except (ManifestError, ValueError) as e:  # not UTF-8, not JSON, not an object, ...
+        raise SystemExit(f"error: --fulfills {path!r} is not a readable manifest: {e}") from None
+    fmt = verifier.verify_format(mani)
+    if not fmt["ok"]:
+        raise SystemExit(
+            f"error: --fulfills {path!r} is not a readable manifest: {fmt['errors'][0]}"
+        )
+    return fmt["ref"], fmt["body"]
 
 
 def _resolve_ref(value: str, flag: str) -> str:
@@ -383,7 +435,7 @@ def cmd_keygen(args) -> int:
         kid = keys.save(priv, out, force=args.force)
     except FileExistsError as e:
         raise SystemExit(
-            f"error: {e.filename} already exists; refusing to overwrite a key "
+            f"error: {e.filename!r} already exists; refusing to overwrite a key "
             "(pass --force to replace it - the old key is lost)"
         ) from None
     print(f"{OK} generated ed25519 key")
@@ -395,9 +447,7 @@ def cmd_keygen(args) -> int:
 
 def cmd_prereg(args) -> int:
     """Write a signed pre-registration, signalling the intended execution."""
-    target = _get_target(args)
-    if target is None:  # argparse requires one; only a file holding null gets here
-        raise SystemExit(f"error: --target-file {args.target_file!r} holds no target")
+    target = _get_target(args)  # argparse requires one
     priv, pub = keys.load_signing_key(args.key)
     subject = _build_subject(args.subject, args.hash_alg)
     plan, items = _get_plan(args), _get_items(args)
@@ -428,11 +478,12 @@ def cmd_postreg(args) -> int:
     a pre-registration as promised."""
     priv, pub = keys.load_signing_key(args.key)
 
-    fulfills = _resolve_ref(args.fulfills, "--fulfills")
-    prev_hash = _resolve_ref(args.prev, "--prev") if args.prev else None
     prereg_body = None  # the decoded body of the prereg file, to inherit from
     if os.path.isfile(args.fulfills):
-        prereg_body = _load_manifest_body(args.fulfills, "--fulfills")[1]
+        fulfills, prereg_body = _read_prereg(args.fulfills)
+    else:
+        fulfills = _resolve_ref(args.fulfills, "--fulfills")
+    prev_hash = _resolve_ref(args.prev, "--prev") if args.prev else None
 
     # target / due / declaration inherit from the fulfilled prereg unless overridden on this
     # postreg. Each subject entry names its own hash_alg: --hash-alg, or the default.
@@ -440,7 +491,12 @@ def cmd_postreg(args) -> int:
     if target is None:
         if prereg_body is None:
             raise SystemExit("error: no --target and --fulfills is not a readable prereg")
-        target = prereg_body["target"]
+        target = prereg_body.get("target")
+        if not (isinstance(target, str | dict) and target):
+            raise SystemExit(
+                f"error: --fulfills {args.fulfills!r} has no target to inherit (a non-empty "
+                "string or JSON object); give --target or --target-file"
+            )
 
     due = args.due or (prereg_body or {}).get("due")
     declaration = _get_declaration(args) or (prereg_body or {}).get("declaration")
@@ -478,9 +534,24 @@ def cmd_verify(args) -> int:
     """Run a series of verification tests on the prereg-postreg cycle to prove that
     this execution met the desired standards. Produces a code summarizing the tests
     performed and the results of each. ``args.tests`` is already validated (see
-    ``_tests_arg``)."""
-    report = verifier.verify_paths(args.paths, args.tests, artifacts_dir=args.artifacts)
+    ``_tests_arg``).
 
+    The verdict is decided before anything is printed, so a reader that closes stdout early
+    (``asexec verify … | head -1``) does not change the exit status."""
+    report = verifier.verify_paths(args.paths, args.tests, artifacts_dir=args.artifacts)
+    status = EXIT_OK if report["ok"] else EXIT_FAIL
+    try:
+        _show_report(report)
+        _flush_stdout()
+    except _StdoutError as e:
+        if not isinstance(e.error, BrokenPipeError):
+            raise  # e.g. a full device: the report was not written, an error (main)
+        _drop_stdout()  # the reader has gone: the rest of the report has no one to read it
+    return status
+
+
+def _show_report(report: dict) -> None:
+    """The verify report, for people to read; then the code and the time it was checked."""
     _show("=== manifests ===")
     for m in report["manifests"]:
         ss = m["selfsig"]
@@ -577,7 +648,6 @@ def cmd_verify(args) -> int:
 
     _show(f"\n{report['code']}")
     _show(f"Checked at {report['checked_at']}")
-    return EXIT_OK if report["ok"] else EXIT_FAIL
 
 
 UNTRUSTED_HEADING = "=== untrusted (unsigned, and read by no test: nothing here was checked) ==="
@@ -732,7 +802,7 @@ def _add_anchor_flags(p):
     )
     floor.add_argument(
         "--floor-round",
-        type=_nonempty_arg,
+        type=_json_arg(_round_shape),
         help="attach as the floor a drand round fetched earlier, for example when a run "
         'started, as drand\'s HTTP API returns it: JSON {"round": ..., "randomness": ..., '
         '"signature": ...} of the chain --floor fetches from. Verified at signing (offline); '
@@ -775,16 +845,17 @@ def _tests_arg(spec: str) -> list[str]:
 
 
 def _due_arg(value: str) -> str:
-    """``--due``: an ISO-8601 deadline, returned verbatim.
+    """``--due``: an ISO-8601 deadline, returned verbatim, as verify parses it
+    (``verifier.parse_due``, the one parse of ``due``).
 
-    An explicit UTC offset (or ``Z``) is required: a timezone-less deadline
-    would mean different instants to verifiers in different timezones.
+    An explicit UTC offset (or ``Z``) is required: verify reads a timezone-less deadline as
+    UTC, but flags it, since its writer may have meant local time.
     """
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        _instant, naive = verifier.parse_due(value)
     except ValueError:
         raise argparse.ArgumentTypeError(f"not a valid ISO-8601 timestamp: {value!r}") from None
-    if parsed.tzinfo is None:
+    if naive:
         raise argparse.ArgumentTypeError(
             "needs an explicit UTC offset or 'Z' "
             f"(e.g. 2026-08-30T00:00:00Z or 2026-08-30T00:00:00+02:00): {value!r}"
@@ -793,23 +864,45 @@ def _due_arg(value: str) -> str:
 
 
 def _nonempty_arg(value: str) -> str:
+    """Any option's value: an empty one is no value, and is never read as absent."""
     if not value:
         raise argparse.ArgumentTypeError("must not be empty")
     return value
 
 
-def _json_arg(value: str):
-    try:
-        return json.loads(value)
-    except json.JSONDecodeError as e:
-        raise argparse.ArgumentTypeError(f"not valid JSON: {e}") from None
+def _domain_arg(value: str) -> str:
+    """``--domain``: a name with no whitespace or control character (it goes into a URL)."""
+    _nonempty_arg(value)
+    if any(c.isspace() or not c.isprintable() for c in value):
+        raise argparse.ArgumentTypeError(
+            f"a domain name has no whitespace or control character: {value!r}"
+        )
+    return value
 
 
-def _add_arg_or_file(p, name: str, required: bool = False, help=None, file_help=None, **kw):
-    """``--<name>`` and ``--<name>-file``: at most one (exactly one if ``required``)."""
+def _json_arg(shape: Callable, max_depth: int = _FILE_DEPTH):
+    """An argparse ``type`` for an inline JSON value: not empty, JSON under a manifest file's
+    rules (``_strict_json``, at most ``max_depth`` deep), and held to ``shape``. A value that
+    fails is a usage error."""
+
+    def parse(value: str):
+        _nonempty_arg(value)
+        try:
+            return shape(_strict_json(value, max_depth))
+        except ValueError as e:
+            raise argparse.ArgumentTypeError(str(e)) from None
+
+    return parse
+
+
+def _add_arg_or_file(
+    p, name: str, required: bool = False, help=None, file_help=None, type=_nonempty_arg
+):
+    """``--<name>`` and ``--<name>-file``: at most one (exactly one if ``required``). Neither
+    may be empty; ``type`` checks the inline value."""
     group = p.add_mutually_exclusive_group(required=required)
-    group.add_argument(f"--{name}", help=help, **kw)
-    group.add_argument(f"--{name}-file", help=file_help)
+    group.add_argument(f"--{name}", help=help, type=type)
+    group.add_argument(f"--{name}-file", help=file_help, type=_nonempty_arg)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -828,7 +921,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     # asexec keygen
     kg = sub.add_parser("keygen", help="generate an ed25519 keypair (no CA)")
-    kg.add_argument("--out", default=None, help="secret key file (default: asexec-<uuid>.key)")
+    kg.add_argument(
+        "--out",
+        type=_nonempty_arg,
+        default=None,
+        help="secret key file (default: asexec-<uuid>.key)",
+    )
     kg.add_argument(
         "--force", action="store_true", help="overwrite an existing key file (the old key is lost)"
     )
@@ -836,12 +934,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     # asexec prereg
     pr = sub.add_parser("prereg", help="sign a pre-registration before a run")
-    pr.add_argument("--key", required=True, help="key that signs the prereg")
+    pr.add_argument("--key", required=True, type=_nonempty_arg, help="key that signs the prereg")
     _add_arg_or_file(
         pr,
         "target",
         required=True,
-        type=_nonempty_arg,
         help="plain-text target details (what you commit to run)",
         file_help="structured JSON target details",
     )
@@ -860,6 +957,7 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument(
         "--subject",
         nargs="+",
+        type=_nonempty_arg,
         help="file(s) to hash, each named by its path relative to the current directory "
         "(no directories; verify finds them under --artifacts; optional at prereg time)",
     )
@@ -881,6 +979,7 @@ def build_parser() -> argparse.ArgumentParser:
         help='the plan the claim is tested against, as JSON: {"name": <file path>, '
         '"media_type": ..., "label": ...}; asexec hashes the file (--hash-alg)',
         file_help="the --plan JSON, from a file",
+        type=_json_arg(_plan_shape),
     )
     _add_arg_or_file(
         pr,
@@ -888,17 +987,19 @@ def build_parser() -> argparse.ArgumentParser:
         help='what the claim commits to deliver, as a JSON array: [{"id": "S1", "kind": '
         '"run"}, ...]; ids must be unique, and each is accounted for by a postreg\'s --item-id',
         file_help="the --items JSON array, from a file",
+        type=_json_arg(_items_shape),
     )
     _add_anchor_flags(pr)
-    pr.add_argument("--out", default="preregistration.json")
+    pr.add_argument("--out", type=_nonempty_arg, default="preregistration.json")
     pr.set_defaults(func=cmd_prereg)
 
     # asexec postreg
     po = sub.add_parser("postreg", help="sign a post-registration after a run")
-    po.add_argument("--key", required=True)
+    po.add_argument("--key", required=True, type=_nonempty_arg)
     po.add_argument(
         "--fulfills",
         required=True,
+        type=_nonempty_arg,
         help="pre-registration file, or a literal sha-256:<64 hex> ref, this fulfils",
     )
     _add_arg_or_file(po, "target", help="override target (default: inherit from prereg)")
@@ -912,6 +1013,7 @@ def build_parser() -> argparse.ArgumentParser:
     po.add_argument(
         "--subject",
         nargs="+",
+        type=_nonempty_arg,
         help="file(s) to hash (outputs, transcript, harness files), each named by its path "
         "relative to the current directory (no directories)",
     )
@@ -923,16 +1025,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     po.add_argument(
         "--prev",
+        type=_nonempty_arg,
         help="prior postreg file (or sha-256:<64 hex> ref) in this commitment's chain",
     )
     po.add_argument("--provenance", choices=["asserted", "reproducible"], default="asserted")
     po.add_argument(
         "--repro-recipe",
-        type=_json_arg,
+        type=_json_arg(_repro_recipe_shape, _IN_BODY_DEPTH),
         help="JSON: {seed, decode, runtime} if provenance=reproducible",
     )
     _add_arg_or_file(po, "notes")
-    po.add_argument("--item-id", help="the id of the prereg's item this postreg accounts for")
+    po.add_argument(
+        "--item-id",
+        type=_nonempty_arg,
+        help="the id of the prereg's item this postreg accounts for",
+    )
     po.add_argument(
         "--status",
         choices=STATUSES,
@@ -944,14 +1051,17 @@ def build_parser() -> argparse.ArgumentParser:
         help='files that back this postreg, as a JSON array: [{"name": <file path>, '
         '"media_type": ..., "uri": ...}, ...]; asexec hashes each file (--hash-alg)',
         file_help="the --evidence JSON array, from a file",
+        type=_json_arg(_evidence_shape),
     )
     _add_anchor_flags(po)
-    po.add_argument("--out", default="postregistration.json")
+    po.add_argument("--out", type=_nonempty_arg, default="postregistration.json")
     po.set_defaults(func=cmd_postreg)
 
     # asexec verify
     vy = sub.add_parser("verify", help="verify manifests offline; produce a canonical verify code")
-    vy.add_argument("paths", nargs="+", help="manifest file(s) or a directory of them")
+    vy.add_argument(
+        "paths", nargs="+", type=_nonempty_arg, help="manifest file(s) or a directory of them"
+    )
     vy.add_argument(
         "--tests",
         required=True,
@@ -960,36 +1070,137 @@ def build_parser() -> argparse.ArgumentParser:
         f"{' and '.join(repr(t) for t in sorted(verifier.REQUIRED_TESTS))}). "
         f"available: {', '.join(verifier.TEST_CATALOG)}",
     )
-    vy.add_argument("--artifacts", help="directory of original artifacts, to check content hashes")
+    vy.add_argument(
+        "--artifacts",
+        type=_nonempty_arg,
+        help="directory of original artifacts, to check content hashes",
+    )
     vy.set_defaults(func=cmd_verify)
 
     # asexec identity
     idp = sub.add_parser("identity", help="key<->domain binding via .well-known (no CA)")
     isub = idp.add_subparsers(dest="identity_cmd", required=True)
     ie = isub.add_parser("emit", help="write a .well-known/asexec.json for your key")
-    ie.add_argument("--key", required=True)
-    ie.add_argument("--domain")
-    ie.add_argument("--out", default="asexec.json")
+    ie.add_argument("--key", required=True, type=_nonempty_arg)
+    ie.add_argument("--domain", type=_domain_arg)
+    ie.add_argument("--out", type=_nonempty_arg, default="asexec.json")
     ie.set_defaults(func=cmd_identity)
     iv = isub.add_parser(
         "match", help="check a key matches that which is asserted by a domain (network)"
     )
-    iv.add_argument("--domain", required=True)
+    iv.add_argument("--domain", required=True, type=_domain_arg)
     which = iv.add_mutually_exclusive_group(required=True)  # exactly one key to look for
-    which.add_argument("--keyid")
-    which.add_argument("--pubkey")
-    which.add_argument("--key", help="a key file, to derive the keyid")
+    which.add_argument("--keyid", type=_nonempty_arg)
+    which.add_argument("--pubkey", type=_nonempty_arg)
+    which.add_argument("--key", type=_nonempty_arg, help="a key file, to derive the keyid")
     iv.set_defaults(func=cmd_identity)
 
     return p
 
 
+# --------------------------------------------------------------------------- #
+# stdout: what writing the output can do
+# --------------------------------------------------------------------------- #
+class _StdoutError(Exception):
+    """Writing stdout failed: its reader closed it (``BrokenPipeError``), or the device is
+    full. Not an ``OSError``, so it is never taken for an input file's error."""
+
+    def __init__(self, error: OSError):
+        super().__init__(str(error))
+        self.error = error
+
+
+class _GuardedStdout:
+    """stdout, whose write and flush failures raise ``_StdoutError``."""
+
+    def __init__(self, stream):
+        self._stream = stream
+
+    def write(self, text: str) -> int:
+        try:
+            return self._stream.write(text)
+        except OSError as e:
+            raise _StdoutError(e) from None
+
+    def flush(self) -> None:
+        try:
+            self._stream.flush()
+        except OSError as e:
+            raise _StdoutError(e) from None
+
+    def __getattr__(self, name: str):
+        return getattr(self._stream, name)
+
+
+def _flush_stdout() -> None:
+    if sys.stdout is not None:  # None: started with stdout closed (``>&-``)
+        sys.stdout.flush()
+
+
+def _drop_stdout() -> None:
+    """Point stdout at the null device once it can't be written, so no later write, nor
+    Python's flush at exit, fails again (which would print to stderr and exit 120)."""
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+        os.close(devnull)
+    except (OSError, ValueError, AttributeError):  # no file descriptor behind stdout
+        pass
+
+
+def _escape_unencodable(stream) -> None:
+    """Show a character the stream's encoding lacks as its escape (``\u2713``), not a
+    ``UnicodeEncodeError`` (``PYTHONIOENCODING=ascii``, say)."""
+    try:
+        stream.reconfigure(errors="backslashreplace")
+    except (AttributeError, ValueError, OSError):  # None, or not a reconfigurable stream
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    stdout = sys.stdout
+    _escape_unencodable(sys.stdout)
+    _escape_unencodable(sys.stderr)
+    if stdout is not None:
+        sys.stdout = _GuardedStdout(stdout)
+    try:
+        try:
+            status = _run(argv)
+        except SystemExit:  # a usage error, --help, or an error message: flush what is printed
+            _flush_finished_output()
+            raise
+        _flush_stdout()  # what is still buffered, before the exit status is returned
+        return status
+    except _StdoutError as e:
+        _drop_stdout()
+        if isinstance(e.error, BrokenPipeError):  # closed while the command still printed
+            sys.stderr.write("error: stdout was closed before the command finished\n")
+        else:
+            sys.stderr.write(f"error: could not write the output: {e.error}\n")
+        return EXIT_ERROR
+    finally:
+        sys.stdout = stdout
+
+
+def _run(argv: list[str] | None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        return args.func(args)
+        status = args.func(args)
     except (AsexecError, OSError) as e:
         # an input the arguments name could not be used (missing or bad key file, failed
         # fetch, ...): a message, not a traceback. verify turns these into FAILs itself.
         sys.stderr.write(f"error: {e}\n")
         return EXIT_ERROR
+    _flush_finished_output()
+    return status
+
+
+def _flush_finished_output() -> None:
+    """Flush what a finished command (or argparse, exiting) printed. If the reader has gone,
+    the status stands: stdout is dropped. Any other failure raises ``_StdoutError``."""
+    try:
+        _flush_stdout()
+    except _StdoutError as e:
+        if not isinstance(e.error, BrokenPipeError):
+            raise
+        _drop_stdout()

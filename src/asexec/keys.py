@@ -83,13 +83,16 @@ def load_signing_key(path: str) -> tuple[bytes, bytes]:
 
     Raises ``OSError`` if the file cannot be read, else ``AsexecError`` if it is not
     a valid key file."""
+    from .manifest import parse_json  # here, not at the top: manifest imports this module
+
     with open(path) as f:
-        try:
-            data = json.load(f)
-        except ValueError as e:
-            raise AsexecError(f"key file {path} is not valid JSON: {e}") from e
+        try:  # a manifest file's JSON rules: no repeated key, and at most 64 deep, so no
+            # parser reaches its recursion limit (which differs between Python versions)
+            data = parse_json(f.read())
+        except (ValueError, AsexecError) as e:  # not UTF-8 or JSON, or a rule broken
+            raise AsexecError(f"key file {path!r} is not valid JSON: {e}") from None
     if not isinstance(data, dict):
-        raise AsexecError(f"key file {path} is not a JSON object")
+        raise AsexecError(f"key file {path!r} is not a JSON object")
     if data.get("alg") != _ALG:
         raise AsexecError(f"unsupported key alg {data.get('alg')!r}")
     try:
@@ -97,7 +100,7 @@ def load_signing_key(path: str) -> tuple[bytes, bytes]:
         pub = bytes(nacl.signing.SigningKey(priv).verify_key)
         stored = bytes.fromhex(data["public_key"]) if "public_key" in data else pub
     except (KeyError, TypeError, ValueError) as e:  # nacl's errors subclass these
-        raise AsexecError(f"{path} is not a valid key file: {e}") from e
+        raise AsexecError(f"{path!r} is not a valid key file: {e}") from e
     if stored != pub:
         raise AsexecError("key file public_key does not match private_key")
     return priv, pub

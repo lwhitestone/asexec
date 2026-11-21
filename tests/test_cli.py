@@ -7,12 +7,16 @@ trip. Verify's contract is tested on raw data in ``tests/verify/``.
 
 import base64
 import hashlib
+import io
 import json
 import os
 import re
 import runpy
 import stat
+import subprocess
 import sys
+import threading
+import time
 
 import pytest
 
@@ -516,6 +520,158 @@ def test_usage_errors_exit_EXIT_USAGE_not_the_FAIL_status(argv, capsys):
     assert capsys.readouterr().err.startswith("usage: ")
 
 
+_PREREG = ("prereg", "--key", "k.key", "--target", "t")
+_POSTREG = ("postreg", "--key", "k.key", "--fulfills", REF)
+_MATCH = ("identity", "match", "--domain", "d")
+# Every option whose empty value cannot be meant, with a command it is valid in. An empty
+# value must not be read as "absent" (inherited, dropped, or the default).
+EMPTY_VALUES = [
+    (("keygen",), "--out"),
+    *((_PREREG, flag) for flag in (
+        "--key", "--declaration", "--declaration-file", "--subject", "--notes",
+        "--notes-file", "--plan", "--plan-file", "--items", "--items-file", "--floor-round",
+        "--floor-round-file", "--out",
+    )),
+    (("prereg", "--key", "k.key"), "--target-file"),
+    *((_POSTREG, flag) for flag in (
+        "--target", "--target-file", "--declaration", "--declaration-file", "--subject",
+        "--prev", "--repro-recipe", "--notes", "--notes-file", "--item-id", "--evidence",
+        "--evidence-file", "--floor-round", "--floor-round-file", "--out",
+    )),
+    (("postreg", "--key", "k.key"), "--fulfills"),
+    (("postreg", "--fulfills", REF), "--key"),
+    (("verify", "pre.json"), "--artifacts"),
+    (("identity", "emit", "--key", "k.key"), "--domain"),
+    (("identity", "emit", "--key", "k.key"), "--out"),
+    (("identity", "emit"), "--key"),
+    (("identity", "match", "--keyid", "kid"), "--domain"),
+    (_MATCH, "--keyid"),
+    (_MATCH, "--pubkey"),
+    (_MATCH, "--key"),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    "base,flag", EMPTY_VALUES, ids=[f"{base[0]}-{base[-1]}-{flag}" for base, flag in EMPTY_VALUES]
+)
+def test_an_empty_value_is_a_usage_error(tmp_path, monkeypatch, base, flag, capsys):
+    """An empty value is no value: a usage error (64) with the usage line, and nothing runs.
+    Before, ``postreg --target ""`` inherited the prereg's target, ``--notes-file ""`` was
+    dropped, and ``identity match --keyid ""`` fetched."""
+    monkeypatch.chdir(tmp_path)
+    if base[0] == "verify":
+        base = (*base, "--tests", "format,selfsig")
+    with pytest.raises(SystemExit) as e:
+        run(*base, flag, "")
+    assert e.value.code == cli.EXIT_USAGE
+    err = capsys.readouterr().err
+    assert err.startswith("usage: ")
+    assert err.endswith(f": error: argument {flag}: must not be empty\n")
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("verify", "", "--tests", "format,selfsig"),
+        ("verify", "pre.json", "", "--tests", "format,selfsig"),
+        ("prereg", "--key", "k.key", "--target", "t", "--subject", "a.txt", ""),
+    ],
+    ids=["verify-path", "verify-second-path", "subject-second-file"],
+)
+def test_an_empty_path_in_a_list_is_a_usage_error(tmp_path, monkeypatch, argv, capsys):
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as e:
+        run(*argv)
+    assert e.value.code == cli.EXIT_USAGE
+    err = capsys.readouterr().err
+    assert err.startswith("usage: ") and err.endswith(": must not be empty\n")
+
+
+@pytest.mark.parametrize(
+    "value,message",
+    [
+        ("[1]", "--repro-recipe must be a JSON object"),
+        ('"seed"', "--repro-recipe must be a JSON object"),
+        ("5", "--repro-recipe must be a JSON object"),
+        ("null", "--repro-recipe must be a JSON object"),
+        ('{"seed": 1, "seed": 2}', "duplicate JSON key 'seed'"),
+        ('{"seed": ' + "1" * 5000 + "}", "not valid JSON: Exceeds the limit (4300 digits)"),
+        ("[" * 100 + "]" * 100, "nested more than 63 deep"),
+    ],
+    ids=["list", "string", "number", "null", "duplicate-key", "long-integer", "deep"],
+)
+def test_repro_recipe_not_an_object_is_a_usage_error(tmp_path, key, value, message, capsys):
+    out = tmp_path / "out.json"
+    with pytest.raises(SystemExit) as e:
+        run(*_POSTREG[:2], key, *_POSTREG[3:], "--repro-recipe", value, "--out", out)
+    assert e.value.code == cli.EXIT_USAGE
+    err = capsys.readouterr().err
+    assert err.startswith("usage: ") and f"error: argument --repro-recipe: {message}" in err
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("cmd", ["emit", "match"])
+@pytest.mark.parametrize("domain", ["lab example", "lab.example\n", "\tlab.example", "a\x1bb"])
+def test_identity_domain_with_whitespace_or_control_characters_is_a_usage_error(
+    tmp_path, monkeypatch, key, cmd, domain, capsys
+):
+    """A domain name has no whitespace or control character: such a --domain is a usage
+    error, not a fetch of another URL or an error message split over two lines."""
+    monkeypatch.chdir(tmp_path)
+    given = ("--key", key) if cmd == "emit" else ("--keyid", "kid")
+    with pytest.raises(SystemExit) as e:
+        run("identity", cmd, *given, "--domain", domain)
+    assert e.value.code == cli.EXIT_USAGE
+    err = capsys.readouterr().err
+    assert err.startswith("usage: ") and "argument --domain: " in err
+
+
+@pytest.mark.parametrize(
+    "flag,value",
+    [
+        ("--plan", '{"name": ' + "1" * 5000 + "}"),
+        ("--items", "[" + "1" * 5000 + "]"),
+        ("--evidence", "[" + "1" * 5000 + "]"),
+        ("--floor-round", '{"round": ' + "1" * 5000 + "}"),
+    ],
+)
+def test_an_inline_integer_past_the_digit_limit_is_not_valid_json(
+    tmp_path, key, flag, value, capsys
+):
+    """Python reads no integer of more than 4,300 digits: such a value is not valid JSON here,
+    and says so, as any other unreadable value does (checkpoint 8's note)."""
+    cmd = "postreg" if flag == "--evidence" else "prereg"
+    link = ["--target", "t"] if cmd == "prereg" else ["--target", "t", "--fulfills", REF]
+    with pytest.raises(SystemExit) as e:
+        run(cmd, "--key", key, *link, flag, value, "--out", tmp_path / "out.json")
+    assert e.value.code == cli.EXIT_USAGE
+    err = capsys.readouterr().err
+    assert err.startswith("usage: ")
+    assert f"error: argument {flag}: not valid JSON: Exceeds the limit (4300 digits)" in err
+
+
+@pytest.mark.parametrize(
+    "flag,value",
+    [
+        ("--plan", '{"name": ' + "[" * 70 + "]" * 70 + "}"),
+        ("--items", "[" * 70 + "]" * 70),
+        ("--evidence", "[" * 100_000 + "]" * 100_000),
+        ("--floor-round", "[" * 100_000 + "]" * 100_000),
+    ],
+)
+def test_an_inline_value_nested_too_deep_is_a_usage_error(tmp_path, key, flag, value, capsys):
+    """An inline JSON value is held to the manifest file's JSON rules: no duplicate key, and
+    nested at most 64 deep (so no parser reaches its recursion limit)."""
+    cmd = "postreg" if flag == "--evidence" else "prereg"
+    link = ["--target", "t"] if cmd == "prereg" else ["--target", "t", "--fulfills", REF]
+    with pytest.raises(SystemExit) as e:
+        run(cmd, "--key", key, *link, flag, value, "--out", tmp_path / "out.json")
+    assert e.value.code == cli.EXIT_USAGE
+    err = capsys.readouterr().err
+    assert err.startswith("usage: ")
+    assert f"error: argument {flag}: nested more than 64 deep" in err
+
+
 @pytest.mark.parametrize(
     "argv",
     [
@@ -561,6 +717,442 @@ def test_identity_match_failed_fetch_exits_EXIT_ERROR(monkeypatch, capsys):
     monkeypatch.setattr(identity, "fetch_wellknown", _boom)
     assert run("identity", "match", "--domain", "d", "--keyid", "kid") == cli.EXIT_ERROR
     assert capsys.readouterr().err == "error: offline\n"
+
+
+def _error_line(capsys, *argv) -> str:
+    """Run ``argv``, which must exit 1 with exactly one line on stderr, ``error: ...`` (from
+    ``main``, or a ``SystemExit`` message, which Python prints the same way), and return it."""
+    try:
+        code = run(*argv)
+        err = capsys.readouterr().err
+    except SystemExit as e:
+        assert isinstance(e.code, str), e.code  # a message: Python prints it, exit 1
+        code, err = cli.EXIT_ERROR, capsys.readouterr().err + e.code + "\n"
+    assert code == cli.EXIT_ERROR
+    assert "Traceback" not in err
+    (line,) = err.splitlines()
+    assert line.startswith("error: ")
+    return line
+
+
+_JSON_FILE_FLAGS = [
+    ("prereg", "--target-file"),
+    ("prereg", "--declaration-file"),
+    ("prereg", "--notes-file"),
+    ("prereg", "--plan-file"),
+    ("prereg", "--items-file"),
+    ("prereg", "--floor-round-file"),
+    ("postreg", "--target-file"),
+    ("postreg", "--declaration-file"),
+    ("postreg", "--notes-file"),
+    ("postreg", "--evidence-file"),
+]
+
+
+def _with_file(cmd, flag, key, path, out):
+    """``cmd`` signing with ``flag path``, every other argument valid."""
+    target = [] if flag == "--target-file" else ["--target", "t"]
+    link = [] if cmd == "prereg" else ["--fulfills", REF]
+    return (cmd, "--key", key, *target, *link, flag, path, "--out", out)
+
+
+@pytest.mark.parametrize("cmd,flag", _JSON_FILE_FLAGS)
+@pytest.mark.parametrize(
+    "content,message",
+    [
+        (b"\xff\xfe{}", "must contain valid JSON: it is not UTF-8 text"),
+        ('"caf\xe9"'.encode("latin-1"), "must contain valid JSON: it is not UTF-8 text"),
+        ('{"a": 1}'.encode("utf-16"), "must contain valid JSON: it is not UTF-8 text"),
+        (b'\xef\xbb\xbf{"a": 1}', "must contain valid JSON: Unexpected UTF-8 BOM"),
+        (b"[" + b"1" * 5000 + b"]", "must contain valid JSON: Exceeds the limit (4300 digits)"),
+        (b"[" * 100_000 + b"]" * 100_000, ": nested more than 6"),
+        (b'{"a": 1, "a": 2}', ": duplicate JSON key 'a'"),
+        (b"{nope", "must contain valid JSON: Expecting property name"),
+    ],
+    ids=["not-utf8", "latin-1", "utf-16", "bom", "long-integer", "deep", "duplicate-key",
+         "not-json"],
+)  # fmt: skip
+def test_a_json_file_that_breaks_the_json_rules_is_one_error_line(
+    tmp_path, key, cmd, flag, content, message, capsys
+):
+    """Every --…-file is held to a manifest file's JSON rules: UTF-8 JSON text (RFC 8259), no
+    duplicate key, at most 64 deep. What a file holds is not an argument: exit 1, one
+    ``error:`` line naming the file, never a traceback, and nothing written. Before, a
+    non-UTF-8 file printed a UnicodeDecodeError traceback, deep nesting a RecursionError,
+    and --target-file, --declaration-file and --notes-file took a repeated key."""
+    path, out = tmp_path / "value.json", tmp_path / "out.json"
+    path.write_bytes(content)
+    line = _error_line(capsys, *_with_file(cmd, flag, key, path, out))
+    assert line.startswith(f"error: {str(path)!r}") and message in line
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("cmd,flag", _JSON_FILE_FLAGS)
+def test_a_json_file_that_is_a_directory_is_one_error_line(tmp_path, key, cmd, flag, capsys):
+    path, out = tmp_path / "value", tmp_path / "out.json"
+    path.mkdir()
+    line = _error_line(capsys, *_with_file(cmd, flag, key, path, out))
+    assert line == f"error: {flag} is a directory: {str(path)!r}"
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("cmd,flag", _JSON_FILE_FLAGS)
+def test_a_json_file_may_be_a_pipe(tmp_path, monkeypatch, key, cmd, flag):
+    """A --…-file is read whatever it is, a directory aside: a pipe (``--floor-round-file <(curl
+    …)``, as README shows, or /dev/stdin) is read to its end like a file."""
+    value = {
+        "--plan-file": {"name": "plan.md"},
+        "--items-file": [{"id": "R1"}],
+        "--evidence-file": [{"name": "plan.md"}],
+        "--floor-round-file": SAVED_ROUND,
+    }.get(flag, {"from": "a pipe"})
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "plan.md").write_text("plan\n")
+    path, out = tmp_path / "pipe", tmp_path / "out.json"
+    os.mkfifo(path)
+    writer = threading.Thread(target=lambda: path.write_text(json.dumps(value)), daemon=True)
+    writer.start()
+    try:
+        assert run(*_with_file(cmd, flag, key, path, out)) == 0
+    finally:
+        writer.join(timeout=10)
+    assert out.exists()
+
+
+def test_a_json_file_may_be_a_character_device(tmp_path, key, capsys):
+    """A character device is read too (here /dev/null, which holds no JSON)."""
+    if not os.path.exists(os.devnull):
+        pytest.skip("no null device")
+    out = tmp_path / "out.json"
+    line = _error_line(capsys, *_with_file("prereg", "--notes-file", key, os.devnull, out))
+    assert line == (
+        f"error: {os.devnull!r} must contain valid JSON: Expecting value: line 1 column 1 (char 0)"
+    )
+
+
+@pytest.mark.parametrize("cmd", ["prereg", "postreg"])
+@pytest.mark.parametrize("flag", ["--target-file", "--declaration-file", "--notes-file"])
+@pytest.mark.parametrize(
+    "content", ['""', "[]", '["t"]', "5", "true", "null", "{}"],
+    ids=["empty-string", "empty-list", "list", "number", "bool", "null", "empty-object"],
+)  # fmt: skip
+def test_a_free_form_file_holds_a_non_empty_object_or_string(
+    tmp_path, key, cmd, flag, content, capsys
+):
+    """--target-file, --declaration-file and --notes-file hold what the field is: a JSON
+    object or a string, not empty. Anything else is the file's content: exit 1, one line
+    that says what the file must hold (before: pydantic's text, or a value silently dropped
+    or inherited)."""
+    path, out = tmp_path / "value.json", tmp_path / "out.json"
+    path.write_text(content)
+    line = _error_line(capsys, *_with_file(cmd, flag, key, path, out))
+    assert line.startswith(
+        f"error: {flag} {str(path)!r} must hold a non-empty JSON object or string"
+    )
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("content", ['"a target"', '{"model": "m"}'])
+def test_a_free_form_file_holding_a_string_or_object_is_signed_as_it_is(tmp_path, key, content):
+    path, out = tmp_path / "value.json", tmp_path / "out.json"
+    path.write_text(content)
+    assert run(*_with_file("prereg", "--notes-file", key, path, out)) == 0
+    assert _body(out)["notes"] == json.loads(content)
+
+
+def _nested(depth):
+    """A JSON object ``depth`` deep (the outermost object is 1)."""
+    value = {}
+    for _ in range(depth - 1):
+        value = {"a": value}
+    return value
+
+
+@pytest.mark.parametrize("cmd", ["prereg", "postreg"])
+@pytest.mark.parametrize("flag", ["--target-file", "--declaration-file", "--notes-file"])
+def test_a_free_form_file_is_at_most_63_deep_so_its_body_is_at_most_64(
+    tmp_path, key, cmd, flag, capsys
+):
+    """The value sits one level down in the body, which format #2 holds to 64 deep: a free-form
+    file is read to 63, and a 64-deep one is the file's content, exit 1, one line. At 63 the
+    body is signed and passes format."""
+    path, out = tmp_path / "value.json", tmp_path / "out.json"
+    path.write_text(json.dumps(_nested(64)))
+    line = _error_line(capsys, *_with_file(cmd, flag, key, path, out))
+    assert line == (
+        f"error: {str(path)!r}: nested more than 63 deep (its value sits one level down in a "
+        "body, which is at most 64)"
+    )
+    assert not out.exists()
+    path.write_text(json.dumps(_nested(63)))
+    assert run(*_with_file(cmd, flag, key, path, out)) == 0
+    capsys.readouterr()
+    assert run("verify", out, "--tests", "format,selfsig") == 0
+
+
+def test_an_inline_repro_recipe_is_at_most_63_deep(tmp_path, key, capsys):
+    """--repro-recipe sits one level down in the body too: 64 deep is a usage error (before,
+    it parsed and signing then refused the body, exit 1); 63 deep is signed."""
+    out = tmp_path / "out.json"
+    argv = ("postreg", "--key", key, "--fulfills", REF, "--target", "t", "--out", out)
+    with pytest.raises(SystemExit) as e:
+        run(*argv, "--repro-recipe", json.dumps(_nested(64)))
+    assert e.value.code == cli.EXIT_USAGE
+    err = capsys.readouterr().err
+    assert err.startswith("usage: ") and "argument --repro-recipe: nested more than 63 deep" in err
+    assert run(*argv, "--repro-recipe", json.dumps(_nested(63))) == 0
+
+
+@pytest.mark.parametrize(
+    "content,why",
+    [
+        ("[" * 100_000 + "]" * 100_000, "nested more than 64 deep"),
+        ('{"alg": "ed25519", "alg": "ed25519"}', "duplicate JSON key 'alg'"),
+    ],
+    ids=["deep", "duplicate-key"],
+)
+def test_a_key_file_that_breaks_the_json_rules_is_one_error_line(tmp_path, content, why, capsys):
+    """A key file is held to a manifest file's JSON rules, so it reads the same on every
+    Python version (3.12 and 3.13 hit their recursion limit on deep nesting; 3.14 does not)."""
+    path = tmp_path / "bad.key"
+    path.write_text(content)
+    line = _error_line(capsys, "prereg", "--key", path, "--target", "t",
+                       "--out", tmp_path / "out.json")  # fmt: skip
+    assert line == f"error: key file {str(path)!r} is not valid JSON: {why}"
+
+
+# A --fulfills file postreg cannot read: no ref or target this release can take from it.
+def _relabel(payload_type):
+    return lambda mani: mani["dsse"].update(payloadType=payload_type)
+
+
+def _flip_sig(mani):
+    sig = mani["dsse"]["signatures"][0]["sig"]
+    mani["dsse"]["signatures"][0]["sig"] = ("B" if sig[0] == "A" else "A") + sig[1:]
+
+
+@pytest.mark.parametrize(
+    "edit,message",
+    [
+        (_relabel("application/vnd.asexec.v2+json"),
+         "is not a readable manifest: payloadType names a format newer than this release"),
+        (_relabel("application/vnd.asexec.0.3.0b1+json"),
+         "is not a readable manifest: payloadType names an asexec beta format"),
+        (lambda mani: mani["dsse"].pop("payloadType"),
+         "is not a readable manifest: malformed: dsse.payloadType: Field required"),
+    ],
+    ids=["newer-format", "beta-format", "no-payload-type"],
+)  # fmt: skip
+def test_postreg_refuses_to_fulfil_a_prereg_it_cannot_read(
+    tmp_path, key, prereg, edit, message, capsys
+):
+    """--fulfills names a prereg file read as verify reads it: one that fails format (of an
+    unknown or beta format, or malformed) has no ref or target this release can take, so it is
+    refused: exit 1, one line, nothing written. Before, a file of another format was signed
+    against under this release's rules."""
+    mani = json.loads(open(prereg).read())
+    edit(mani)
+    open(prereg, "w").write(json.dumps(mani))
+    out = tmp_path / "out.json"
+    line = _error_line(capsys, "postreg", "--key", key, "--fulfills", prereg, "--out", out)
+    assert line.startswith(f"error: --fulfills {prereg!r} {message}")
+    assert not out.exists()
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        _flip_sig,
+        lambda mani: mani["dsse"]["signatures"][0].update(keyid="sha-256:" + "00" * 32),
+        lambda mani: mani["dsse"]["signatures"].append(mani["dsse"]["signatures"][0]),
+    ],
+    ids=["bad-signature", "keyid-not-derived", "two-signatures"],
+)
+def test_postreg_fulfils_a_prereg_that_fails_selfsig_as_before(tmp_path, key, prereg, edit):
+    """A prereg file that passes format but fails selfsig is still fulfilled: its ref and
+    target are read as for any other (whether to refuse it is open for the human gate)."""
+    mani = json.loads(open(prereg).read())
+    edit(mani)
+    open(prereg, "w").write(json.dumps(mani))
+    out = tmp_path / "out.json"
+    assert run("postreg", "--key", key, "--fulfills", prereg, "--out", out) == 0
+    assert _body(out)["fulfills"] == _ref(prereg) and _body(out)["target"] == "t"
+
+
+@pytest.mark.parametrize(
+    "target",
+    [None, "", [], ["t"], 5, {}],
+    ids=["absent", "empty-string", "empty-list", "list", "number", "empty-object"],
+)
+def test_postreg_inheriting_no_usable_target_is_one_error_line(tmp_path, key, target, capsys):
+    """A validly signed prereg whose body has no target a postreg can inherit (absent, or not
+    a non-empty string or object): exit 1, one line naming the fix. Before: KeyError."""
+    pre, out = tmp_path / "pre.json", tmp_path / "out.json"
+    body = {"phase": "prereg", "predicateType": "https://asexec.org/manifest/v1"}
+    if target is not None:
+        body["target"] = target
+    _sign_stored_bytes(pre, key, json.dumps(body).encode())
+    line = _error_line(capsys, "postreg", "--key", key, "--fulfills", pre, "--out", out)
+    assert line == (
+        f"error: --fulfills {str(pre)!r} has no target to inherit (a non-empty string or JSON "
+        "object); give --target or --target-file"
+    )
+    assert not out.exists()
+    # with a target of its own, the postreg is signed
+    assert run("postreg", "--key", key, "--fulfills", pre, "--target", "t", "--out", out) == 0
+
+
+_NAME_NUL = "a\x00b"
+_NAME_SURROGATE = "\ud800"
+
+
+@pytest.mark.parametrize(
+    "cmd,flag,value",
+    [
+        ("prereg", "--plan", {"name": _NAME_NUL}),
+        ("prereg", "--plan", {"name": _NAME_SURROGATE}),
+        ("postreg", "--evidence", [{"name": _NAME_NUL}]),
+        ("postreg", "--evidence", [{"name": _NAME_SURROGATE}]),
+    ],
+    ids=["plan-nul", "plan-surrogate", "evidence-nul", "evidence-surrogate"],
+)
+@pytest.mark.parametrize("how", ["inline", "file"])
+def test_a_name_no_file_can_have_is_refused(tmp_path, key, cmd, flag, value, how, capsys):
+    """A --plan or --evidence name holding a NUL (no path has one) or a lone surrogate (no
+    UTF-8 form, so no body can hold it) names no file: inline, a usage error (64); from a
+    file, exit 1, one line. Before: ValueError or UnicodeEncodeError tracebacks."""
+    link = ["--target", "t"] if cmd == "prereg" else ["--target", "t", "--fulfills", REF]
+    out = tmp_path / "out.json"
+    text = json.dumps(value)  # ensure_ascii: \u0000 and \ud800 escapes, read back as given
+    if how == "inline":
+        with pytest.raises(SystemExit) as e:
+            run(cmd, "--key", key, *link, flag, text, "--out", out)
+        assert e.value.code == cli.EXIT_USAGE
+        err = capsys.readouterr().err
+        assert err.startswith("usage: ") and "names no file: it has a" in err
+    else:
+        path = tmp_path / "value.json"
+        path.write_text(text)
+        line = _error_line(capsys, cmd, "--key", key, *link, f"{flag}-file", path, "--out", out)
+        assert "names no file: it has a" in line
+    assert not out.exists()
+
+
+@pytest.mark.parametrize(
+    "name,why",
+    [
+        (_NAME_NUL, "a NUL character"),
+        (_NAME_SURROGATE, "a character with no UTF-8 form"),
+        ("\udcff", "a character with no UTF-8 form"),  # a non-UTF-8 byte, as argv decodes it
+    ],
+    ids=["nul", "surrogate", "non-utf8-byte"],
+)
+def test_a_subject_no_manifest_can_name_is_refused(tmp_path, key, monkeypatch, name, why, capsys):
+    monkeypatch.chdir(tmp_path)
+    if name == "\udcff":
+        (tmp_path / os.fsdecode(b"\xff")).write_text("x")  # the file exists
+    line = _error_line(capsys, "prereg", "--key", key, "--target", "t", "--subject", name,
+                       "--out", tmp_path / "out.json")  # fmt: skip
+    assert line == f"error: {name!r} names no file a manifest can hold: it has {why}"
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["not-found", "directory", "bad-json", "free-form", "fulfills", "key-file"],
+)
+def test_a_path_with_a_newline_stays_on_one_error_line(tmp_path, key, case, capsys):
+    """Every error naming a path shows it quoted (its repr), so a newline in it can't split the
+    error line or forge another."""
+    path = tmp_path / "a\nb.json"
+    out = tmp_path / "out.json"
+    argv = ("prereg", "--key", key, "--target", "t", "--notes-file", path, "--out", out)
+    if case == "directory":
+        path.mkdir()
+    elif case == "bad-json":
+        path.write_text("{nope")
+    elif case == "free-form":
+        path.write_text("[]")
+    elif case == "fulfills":
+        path.write_text("{nope")
+        argv = ("postreg", "--key", key, "--fulfills", path, "--out", out)
+    elif case == "key-file":
+        path.write_text("{nope")
+        argv = ("prereg", "--key", path, "--target", "t", "--out", out)
+    line = _error_line(capsys, *argv)
+    assert repr(str(path)) in line
+
+
+@pytest.mark.parametrize(
+    "body,why",
+    [
+        (b"[" * 100_000 + b"]" * 100_000, "nested more than 64 deep"),
+        (b'{"keys": [], "keys": []}', "duplicate JSON key 'keys'"),
+        (b"not json", "Expecting value"),
+        (b'\xff{"keys": []}', "not JSON text in UTF-8, UTF-16 or UTF-32"),
+    ],
+    ids=["deep", "duplicate-key", "not-json", "not-utf8"],
+)
+def test_identity_match_reads_the_document_under_the_json_rules(monkeypatch, body, why, capsys):
+    """The fetched document is held to a manifest file's JSON rules, so it reads the same on
+    every Python version (a deep one passed on 3.14 and failed on 3.12): exit 1, one line."""
+    monkeypatch.setattr(identity.urllib.request, "urlopen", lambda url, timeout: _Resp(body))
+    line = _error_line(capsys, "identity", "match", "--domain", "lab.example", "--keyid", "kid")
+    assert line.startswith(
+        "error: https://lab.example/.well-known/asexec.json is not an asexec identity document: "
+    )
+    assert why in line
+
+
+@pytest.mark.parametrize(
+    "encode",
+    [
+        lambda text: b"\xef\xbb\xbf" + text.encode("utf-8"),
+        lambda text: text.encode("utf-16"),
+        lambda text: text.encode("utf-16-le"),
+        lambda text: text.encode("utf-32"),
+    ],
+    ids=["utf-8-bom", "utf-16", "utf-16-le", "utf-32"],
+)
+def test_identity_match_reads_a_document_in_any_json_encoding(key, monkeypatch, encode, capsys):
+    """A document in UTF-16 or UTF-32, or UTF-8 with a byte order mark, is read as the base read
+    it (``json.load`` of bytes detects the encoding), and the key is matched."""
+    doc = json.dumps({"keys": [{"keyid": json.load(open(key))["keyid"]}]})
+    monkeypatch.setattr(identity.urllib.request, "urlopen", lambda url, timeout: _Resp(encode(doc)))
+    assert run("identity", "match", "--domain", "lab.example", "--key", key) == 0
+    assert "IS asserted by lab.example" in capsys.readouterr().out
+
+
+class _Resp(io.BytesIO):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self.close()
+
+
+@pytest.mark.parametrize(
+    "doc,why",
+    [
+        ([], "not a JSON object"),
+        ("keys", "not a JSON object"),
+        (5, "not a JSON object"),
+        ({"keys": 5}, "'keys' is not an array of objects"),
+        ({"keys": {"keyid": "kid"}}, "'keys' is not an array of objects"),
+        ({"keys": ["kid"]}, "'keys' is not an array of objects"),
+    ],
+    ids=["list", "string", "number", "keys-number", "keys-object", "keys-of-strings"],
+)
+def test_identity_match_on_a_document_that_is_not_an_identity_document(
+    monkeypatch, doc, why, capsys
+):
+    """A domain's .well-known/asexec.json that is not an object holding an array of key
+    objects: exit 1, one line (before: AttributeError or TypeError tracebacks)."""
+    monkeypatch.setattr(identity, "fetch_wellknown", lambda domain, timeout=10: doc)
+    line = _error_line(capsys, "identity", "match", "--domain", "lab.example", "--keyid", "kid")
+    assert line == (
+        "error: https://lab.example/.well-known/asexec.json is not an asexec identity "
+        f"document: {why}"
+    )
 
 
 # --- verify printer ---------------------------------------------------------- #
@@ -786,6 +1378,161 @@ def test_identity_without_subcommand_is_usage_error():
         run("identity")
 
 
+# --- a closed stdout ---------------------------------------------------------- #
+def _with_stdout_closed(cwd, *argv):
+    """Run ``asexec argv`` with stdout a pipe whose reader has already gone, as ``asexec … |
+    head -1`` has once head exits: every write to it fails (EPIPE)."""
+    read, write = os.pipe()
+    os.close(read)
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "asexec", *map(str, argv)],
+            stdout=write, stderr=subprocess.PIPE, cwd=cwd, timeout=120,
+        )  # fmt: skip
+    finally:
+        os.close(write)
+    return proc.returncode, proc.stderr.decode()
+
+
+@pytest.mark.parametrize("copies", [1, 300], ids=["short-report", "long-report"])
+@pytest.mark.parametrize("tampered,code", [(False, 0), (True, 2)], ids=["pass", "fail"])
+def test_verify_keeps_its_verdict_when_stdout_closes(tmp_path, key, prereg, copies, tampered, code):
+    """``verify … | head -1``: the reader closing stdout changes nothing about the verdict, so
+    the exit status is still 0 or 2, with nothing on stderr. A short report fails at Python's
+    flush on exit; a long one while it prints. Before: exit 120 or 1."""
+    files = tmp_path / "manifests"
+    files.mkdir()
+    for i in range(copies):
+        (files / f"pre-{i}.json").write_text(open(prereg).read())
+    if tampered:
+        _edit_body_after_signing(files / "pre-0.json", lambda body: body.update(target="u"))
+    assert _with_stdout_closed(tmp_path, "verify", files, "--tests", "format,selfsig") == (
+        code,
+        "",
+    )
+
+
+def test_signing_succeeds_when_stdout_closes(tmp_path, key):
+    """prereg writes its file and then prints: a closed stdout leaves exit 0, the file
+    written, and nothing on stderr."""
+    out = tmp_path / "pre.json"
+    assert _with_stdout_closed(tmp_path, "prereg", "--key", key, "--target", "t", "--out", out) == (
+        0,
+        "",
+    )
+    assert _body(out)["target"] == "t"
+
+
+@pytest.mark.parametrize(
+    "argv,code,err",
+    [
+        (("--version",), 0, ""),
+        (("--help",), 0, ""),
+        (("verify", "--help"), 0, ""),
+        (("verify", "pre.json", "--tests", "chain"), 64, "usage: "),
+    ],
+    ids=["version", "help", "verify-help", "usage-error"],
+)
+def test_what_argparse_prints_keeps_its_status_when_stdout_closes(tmp_path, argv, code, err):
+    """``asexec --version | true``: argparse printed and exits; a reader that has gone does not
+    change its status, as for a command that finished (before: exit 1, "stdout was closed")."""
+    status, stderr = _with_stdout_closed(tmp_path, *argv)
+    assert status == code and stderr.startswith(err)
+    assert "stdout was closed" not in stderr and "Traceback" not in stderr
+
+
+def _with_stdout(cwd, how, *argv, env=None):
+    """Run ``asexec argv`` with stdout closed (``>&-``: Python then has no ``sys.stdout``) or on
+    a full device (``>/dev/full``: every flush fails with ENOSPC)."""
+    cmd = [sys.executable, "-m", "asexec", *map(str, argv)]
+    if how == "closed":
+        cmd, stdout = ["sh", "-c", 'exec "$@" >&-', "sh", *cmd], None
+    else:
+        if not os.path.exists("/dev/full"):
+            pytest.skip("no /dev/full")
+        stdout = open("/dev/full", "wb")  # noqa: SIM115
+    try:
+        proc = subprocess.run(cmd, stdout=stdout, stderr=subprocess.PIPE, cwd=cwd, timeout=120,
+                              env=env)  # fmt: skip
+    finally:
+        if stdout is not None:
+            stdout.close()
+    return proc.returncode, proc.stderr.decode()
+
+
+@pytest.mark.parametrize("tampered,code", [(False, 0), (True, 2)], ids=["pass", "fail"])
+def test_verify_with_stdout_closed_keeps_its_verdict(tmp_path, key, prereg, tampered, code):
+    """``verify … >&-``: nothing can be printed, and the verdict stands (as on the base)."""
+    if tampered:
+        _edit_body_after_signing(prereg, lambda body: body.update(target="u"))
+    assert _with_stdout(tmp_path, "closed", "verify", prereg, "--tests", "format,selfsig") == (
+        code,
+        "",
+    )
+
+
+@pytest.mark.parametrize(
+    "argv,code,err",
+    [
+        (("keygen", "--out", "{tmp}/new.key"), 0, ""),
+        (("prereg", "--key", "{key}", "--target", "t", "--out", "{tmp}/pre2.json"), 0, ""),
+        (("verify", "--help"), 0, ""),
+        (("verify", "{prereg}", "--tests", "chain"), 64, "usage: "),
+    ],
+    ids=["keygen", "prereg", "help", "usage-error"],
+)
+def test_other_commands_with_stdout_closed(tmp_path, key, prereg, argv, code, err):
+    argv = [a.format(tmp=tmp_path, key=key, prereg=prereg) for a in argv]
+    status, stderr = _with_stdout(tmp_path, "closed", *argv)
+    assert status == code and stderr.startswith(err) and "Traceback" not in stderr
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("verify", "{prereg}", "--tests", "format,selfsig"),
+        ("prereg", "--key", "{key}", "--target", "t", "--out", "{tmp}/pre2.json"),
+    ],
+    ids=["verify", "prereg"],
+)
+def test_a_full_stdout_is_one_error_line(tmp_path, key, prereg, argv):
+    """``>/dev/full``: the output can't be written, which is an error (exit 1, one line),
+    not a traceback and not Python's exit status 120."""
+    argv = [a.format(tmp=tmp_path, key=key, prereg=prereg) for a in argv]
+    assert _with_stdout(tmp_path, "full", *argv) == (
+        1,
+        "error: could not write the output: [Errno 28] No space left on device\n",
+    )
+
+
+def test_a_usage_error_with_a_full_stdout_is_still_a_usage_error(tmp_path, prereg):
+    status, stderr = _with_stdout(tmp_path, "full", "verify", prereg, "--tests", "chain")
+    assert status == cli.EXIT_USAGE and stderr.startswith("usage: ")
+
+
+def test_verify_on_an_ascii_stdout_escapes_what_it_cannot_encode(tmp_path, prereg):
+    """``PYTHONIOENCODING=ascii``: ✓ and ✗ are printed as escapes, not a traceback."""
+    env = {**os.environ, "PYTHONIOENCODING": "ascii"}
+    proc = subprocess.run(
+        [sys.executable, "-m", "asexec", "verify", prereg, "--tests", "format,selfsig"],
+        capture_output=True, cwd=tmp_path, env=env, timeout=120,
+    )  # fmt: skip
+    assert (proc.returncode, proc.stderr) == (0, b"")
+    assert b"\\u2713 format=PASS" in proc.stdout
+
+
+def test_a_broken_pipe_writing_a_file_is_not_reported_as_stdout(tmp_path, key, monkeypatch, capsys):
+    """A BrokenPipeError from writing --out (a FIFO whose reader left) is that file's error, not
+    a closed stdout."""
+
+    def broken(*_a, **_k):
+        raise BrokenPipeError(32, "Broken pipe")
+
+    monkeypatch.setattr(manifest, "save", broken)
+    line = _error_line(capsys, "prereg", "--key", key, "--target", "t", "--out", tmp_path / "o")
+    assert line == "error: [Errno 32] Broken pipe"
+
+
 # --- entry points ------------------------------------------------------------ #
 def test_python_dash_m_entry_point_exits_with_main_code(monkeypatch, prereg):
     monkeypatch.setattr(sys, "argv", ["asexec", "verify", prereg, "--tests", "format,selfsig"])
@@ -888,11 +1635,12 @@ INLINE_USAGE_ERRORS = [
     pytest.param(("prereg", "--items", "[1,"), "not valid JSON", id="items-not-json"),
     pytest.param(("postreg", "--evidence", "not json"), "not valid JSON", id="evidence-not-json"),
     pytest.param(("postreg", "--status", "done"), "invalid choice", id="status-unknown"),
-    pytest.param(("prereg", "--plan", "{}", "--plan-file", "p.json"), "not allowed",
-                 id="plan-and-file"),
+    pytest.param(("prereg", "--plan", '{"name": "plan.md"}', "--plan-file", "p.json"),
+                 "not allowed", id="plan-and-file"),
     pytest.param(("prereg", "--items", "[]", "--items-file", "i.json"), "not allowed",
                  id="items-and-file"),
-    pytest.param(("postreg", "--evidence", "[]", "--evidence-file", "e.json"), "not allowed",
+    pytest.param(("postreg", "--evidence", '[{"name": "plan.md"}]', "--evidence-file", "e.json"),
+                 "not allowed",
                  id="evidence-and-file"),
     pytest.param(("prereg", "--plan", "[]"), "--plan must be a JSON object", id="plan-list"),
     pytest.param(("prereg", "--plan", '"plan.md"'), "--plan must be a JSON object",
@@ -943,7 +1691,7 @@ def test_claim_record_argument_errors_are_usage_errors(
         run(cmd, "--key", key, *link, *rest, "--out", tmp_path / "out.json")
     assert e.value.code == cli.EXIT_USAGE
     err = capsys.readouterr().err
-    assert "error: argument" in err and message in err
+    assert err.startswith("usage: ") and "error: argument" in err and message in err
     assert not (tmp_path / "out.json").exists()
 
 
@@ -1081,6 +1829,71 @@ def test_verify_flags_an_unparseable_due_on_a_fulfilled_commitment(tmp_path, key
     out = capsys.readouterr().out
     assert "[FULFILLED]" in out
     assert f"    {cli.NO} due is not a parseable ISO-8601 timestamp\n" in out
+
+
+# One parse of due (verifier.parse_due) for signing and verify. The witness's time T is
+# 2023-11-14T22:13:21Z (MIDP + RADI); "on-time" is T <= due, in whole microseconds.
+DUE_READINGS = [
+    pytest.param("2023-11-14T22:13:21Z", True, "on-time", id="z-at-T"),
+    pytest.param("2023-11-14T22:13:20.999999Z", True, "late", id="one-microsecond-before-T"),
+    pytest.param("2023-11-14T23:13:21+01:00", True, "on-time", id="offset-at-T"),
+    pytest.param("2023-11-14T12:13:20.999999-10:00", True, "late", id="negative-offset-before-T"),
+    pytest.param("2023-11-14T22:13:21.0000009Z", True, "on-time", id="sub-microsecond-truncated"),
+    pytest.param("2023-11-14T22:13:20.9999999Z", True, "late", id="sub-microsecond-not-rounded-up"),
+    pytest.param("2023-11-14T22:13:21", False, "naive-on-time", id="naive-read-as-utc"),
+    pytest.param("2023-11-14", False, "naive-late", id="date-only-read-as-utc-midnight"),
+    pytest.param("2023-11-14T22:13:21Z ", False, "invalid", id="trailing-space"),
+    pytest.param("2023-11-14T22:13:21+24:00", False, "invalid", id="offset-out-of-range"),
+    pytest.param("2023-02-30T00:00:00Z", False, "invalid", id="no-such-day"),
+    pytest.param("someday", False, "invalid", id="words"),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize("due,signs,reading", DUE_READINGS)
+def test_due_is_parsed_once_for_signing_and_verify(
+    tmp_path, key, capsys, monkeypatch, witness, due, signs, reading
+):
+    """Signing takes a --due exactly when verify parses it with an offset (``parse_due`` for
+    both), and verify reads each the same way: a naive due as UTC (flagged) whatever the local
+    timezone, an offset applied, digits past the microsecond truncated, and an unparseable due
+    named as such."""
+    if not hasattr(time, "tzset"):
+        pytest.skip("time.tzset is POSIX-only")
+    monkeypatch.setenv("TZ", "Pacific/Kiritimati")  # UTC+14: a naive due read locally is off
+    time.tzset()
+    try:
+        out = tmp_path / "signed.json"
+        if signs:
+            assert run("prereg", "--key", key, "--target", "t", "--due", due, "--out", out) == 0
+            assert _body(out)["due"] == due  # written verbatim
+        else:
+            with pytest.raises(SystemExit) as e:
+                run("prereg", "--key", key, "--target", "t", "--due", due, "--out", out)
+            assert e.value.code == cli.EXIT_USAGE
+            assert "error: argument --due: " in capsys.readouterr().err
+        # verify reads the same string, signed as anyone could
+        pre, post = tmp_path / "pre.json", tmp_path / "post.json"
+        _sign_stored_bytes(pre, key, json.dumps({"phase": "prereg", "target": "t", "due": due,
+                                                 "predicateType": "x"}).encode())  # fmt: skip
+        body = {"phase": "postreg", "target": "t", "fulfills": _ref(pre), "predicateType": "x"}
+        _sign_stored_bytes(post, key, json.dumps(body).encode())
+        witness(post)
+        capsys.readouterr()
+        code = run("verify", pre, post, "--tests", "format,selfsig,timely")
+        report = capsys.readouterr().out
+    finally:
+        monkeypatch.undo()
+        time.tzset()
+    naive_line = (
+        f"    {cli.NO} due has no timezone; read as UTC (re-sign with an explicit offset)\n"
+    )
+    invalid_line = f"    {cli.NO} due is not a parseable ISO-8601 timestamp\n"
+    assert (naive_line in report) == reading.startswith("naive")
+    assert (invalid_line in report) == (reading == "invalid")
+    assert ("is late: its ceiling (no later than 2023-11-14T22:13:21Z)" in report) == (
+        reading.endswith("late")
+    )
+    assert code == (0 if reading.endswith("on-time") else 2)
 
 
 # --- complete ---------------------------------------------------------------------- #
@@ -1347,7 +2160,8 @@ def test_floor_round_argument_errors_are_usage_errors(tmp_path, key, value, mess
             "--out", out)  # fmt: skip
     assert e.value.code == cli.EXIT_USAGE
     err = capsys.readouterr().err
-    assert "error: argument --floor-round: " in err and message in err
+    assert err.startswith("usage: ") and "error: argument --floor-round: " in err
+    assert message in err
     assert not out.exists()
 
 
