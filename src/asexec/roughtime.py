@@ -80,6 +80,10 @@ from .models import Ceiling, CeilingInput
 # (an offline test fixture). The other servers' keys are pinned from the ecosystem
 # list but were not reachable during capture, so their interop is expected, not
 # proven; a variant mismatch fails safe (the fetch or verify fails, never a false pass).
+#
+# A ceiling names its witness (ceiling.witness_id), and --ceiling tries the servers in the
+# order below. An entry is never edited or removed, so old manifests keep verifying. To add,
+# switch or withdraw a server, see "Pinned trust roots" in docs/DEVELOPMENT.md.
 SERVERS: dict[str, dict[str, object]] = {
     "Cloudflare-Roughtime-2": {
         "host": "roughtime.cloudflare.com",

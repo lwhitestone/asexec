@@ -176,3 +176,50 @@ are serialized and never cancelled.
 
 If TestPyPI or the smoke test misbehaves, do not approve the `pypi` deployment. PyPI version
 numbers can never be reused, so fix forward with a new version.
+
+## Pinned trust roots
+
+`floor` and `ceiling` verify against roots pinned in the source:
+- **drand chains:** `drand.CHAINS`, keyed by chain hash.
+- **Roughtime servers:** `roughtime.SERVERS`, keyed by `witness_id`.
+
+Verify never fetches a root and never takes a key from a manifest. A manifest names its root
+(`body.anchor.floor.chain_hash`, `ceiling.witness_id`), and verify never picks one for it: a
+missing name fails the test. Which root signing uses is a separate choice:
+`drand.DEFAULT_CHAIN` for `--floor` and `--floor-round`, and the order of `roughtime.SERVERS`
+for `--ceiling`, which tries each server in turn.
+
+An entry is never edited or removed, so that manifests naming it keep verifying
+([`ROADMAP.md`](../ROADMAP.md#support-from-040)).
+
+**Adding a root** (a `PATCH`):
+- **drand:** take the chain's parameters (public key, genesis time, period, scheme, beacon
+  id) from `https://api.drand.sh/<chain hash>/info`, and add an entry under its hash.
+  - Pin every value as a literal in `tests/test_drand.py`, as
+    `test_pinned_chains_are_quicknet_with_its_genesis_and_period` does for quicknet.
+  - Add an offline fixture: one real round with its signature.
+- **Roughtime:** take the long-term key from the Roughtime ecosystem list (see the
+  provenance comment above `SERVERS`), and add an entry with its host, port, variant and
+  key.
+  - A captured response, kept as an offline fixture, makes interop proven rather than
+    expected.
+  - Without one, say so in `docs/VERIFICATION.md` (`ceiling`, *Trust class*).
+- Name the new root wherever `docs/VERIFICATION.md` and the README list the pinned roots.
+
+**Switching what signing uses** (a `PATCH`, with a release note): change `DEFAULT_CHAIN`, or
+reorder `SERVERS`, after adding the new root if it is new. No existing verdict changes,
+because each manifest names its own root.
+
+**Withdrawing a root** (a release note is required): for example, a compromised key. This is
+the one permitted exception to the support promise
+([`MULTIVERSION.md`](./MULTIVERSION.md)).
+- The entry stays, marked withdrawn with a reason. `floor` or `ceiling` then fails for
+  manifests that rely on it, and the report names the withdrawn root.
+- The marker isn't built yet. Today, withdrawing a root could only mean deleting its entry,
+  which would read as "not pinned" with no reason given. Build the marker before the first
+  withdrawal.
+
+**How each root is pinned in the tests today:**
+- `drand.CHAINS` is pinned in full as a literal in `tests/test_drand.py`.
+- `roughtime.SERVERS` is not. Only `int08h-Roughtime`'s key is checked, through its captured
+  response in `tests/test_roughtime.py`.

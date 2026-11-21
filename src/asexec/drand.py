@@ -22,6 +22,11 @@ if TYPE_CHECKING:  # models imports this module, through fields (for the pinned 
     from .models import FloorInput
 
 # --- pinned chain parameters (verify-time constants; never fetched) ---------
+# Keyed by chain hash. The values come from https://api.drand.sh/<hash>/info and are pinned
+# as literals in tests/test_drand.py. A floor names its chain (body.anchor.floor.chain_hash)
+# and verify never picks one. An entry is never edited or removed, so old manifests keep
+# verifying. To add, switch or withdraw a chain, see "Pinned trust roots" in
+# docs/DEVELOPMENT.md.
 QUICKNET_HASH = "52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971"
 
 CHAINS: dict[str, dict] = {
@@ -38,6 +43,7 @@ CHAINS: dict[str, dict] = {
     },
 }
 
+# The chain signing uses (--floor, --floor-round). Verify never reads it.
 DEFAULT_CHAIN = QUICKNET_HASH
 
 # RFC 9380 ciphersuite DST for BLS signatures on G1 (minimal-signature-size).
