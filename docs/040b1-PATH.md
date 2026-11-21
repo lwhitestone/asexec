@@ -3854,3 +3854,96 @@ With only the tests changed, **8 failed**; the usage-error case already passed):
 `scripts/check.sh`, in full, exit status checked: clean, **1319 passed** at `d939b28`.
 `uv run --python 3.14 pytest tests/test_cli.py tests/test_identity.py` (in a scratch
 environment): 506 passed.
+
+**Merged** (orchestrator): PR #58 merged into `feature/0321` as `1551bc4`, a merge commit,
+after two review rounds and a re-review of the round 1 fixes, with no in-scope findings left
+open. The #45 changes are `5aec428`, `aabdc13`, `69e5796`, `47fcce6`, `8f86d68` and `42a15bb`;
+the review fixes are `8dd74d7` and `d939b28`. The first review found two blocking bugs: a
+closed or full stdout gave a traceback and lost the verdict, and a NUL or lone-surrogate
+character in a `--plan` or `--evidence` name gave a traceback. Both are fixed. The re-review
+then checked these cases on 3.12 and 3.14, every subcommand under each:
+- `>&-`, `/dev/full`, `| head -1` and `| true`;
+- an ASCII stdout;
+- newlines in every path;
+- pipes and `/dev/stdin` for every `--…-file`.
+
+None gave a traceback or a wrong status. The fuzzer's 974 runs now find only FIFOs with no
+writer, which block as for any tool. A differential of 216 verify pairs is byte-identical to
+the base. Post-merge on `feature/0321` at `1551bc4`: `scripts/check.sh` clean, 1319 passed; the
+same suite on Python 3.14 in a separate environment, 1319 passed;
+`examples/adequacy-test/run.py` exit 0. CI on the last PR push (`457039e`, run 44863377611):
+lint, build, test on 3.12, 3.13 and 3.14 pass.
+
+### Final state (orchestrator)
+
+Checklist items 1 to 9 are on `feature/0321` at `1551bc4`; item 10 (#39 → #40) is outside this
+brief. Nothing was merged to `main`, and no tag or release was made: `git ls-remote --tags
+origin` has no `v0.4*` tag. Every implemented issue has a comment naming its branch and
+commits, and is still open.
+
+**Evidence at `1551bc4`:**
+- pytest: 401 tests on `main` at the start, 1319 now.
+- `scripts/check.sh`: clean.
+- Python 3.14: the full suite passes.
+- CI: green on the last push of every checkpoint PR (#50 to #58).
+- `examples/adequacy-test/run.py`: exit 0.
+- A diff of `main...feature/0321` has no names of partners or studies, and none of its
+  commits uses a closing keyword.
+- An offline end-to-end run passes:
+  - Setup: keygen; a prereg with a subject, a plan and two items; two chained postregs, each
+    with an item id, a status and evidence.
+  - Verify with `format,selfsig,chain,content,keyconsist,complete`: every test `PASS`, exit 0.
+  - Dropping the second postreg: `✗ R2: no counted postreg names it`, `complete=FAIL`.
+  - `--tests BDR`: exit 64.
+
+**Open for the human gate.** These are decisions to confirm or change before 0.4.0 fixes the
+format and the meaning of the tests. Each is described in its checkpoint's notes above.
+1. **Checkpoint 5, D2:** a postreg that counts toward a commitment isn't also listed under a
+   rejected copy of its prereg. That narrows D2's literal text.
+2. **Checkpoint 6, #32:** `dsse.signatures[].sig` is base64, keeping ROADMAP's promise that
+   DSSE tooling can verify the envelope unchanged; securesystemslib verifies CLI-made files.
+   asexec is stricter than DSSE in four documented ways: standard padded base64 only, a
+   required `keyid` derived from `pubkey`, and exactly one signature.
+3. **Checkpoint 7, #37:** under `complete`:
+   - a postreg for an item the prereg doesn't list fails nothing;
+   - contradictory statuses for one item pass;
+   - D5b's late mark shows only when `timely` is requested.
+4. **Checkpoint 7, #33 and #46 judgement calls:**
+   - #33: subject names are relative to the directory signing runs in, `..` and absolute
+     paths are refused, and every entry needs its own `hash_alg`;
+   - #46: a ceiling gives the time midpoint plus radius, and one that fails the `ceiling`
+     test counts as no ceiling.
+5. **Checkpoint 8, #34:** the unsigned `ceiling.midpoint` and `ceiling.radius` are written but
+   never read. They could be shown as unchecked, required to equal the signed values, or
+   dropped.
+6. **Checkpoint 8, #38:** `order` is strict, and the prereg's time is the earliest verified
+   ceiling among the copies that are its commitment. `--floor-round` takes drand's HTTP API
+   response for a round of the default chain.
+7. **Checkpoint 9, #45:**
+   - postreg fulfils a prereg that fails `selfsig`, and `--prev` isn't checked either;
+   - `{}` and `""` are refused as the content of `--target-file`, `--declaration-file` and
+     `--notes-file`.
+8. **Verify results that depend on the environment:**
+   - `due` parsing differs by Python version (`…T24:00:00Z` parses on 3.14 only, `…T22:13:21.Z`
+     on 3.12 only). The grammar can now be pinned in `verifier.parse_due`.
+   - A body with an integer of more than 4,300 digits is malformed unless
+     `PYTHONINTMAXSTRDIGITS=0` is set.
+
+   Both were already true on `main`, and both go against the rule that every supported
+   Python reads a file the same way.
+9. **Forgeable report lines.** Unauthenticated strings (a claimed `keyid`, item ids, paths)
+   are printed raw in the older report blocks, so a newline can fake a line. The verify code
+   and exit status are unaffected. The new `untrusted` and unknown-field blocks are escaped.
+10. **Release workflow after 0.4.0, checkpoint 4:** there's no designed way to cut a 0.5.0
+    beta, or a patch release while a new format is in development. Neither blocks b1.
+11. **ROADMAP's tier check isn't built,** and it would fail today: *TrustedDeclared* lacks
+    `target`, `declaration`, `notes` and others.
+12. **Before the release gate's dry run:** porting the adequacy example to the claim record
+    needs `--ceiling` on each postreg, or no `--due`. Otherwise `complete` fails every run.
+
+**Suggested checks for the human tester**, beyond the suites:
+- a real `--ceiling` prereg and postreg chain through `timely`, `order` and `ceiling`;
+- `--floor-round-file <(curl …)` with a round fetched before the run;
+- verifying a CLI-made `dsse` envelope with another DSSE implementation;
+- `scripts/release.sh 0.4.0b1` rehearsed in a throwaway clone with a local bare remote, then
+  `check.sh` in that clone.
