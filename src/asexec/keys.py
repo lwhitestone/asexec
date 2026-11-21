@@ -83,10 +83,13 @@ def load_signing_key(path: str) -> tuple[bytes, bytes]:
 
     Raises ``OSError`` if the file cannot be read, else ``AsexecError`` if it is not
     a valid key file."""
+    from .manifest import parse_json  # here, not at the top: manifest imports this module
+
     with open(path) as f:
-        try:
-            data = json.load(f)
-        except (ValueError, RecursionError) as e:  # RecursionError: nested too deep to read
+        try:  # a manifest file's JSON rules: no repeated key, and at most 64 deep, so no
+            # parser reaches its recursion limit (which differs between Python versions)
+            data = parse_json(f.read())
+        except (ValueError, AsexecError) as e:  # not UTF-8 or JSON, or a rule broken
             raise AsexecError(f"key file {path} is not valid JSON: {e}") from None
     if not isinstance(data, dict):
         raise AsexecError(f"key file {path} is not a JSON object")

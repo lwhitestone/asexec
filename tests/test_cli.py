@@ -843,12 +843,22 @@ def test_a_body_nested_deeper_than_format_reads_is_not_signed(tmp_path, key, cap
     assert not out.exists()
 
 
-def test_a_key_file_nested_too_deep_is_one_error_line(tmp_path, capsys):
-    path = tmp_path / "deep.key"
-    path.write_text("[" * 100_000 + "]" * 100_000)
+@pytest.mark.parametrize(
+    "content,why",
+    [
+        ("[" * 100_000 + "]" * 100_000, "nested more than 64 deep"),
+        ('{"alg": "ed25519", "alg": "ed25519"}', "duplicate JSON key 'alg'"),
+    ],
+    ids=["deep", "duplicate-key"],
+)
+def test_a_key_file_that_breaks_the_json_rules_is_one_error_line(tmp_path, content, why, capsys):
+    """A key file is held to a manifest file's JSON rules, so it reads the same on every
+    Python version (3.12 and 3.13 hit their recursion limit on deep nesting; 3.14 does not)."""
+    path = tmp_path / "bad.key"
+    path.write_text(content)
     line = _error_line(capsys, "prereg", "--key", path, "--target", "t",
                        "--out", tmp_path / "out.json")  # fmt: skip
-    assert line.startswith(f"error: key file {path} is not valid JSON")
+    assert line == f"error: key file {path} is not valid JSON: {why}"
 
 
 # A --fulfills file postreg must not sign against: each read as verify would read it.
