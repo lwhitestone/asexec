@@ -11,17 +11,19 @@ A ``_VERSION`` value carries a version that changes with the format; a value wit
 in it is not called one.
 """
 
-# Version of the identity document's shape (``asexec_identity_version``).
+# Appears in: identity document (asexec_identity_version). Written by identity emit, read by
+# nothing yet. Versions the document's shape.
 IDENTITY_DOCUMENT_VERSION = 1
 
-# Where a domain publishes its identity document.
+# Appears in: identity URL (https://<domain>/<path>). Fetched by identity match. No manifest
+# field records it: identity match takes the domain from --domain.
 IDENTITY_WELL_KNOWN_PATH = ".well-known/asexec.json"
 
-# Media type of the signed payload (an asexec manifest body), written to ``dsse.payloadType``,
-# and the format signing writes: the key of its ``FORMATS`` entry. Format N is ``vN``, and goes with
-# ``MANIFEST_PREDICATE_TYPE`` ``/vN``. ``scripts/release.sh`` rewrites this literal in each
-# release commit (a beta writes its own type); the entry under development is keyed by this
-# name, so its key moves with it.
+# Appears in: manifest file (dsse.payloadType). Written by signing, read by format #3 to select
+# the format. Also in the PAE, so the signature covers it. Format N is vN, and goes with
+# MANIFEST_PREDICATE_TYPE /vN. scripts/release.sh rewrites this literal in each release commit
+# (a beta writes its own type); the FORMATS entry under development is keyed by this name, so
+# its key moves with it.
 MANIFEST_PAYLOAD_TYPE = "application/vnd.asexec.v1+json"
 
 # The rules of each format verify reads, keyed by ``payloadType``. A file is read only under
@@ -35,27 +37,29 @@ MANIFEST_PAYLOAD_TYPE = "application/vnd.asexec.v1+json"
 # and a new format adds an entry. (Out of alphabetical order, beside the type it is keyed by.)
 FORMATS: dict[str, dict] = {
     MANIFEST_PAYLOAD_TYPE: {
-        # Starts every ``ref`` and ``keyid``: ``sha-256:<hex>``. It names the hash behind them.
+        # Appears in: manifest file and body (dsse.signatures[0].keyid, body.fulfills,
+        # body.prev_hash). Read by selfsig #4 and by matching. Starts every ref and keyid
+        # (sha-256:<hex>); ref itself is computed, never stored.
         "digest_ref_prefix": "sha-256:",
-        # The signature algorithm of this format, named in key files and identity documents.
-        # A manifest names none (a DSSE signature entry is keyid and sig): it is the format's.
+        # Appears in: key files (alg) and identity documents (keys[].alg). Checked when a key
+        # file is loaded. Not in a manifest: a DSSE signature entry is keyid and sig only.
         "signing_key_alg": "ed25519",
-        # First field of the PAE signing input: DSSE's own, which standard DSSE tooling
-        # requires, so asexec does not version it. The payloadType beside it in the PAE is
-        # what ties a signature to this format.
+        # Appears in: signing input only (the PAE's first field), never stored. Used by signing
+        # and selfsig #3. DSSE's own, which DSSE tooling requires, so asexec does not version
+        # it; the payloadType beside it in the PAE ties a signature to this format.
         "signing_pae_version": b"DSSEv1",
     },
 }
 
-# Written to the ``predicateType`` field of every manifest body: the only format identifier
-# in the body.
+# Appears in: manifest body (body.predicateType). Written by signing, read by no test. Names
+# the body for in-toto consumers; verify selects the format by dsse.payloadType.
 MANIFEST_PREDICATE_TYPE = "https://asexec.org/manifest/v1"
 
-# The ``hash_alg`` signing hashes a subject entry with when the signer does not choose one.
-# Signing writes it into every entry, so verify never reads this: it has no fallback, and
-# reads each entry's own ``hash_alg``.
+# Appears in: manifest body (body.subject[].hash_alg, body.plan.hash_alg,
+# body.evidence[].hash_alg). The writer's default, read by no test: verify reads each entry's
+# own hash_alg and has no fallback.
 SUBJECT_DEFAULT_HASH_ALG = "sha-256"
 
-# The first token of the verify code. It versions the *code format*, independently of the
-# signed bytes.
+# Appears in: verify code (first token). Printed by verify. Versions the code's format,
+# independently of the signed bytes.
 VERIFY_CODE_VERSION = "asexec-verify/1"
