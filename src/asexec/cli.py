@@ -44,22 +44,39 @@ EXIT_USAGE = 64  # usage error (sysexits EX_USAGE): the arguments themselves are
 # --------------------------------------------------------------------------- #
 # input helpers
 # --------------------------------------------------------------------------- #
-def _read_json(path: str):
+# How deep a JSON value may nest: a manifest file's limit, or one less for a value that sits one
+# level down in the body (target, declaration, notes, repro_recipe), so the body is at most 64.
+_FILE_DEPTH = manifest.MAX_NESTING_DEPTH
+_IN_BODY_DEPTH = manifest.MAX_NESTING_DEPTH - 1
+
+
+def _rule_broken(e: ManifestError, max_depth: int) -> str:
+    """A JSON rule's message (``manifest.parse_json``), saying why a value inside the body is
+    held one level shallower."""
+    if max_depth < _FILE_DEPTH and str(e).startswith("nested more than"):
+        return f"{e} (its value sits one level down in a body, which is at most {_FILE_DEPTH})"
+    return str(e)
+
+
+def _read_json(path: str, max_depth: int = _FILE_DEPTH):
     """The JSON value a ``--…-file`` holds, held to a manifest file's JSON rules: UTF-8 JSON
-    text (RFC 8259), no duplicate key, at most 64 deep (``manifest.parse_json``). Raises
-    ``ManifestError`` (exit 1, one line) otherwise: what a file holds is not an argument."""
+    text (RFC 8259), no duplicate key, at most ``max_depth`` deep (``manifest.parse_json``).
+    Raises ``ManifestError`` (exit 1, one line) otherwise: what a file holds is not an
+    argument. Paths are shown quoted, so a newline in one can't split the error line."""
     with open(path, "rb") as f:
         data = f.read()
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError as e:
-        raise ManifestError(f"{path} must contain valid JSON: it is not UTF-8 text ({e})") from None
+        raise ManifestError(
+            f"{path!r} must contain valid JSON: it is not UTF-8 text ({e})"
+        ) from None
     try:
-        return manifest.parse_json(text)
+        return manifest.parse_json(text, max_depth)
     except ManifestError as e:  # a duplicate key, or nested too deep
-        raise ManifestError(f"{path}: {e}") from None
+        raise ManifestError(f"{path!r}: {_rule_broken(e, max_depth)}") from None
     except ValueError as e:  # not JSON, or an integer of more digits than Python reads
-        raise ManifestError(f"{path} must contain valid JSON: {e}") from None
+        raise ManifestError(f"{path!r} must contain valid JSON: {e}") from None
 
 
 def _free_form_file(flag: str) -> Callable[[str], str | dict]:
@@ -67,10 +84,10 @@ def _free_form_file(flag: str) -> Callable[[str], str | dict]:
     field is, a JSON object or a string, and not an empty one."""
 
     def load(path: str) -> str | dict:
-        value = _read_json(path)
+        value = _read_json(path, _IN_BODY_DEPTH)
         if not (isinstance(value, str | dict) and value):
             raise ManifestError(
-                f"{flag} {path} must hold a non-empty JSON object or string: {_short(value)}"
+                f"{flag} {path!r} must hold a non-empty JSON object or string: {_short(value)}"
             )
         return value
 
@@ -94,9 +111,9 @@ def _get_arg_or_file[T](
         try:
             mode = os.stat(file_path).st_mode
         except FileNotFoundError:
-            raise SystemExit(f"error: {flag} not found: {file_path}") from None
-        if not stat.S_ISREG(mode):  # a directory, or a FIFO, which would block forever
-            raise SystemExit(f"error: {flag} is not a file: {file_path}")
+            raise SystemExit(f"error: {flag} not found: {file_path!r}") from None
+        if stat.S_ISDIR(mode):  # anything else is read: a file, a pipe, /dev/stdin
+            raise SystemExit(f"error: {flag} is a directory: {file_path!r}")
         return load_file(file_path)
     return None
 
@@ -125,14 +142,14 @@ _PLAN_FIELDS = ("name", "media_type", "label")
 _EVIDENCE_FIELDS = ("name", "media_type", "uri")
 
 
-def _strict_json(text: str):
+def _strict_json(text: str, max_depth: int = _FILE_DEPTH):
     """A JSON value held to a manifest file's JSON rules (``manifest.parse_json``: no
-    duplicate key, since parsers disagree on which value wins, and at most 64 deep);
-    ``ValueError`` otherwise."""
+    duplicate key, since parsers disagree on which value wins, and at most ``max_depth``
+    deep); ``ValueError`` otherwise."""
     try:
-        return manifest.parse_json(text)
+        return manifest.parse_json(text, max_depth)
     except ManifestError as e:  # a duplicate key, or nested too deep
-        raise ValueError(str(e)) from None
+        raise ValueError(_rule_broken(e, max_depth)) from None
     except ValueError as e:  # not JSON, or an integer of more digits than Python reads
         raise ValueError(f"not valid JSON: {e}") from None
 
@@ -141,6 +158,9 @@ def _spec_shape(spec, flag: str, allowed: tuple[str, ...]) -> dict:
     """A file described as ``{"name": <path>, ...}``; ``ValueError`` if it is not one."""
     if not isinstance(spec, dict) or not isinstance(spec.get("name"), str):
         raise ValueError(f"{flag} needs a 'name' (a file path) in each entry: {spec!r}")
+    why = hashing.name_problem(spec["name"])
+    if why:  # no path, or no body, can hold it
+        raise ValueError(f"{flag}: {spec['name']!r} names no file: it has {why}")
     if "hash_alg" in spec or "digest" in spec:
         raise ValueError(
             f"{flag}: asexec hashes the file and fills in hash_alg and digest "
@@ -335,26 +355,21 @@ def _load_manifest_body(path: str, flag: str) -> tuple[bytes, dict]:
     try:
         return manifest.read_body(manifest.load(path))
     except Exception as e:
-        raise SystemExit(f"error: {flag} {path} is not a readable manifest: {e}") from e
+        raise SystemExit(f"error: {flag} {path!r} is not a readable manifest: {e}") from e
 
 
 def _read_prereg(path: str) -> tuple[str, dict]:
     """The ref and body of the ``--fulfills`` file, read as verify reads it. It must pass
-    ``format`` (a file of a format this release does not read has no ref or body it can
-    take) and ``selfsig`` (one that fails is no commitment, D2: verify rejects every postreg
-    fulfilling it, so none is signed)."""
+    ``format``: a file of a format this release does not read, or a malformed one, has no ref
+    or body it can take. Its signature is not checked here: verify judges it."""
     try:
         mani = manifest.load(path)
     except (ManifestError, ValueError) as e:  # not UTF-8, not JSON, not an object, ...
-        raise SystemExit(f"error: --fulfills {path} is not a readable manifest: {e}") from None
+        raise SystemExit(f"error: --fulfills {path!r} is not a readable manifest: {e}") from None
     fmt = verifier.verify_format(mani)
     if not fmt["ok"]:
-        raise SystemExit(f"error: --fulfills {path} is not a readable manifest: {fmt['errors'][0]}")
-    selfsig = verifier.verify_selfsig(mani, fmt["body_bytes"], fmt["payload_type"])
-    if not (selfsig["signature_ok"] and selfsig["keyid_ok"]):
         raise SystemExit(
-            f"error: --fulfills {path} fails selfsig, so it is no commitment: a postreg "
-            "fulfilling it never counts"
+            f"error: --fulfills {path!r} is not a readable manifest: {fmt['errors'][0]}"
         )
     return fmt["ref"], fmt["body"]
 
@@ -420,7 +435,7 @@ def cmd_keygen(args) -> int:
         kid = keys.save(priv, out, force=args.force)
     except FileExistsError as e:
         raise SystemExit(
-            f"error: {e.filename} already exists; refusing to overwrite a key "
+            f"error: {e.filename!r} already exists; refusing to overwrite a key "
             "(pass --force to replace it - the old key is lost)"
         ) from None
     print(f"{OK} generated ed25519 key")
@@ -479,7 +494,7 @@ def cmd_postreg(args) -> int:
         target = prereg_body.get("target")
         if not (isinstance(target, str | dict) and target):
             raise SystemExit(
-                f"error: --fulfills {args.fulfills} has no target to inherit (a non-empty "
+                f"error: --fulfills {args.fulfills!r} has no target to inherit (a non-empty "
                 "string or JSON object); give --target or --target-file"
             )
 
@@ -527,9 +542,11 @@ def cmd_verify(args) -> int:
     status = EXIT_OK if report["ok"] else EXIT_FAIL
     try:
         _show_report(report)
-        sys.stdout.flush()
-    except BrokenPipeError:  # the reader has gone: the rest of the report has no one to read it
-        _drop_stdout()
+        _flush_stdout()
+    except _StdoutError as e:
+        if not isinstance(e.error, BrokenPipeError):
+            raise  # e.g. a full device: the report was not written, an error (main)
+        _drop_stdout()  # the reader has gone: the rest of the report has no one to read it
     return status
 
 
@@ -863,14 +880,15 @@ def _domain_arg(value: str) -> str:
     return value
 
 
-def _json_arg(shape: Callable):
+def _json_arg(shape: Callable, max_depth: int = _FILE_DEPTH):
     """An argparse ``type`` for an inline JSON value: not empty, JSON under a manifest file's
-    rules (``_strict_json``), and held to ``shape``. A value that fails is a usage error."""
+    rules (``_strict_json``, at most ``max_depth`` deep), and held to ``shape``. A value that
+    fails is a usage error."""
 
     def parse(value: str):
         _nonempty_arg(value)
         try:
-            return shape(_strict_json(value))
+            return shape(_strict_json(value, max_depth))
         except ValueError as e:
             raise argparse.ArgumentTypeError(str(e)) from None
 
@@ -1013,7 +1031,7 @@ def build_parser() -> argparse.ArgumentParser:
     po.add_argument("--provenance", choices=["asserted", "reproducible"], default="asserted")
     po.add_argument(
         "--repro-recipe",
-        type=_json_arg(_repro_recipe_shape),
+        type=_json_arg(_repro_recipe_shape, _IN_BODY_DEPTH),
         help="JSON: {seed, decode, runtime} if provenance=reproducible",
     )
     _add_arg_or_file(po, "notes")
@@ -1080,37 +1098,103 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+# --------------------------------------------------------------------------- #
+# stdout: what writing the output can do
+# --------------------------------------------------------------------------- #
+class _StdoutError(Exception):
+    """Writing stdout failed: its reader closed it (``BrokenPipeError``), or the device is
+    full. Not an ``OSError``, so it is never taken for an input file's error."""
+
+    def __init__(self, error: OSError):
+        super().__init__(str(error))
+        self.error = error
+
+
+class _GuardedStdout:
+    """stdout, whose write and flush failures raise ``_StdoutError``."""
+
+    def __init__(self, stream):
+        self._stream = stream
+
+    def write(self, text: str) -> int:
+        try:
+            return self._stream.write(text)
+        except OSError as e:
+            raise _StdoutError(e) from None
+
+    def flush(self) -> None:
+        try:
+            self._stream.flush()
+        except OSError as e:
+            raise _StdoutError(e) from None
+
+    def __getattr__(self, name: str):
+        return getattr(self._stream, name)
+
+
+def _flush_stdout() -> None:
+    if sys.stdout is not None:  # None: started with stdout closed (``>&-``)
+        sys.stdout.flush()
+
+
 def _drop_stdout() -> None:
-    """Point stdout at the null device once its reader has gone, so no later write, nor
+    """Point stdout at the null device once it can't be written, so no later write, nor
     Python's flush at exit, fails again (which would print to stderr and exit 120)."""
     try:
         devnull = os.open(os.devnull, os.O_WRONLY)
         os.dup2(devnull, sys.stdout.fileno())
         os.close(devnull)
-    except (OSError, ValueError):  # no file descriptor behind stdout (a test's capture)
+    except (OSError, ValueError, AttributeError):  # no file descriptor behind stdout
         pass
 
 
-def _flush_stdout() -> None:
+def _escape_unencodable(stream) -> None:
+    """Show a character the stream's encoding lacks as its escape (``\u2713``), not a
+    ``UnicodeEncodeError`` (``PYTHONIOENCODING=ascii``, say)."""
     try:
-        sys.stdout.flush()
-    except BrokenPipeError:  # closed after the command finished: its exit status stands
-        _drop_stdout()
+        stream.reconfigure(errors="backslashreplace")
+    except (AttributeError, ValueError, OSError):  # None, or not a reconfigurable stream
+        pass
 
 
 def main(argv: list[str] | None = None) -> int:
+    stdout = sys.stdout
+    _escape_unencodable(sys.stdout)
+    _escape_unencodable(sys.stderr)
+    if stdout is not None:
+        sys.stdout = _GuardedStdout(stdout)
     try:
-        args = build_parser().parse_args(argv)
         try:
-            return args.func(args)
-        except BrokenPipeError:  # stdout closed while the command printed, before it ended
-            _drop_stdout()
-            sys.stderr.write("error: stdout was closed before the command finished\n")
-            return EXIT_ERROR
-        except (AsexecError, OSError) as e:
-            # an input the arguments name could not be used (missing or bad key file, failed
-            # fetch, ...): a message, not a traceback. verify turns these into FAILs itself.
-            sys.stderr.write(f"error: {e}\n")
-            return EXIT_ERROR
-    finally:
+            status = _run(argv)
+        except SystemExit:  # a usage error, --help, or an error message: flush what is printed
+            _flush_stdout()
+            raise
         _flush_stdout()  # what is still buffered, before the exit status is returned
+        return status
+    except _StdoutError as e:
+        _drop_stdout()
+        if isinstance(e.error, BrokenPipeError):  # closed while the command still printed
+            sys.stderr.write("error: stdout was closed before the command finished\n")
+        else:
+            sys.stderr.write(f"error: could not write the output: {e.error}\n")
+        return EXIT_ERROR
+    finally:
+        sys.stdout = stdout
+
+
+def _run(argv: list[str] | None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        status = args.func(args)
+    except (AsexecError, OSError) as e:
+        # an input the arguments name could not be used (missing or bad key file, failed
+        # fetch, ...): a message, not a traceback. verify turns these into FAILs itself.
+        sys.stderr.write(f"error: {e}\n")
+        return EXIT_ERROR
+    try:
+        _flush_stdout()
+    except _StdoutError as e:
+        if not isinstance(e.error, BrokenPipeError):
+            raise
+        _drop_stdout()  # closed after the command finished: its exit status stands
+    return status

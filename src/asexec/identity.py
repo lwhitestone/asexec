@@ -22,6 +22,7 @@ from .constants import (
     MANIFEST_PAYLOAD_TYPE,
 )
 from .errors import AsexecError, NetworkError
+from .manifest import parse_json
 
 
 def build_wellknown(keyid_pubkey_pairs: list[dict[str, str]], domain: str | None = None) -> dict:
@@ -53,9 +54,17 @@ def fetch_wellknown(domain: str, timeout: int = 10) -> dict:
     url = _wellknown_url(domain)
     try:
         with urllib.request.urlopen(url, timeout=timeout) as resp:
-            return json.load(resp)
+            data = resp.read()
     except Exception as e:
         raise NetworkError(f"could not fetch {url}: {e}") from e
+    try:  # a manifest file's JSON rules, so a document reads the same on every Python
+        return parse_json(data.decode("utf-8"))
+    except UnicodeDecodeError as e:
+        raise AsexecError(
+            f"{url} is not an asexec identity document: not UTF-8 text ({e})"
+        ) from None
+    except (ValueError, AsexecError) as e:
+        raise AsexecError(f"{url} is not an asexec identity document: {e}") from None
 
 
 def match_binding(

@@ -264,24 +264,25 @@ MAX_NESTING_DEPTH = 64
 _STRING_OR_BRACKET = re.compile(r'"(?:[^"\\]|\\.)*"|[\[\]{}]', re.DOTALL)
 
 
-def _check_nesting(text: str) -> None:
+def _check_nesting(text: str, max_depth: int = MAX_NESTING_DEPTH) -> None:
     depth = 0
     for match in _STRING_OR_BRACKET.finditer(text):
         token = match.group()
         if token in ("[", "{"):
             depth += 1
-            if depth > MAX_NESTING_DEPTH:
-                raise ManifestError(f"nested more than {MAX_NESTING_DEPTH} deep")
+            if depth > max_depth:
+                raise ManifestError(f"nested more than {max_depth} deep")
         elif token in ("]", "}"):
             depth -= 1
 
 
-def parse_json(text: str) -> Any:
+def parse_json(text: str, max_depth: int = MAX_NESTING_DEPTH) -> Any:
     """A JSON value held to the JSON rules of a manifest file: unique keys, nested at most
-    ``MAX_NESTING_DEPTH`` deep. Raises ``ManifestError`` for either rule, else a
-    ``ValueError`` if ``text`` is not JSON (``json.JSONDecodeError``, or an integer of more
-    digits than Python reads). The CLI holds every JSON value it is given to these rules."""
-    _check_nesting(text)
+    ``max_depth`` deep (``MAX_NESTING_DEPTH`` unless the value is to sit inside a body). Raises
+    ``ManifestError`` for either rule, else a ``ValueError`` if ``text`` is not JSON
+    (``json.JSONDecodeError``, or an integer of more digits than Python reads). The CLI holds
+    every JSON value it is given to these rules."""
+    _check_nesting(text, max_depth)
     return json.loads(text, object_pairs_hook=_reject_duplicate_keys)
 
 
