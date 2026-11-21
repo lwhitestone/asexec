@@ -31,6 +31,12 @@ jobs:
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
           ver="${tag#v}"
+          # The forms scripts/release.sh accepts: X.Y.Z, or the PEP 440 beta X.Y.ZbN.
+          num='(0|[1-9][0-9]*)'
+          if [[ ! "$ver" =~ ^$num\.$num\.$num(b$num)?$ ]]; then
+            echo "::error::tag ${tag} is not vX.Y.Z or vX.Y.ZbN"
+            exit 1
+          fi
           py_ver="$(sed -nE 's/^version = "([^"]+)"/\1/p' pyproject.toml)"
           init_ver="$(sed -nE 's/^__version__ = "([^"]+)"/\1/p' src/asexec/__init__.py)"
           if [[ "$ver" != "$py_ver" || "$ver" != "$init_ver" ]]; then
@@ -153,7 +159,7 @@ jobs:
           asexec keygen --out ci.key
           asexec prereg --key ci.key --subject ci.key.pub --due 2099-01-01T00:00:00Z \
             --target "model m via provider p" --out pre.json
-          asexec verify pre.json --tests BDR
+          asexec verify pre.json --tests format,selfsig
 
   publish-pypi:
     needs: smoke-testpypi
@@ -186,4 +192,12 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
+        run: |
+          set -euo pipefail
+          # A beta (vX.Y.ZbN) is a GitHub prerelease; verify-release admits only these forms.
+          prerelease=()
+          if [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+b[0-9]+$ ]]; then
+            prerelease=(--prerelease)
+          fi
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --generate-notes "${prerelease[@]}"

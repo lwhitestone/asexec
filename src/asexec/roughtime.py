@@ -3,10 +3,11 @@
 A ceiling proves a manifest was created *no later than* time T. Unlike the drand
 floor (a public beacon, embeddable in the signed body), a ceiling needs an
 external witness that ingested ``hash(M)`` and attested a time - so it attaches
-at the envelope level (its nonce is ``ref(payload)``, which cannot live inside
-the body it hashes). 0.2.0+ uses Roughtime: a server signs a response committing
-to the client's nonce and a timestamp, under a long-lived key we pin. Verification
-is therefore fully offline against a pinned constant, exactly like a drand round.
+in the file's wrapper, outside ``dsse`` (its nonce is ``ref``, the hash of the body
+bytes, which cannot live inside the body it hashes). 0.2.0+ uses Roughtime: a server
+signs a response committing to the client's nonce and a timestamp, under a long-lived
+key we pin. Verification is therefore fully offline against a pinned constant, exactly
+like a drand round.
 The trust class here is a signature-witness's "trust these signers about time"
 (a *different* trust class, surfaced explicitly by the verifier).
 
@@ -45,7 +46,7 @@ Verification (offline)
   3. ``SIG`` verifies ``SREP`` under the delegated key ``DELE.PUBK``.
   4. The Merkle path (``PATH``,``INDX``) roots the client nonce at ``SREP.ROOT``.
   5. ``DELE.MINT <= SREP.MIDP <= DELE.MAXT`` (the online key was valid then).
-  6. The nonce equals ``ref(payload)`` (checked by the caller).
+  6. The nonce equals ``ref``, of the stored body bytes (checked by the caller).
 
 **Reconciliation status:** the wire format is confirmed against a *live*
 ``int08h-Roughtime`` response - a real captured response is baked as an offline
@@ -233,10 +234,13 @@ def merkle_root(nonce: bytes, path: bytes, index: int) -> bytes:
 # --------------------------------------------------------------------------- #
 # verification
 # --------------------------------------------------------------------------- #
-def verify_response(response: bytes, nonce: bytes, long_term_pubkey: bytes) -> dict[str, float]:
+def verify_response(
+    response: bytes, nonce: bytes, long_term_pubkey: bytes
+) -> dict[str, float | int]:
     """Verify a raw Roughtime response against a nonce and a PINNED long-term key.
 
-    Returns ``{"midpoint": <unix seconds>, "radius": <seconds>}`` on success;
+    Returns ``{"midpoint": <unix seconds>, "radius": <seconds>, "midpoint_us": MIDP,
+    "radius_us": RADI}`` on success (the ``_us`` values are the signed integers, exact);
     raises ``VerificationError`` on any failed check (fail-safe - a parse or
     signature problem is a rejection, never a silent pass).
     """
@@ -280,7 +284,7 @@ def verify_response(response: bytes, nonce: bytes, long_term_pubkey: bytes) -> d
     if not (mint <= midp <= maxt):
         raise VerificationError("roughtime midpoint outside delegation validity window")
 
-    return {"midpoint": midp / 1e6, "radius": radi / 1e6}
+    return {"midpoint": midp / 1e6, "radius": radi / 1e6, "midpoint_us": midp, "radius_us": radi}
 
 
 def verify_ceiling(
@@ -333,6 +337,8 @@ def verify_ceiling(
     out["status"] = "verified"
     out["midpoint"] = info["midpoint"]
     out["radius"] = info["radius"]
+    out["midpoint_us"] = info["midpoint_us"]
+    out["radius_us"] = info["radius_us"]
     return out
 
 

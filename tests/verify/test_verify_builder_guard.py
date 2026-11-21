@@ -10,16 +10,25 @@ import json
 import manifest_data as d
 import pytest
 
+import asexec
 from asexec import manifest
 from asexec.verifier import verify_paths
 
-TESTS = ["BDR", "chain", "content", "floor", "keyconsist"]  # sorted, as a code lists them
+TESTS = [
+    "chain",
+    "content",
+    "floor",
+    "format",
+    "keyconsist",
+    "selfsig",
+]  # sorted, as a code lists them
 ALL_PASS = "asexec-verify/1 " + " ".join(f"{name}=PASS" for name in TESTS)
 
 
 def _built(raw):
     """What the writer builds from the same inputs as the raw body."""
-    args = {k: raw[k] for k in ("due", "declaration", "subject", "hash_alg", "notes") if k in raw}
+    fields = ("due", "declaration", "subject", "notes", "plan", "items", "item_id", "status")
+    args = {k: raw[k] for k in (*fields, "evidence") if k in raw}
     if "anchor" in raw:
         args["floor"] = raw["anchor"]["floor"]
     if raw["phase"] == "prereg":
@@ -32,11 +41,14 @@ POSTREG_TO_IT = d.with_field(d.POSTREG, "fulfills", d.ref(PREREG_WITH_FLOOR))
 
 
 @pytest.mark.parametrize(
-    "raw", [d.PREREG, d.POSTREG, PREREG_WITH_FLOOR], ids=["prereg", "postreg", "prereg-floor"]
+    "raw",
+    [d.PREREG, d.POSTREG, PREREG_WITH_FLOOR, d.CLAIM_PREREG, d.CLAIM_POSTREG],
+    ids=["prereg", "postreg", "prereg-floor", "claim-prereg", "claim-postreg"],
 )
 def test_guard__writer_builds_the_raw_body_and_envelope(raw):
     assert _built(raw) == raw
-    assert manifest.sign(_built(raw), *d.TEST_KEY) == d.sign(raw)
+    written = manifest.sign(_built(raw), *d.TEST_KEY)
+    assert written == {**d.sign(raw), "untrusted": {"asexec_version": asexec.__version__}}
 
 
 def test_guard__writer_output_and_raw_data_verify_alike(tmp_path):
@@ -46,7 +58,9 @@ def test_guard__writer_output_and_raw_data_verify_alike(tmp_path):
     codes = []
     for source in ("writer", "raw"):
         paths = []
-        for name, raw in (("pre", PREREG_WITH_FLOOR), ("post", POSTREG_TO_IT)):
+        pairs = [("pre", PREREG_WITH_FLOOR), ("post", POSTREG_TO_IT)]
+        pairs += [("claim-pre", d.CLAIM_PREREG), ("claim-post", d.CLAIM_POSTREG)]
+        for name, raw in pairs:
             env = manifest.sign(_built(raw), *d.TEST_KEY) if source == "writer" else d.sign(raw)
             path = tmp_path / f"{source}-{name}.json"
             path.write_text(json.dumps(env))

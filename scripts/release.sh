@@ -5,26 +5,43 @@
 # Usage:
 #   scripts/release.sh [--no-check] VERSION
 #
+# VERSION is X.Y.Z or a PEP 440 beta of a line's first release, X.Y.0bN, in
+# normalized form (no leading zeros), so the tag, the version declarations and
+# the built file names agree. Ordering against earlier releases is not checked.
+#
 # Examples:
-#   scripts/release.sh 0.3.4
-#   scripts/release.sh --no-check 0.3.4
+#   scripts/release.sh 0.4.0b1
+#   scripts/release.sh 0.4.0
+#   scripts/release.sh --no-check 0.4.1
 #
 # What it does:
 #   1. Verifies the working tree is clean and on the main branch
 #   2. Verifies src/asexec/__init__.py and pyproject.toml agree on the
 #      current version, and that VERSION is new
 #   3. Verifies tag vVERSION doesn't already exist locally or on origin
-#   4. Updates both version declarations to VERSION
+#   4. Updates both version declarations to VERSION, and sets the payloadType
+#      the release writes (below)
 #   5. Runs scripts/check.sh (lint + tests) unless --no-check is passed
 #   6. Commits ("Release vVERSION"), creates an annotated tag, and pushes
 #      both to origin
+#
+# The payloadType (docs/DEVELOPMENT.md, Releasing): the release commit rewrites
+# the MANIFEST_PAYLOAD_TYPE literal in src/asexec/constants.py and its pinned
+# literal in tests/test_constants.py. This script is the sanctioned way to
+# change them. A beta writes application/vnd.asexec.X.Y.ZbN+json, under the
+# FORMATS entry under development, which is keyed by the name
+# MANIFEST_PAYLOAD_TYPE. A full release writes its line's format, from
+# RELEASE_PAYLOAD_TYPES below, and a line with none is refused. The first full
+# release of a line (X.Y.0) releases the entry under development: its key
+# becomes the type's literal, which never changes after that. Main keeps the
+# type the last release commit set until the next release commit.
 #
 # Pushing the tag triggers .github/workflows/publish.yml (CI → TestPyPI →
 # smoke test → manual approval → PyPI → GitHub Release). The workflow
 # rejects tags that are not on main, so this script refuses to run on any
 # other branch. The script itself still does not build or upload anything.
-# If anything fails before the release commit, the version file edits are
-# automatically reverted.
+# If anything fails before the release commit, every file it edits (the two
+# version declarations, uv.lock and the two payloadType files) is restored.
 
 set -euo pipefail
 
@@ -48,6 +65,8 @@ TAG="v$VERSION"
 INIT_FILE="src/asexec/__init__.py"
 PYPROJECT_FILE="pyproject.toml"
 LOCK_FILE="uv.lock"
+CONSTANTS_FILE="src/asexec/constants.py"
+PINS_FILE="tests/test_constants.py"
 CHECK_SCRIPT="scripts/check.sh"
 REMOTE="origin"
 CLEANUP_NEEDED=false
@@ -64,15 +83,26 @@ fi
 
 cleanup() {
     if [[ "$CLEANUP_NEEDED" == true ]]; then
-        git restore -- "$INIT_FILE" "$PYPROJECT_FILE" "$LOCK_FILE"
+        # From HEAD, index and worktree both: if `git commit` itself fails (a hook,
+        # say), the files are already staged.
+        git restore --source=HEAD --staged --worktree -- "$INIT_FILE" "$PYPROJECT_FILE" \
+            "$LOCK_FILE" "$CONSTANTS_FILE" "$PINS_FILE"
     fi
 }
 
 trap cleanup EXIT
 
-# Validate the version.
-if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "Error: version must look like X.Y.Z"
+# Validate the version: X.Y.Z or X.Y.ZbN, with no leading zeros.
+NUM="(0|[1-9][0-9]*)"
+if [[ ! "$VERSION" =~ ^$NUM\.$NUM\.$NUM(b$NUM)?$ ]]; then
+    echo "Error: version must look like X.Y.Z or X.Y.ZbN (a PEP 440 beta), with no leading zeros"
+    exit 2
+fi
+
+# A beta comes before a line's first release, X.Y.0. (Ordering against earlier
+# releases is not checked.)
+if [[ -n "${BASH_REMATCH[4]}" && "${BASH_REMATCH[3]}" != "0" ]]; then
+    echo "Error: a beta must be of an X.Y.0 release (X.Y.0bN), not of a patch"
     exit 2
 fi
 
@@ -160,54 +190,138 @@ if [[ "$SKIP_CHECK" == false ]]; then
     fi
 fi
 
-# Restore version files if anything fails before the release commit.
+# Restore the edited files if anything fails before the release commit.
 CLEANUP_NEEDED=true
 
-# Update the version declarations.
+# Update the version declarations and the payloadType. Every edit is checked
+# before any file is written.
 echo
-echo "Updating version declarations..."
+echo "Updating version declarations and payloadType..."
 
-"$PYTHON" - "$VERSION" "$INIT_FILE" "$PYPROJECT_FILE" <<'PY'
+"$PYTHON" - "$VERSION" "$INIT_FILE" "$PYPROJECT_FILE" "$CONSTANTS_FILE" "$PINS_FILE" <<'PY'
 import pathlib
 import re
 import sys
 
-version, init_name, pyproject_name = sys.argv[1:]
+version, init_name, pyproject_name, constants_name, pins_name = sys.argv[1:]
 
-files = [
-    (
-        init_name,
-        r'(?m)^(__version__ = ")[^"]+(")$',
-    ),
-    (
-        pyproject_name,
-        r'(?m)^(version = ")[^"]+(")$',
-    ),
-]
+# The payloadType each release line's full releases write. A full release of a
+# line with no entry here is refused rather than guessed: add the line once its
+# format is decided (docs/MULTIVERSION.md).
+RELEASE_PAYLOAD_TYPES = {
+    "0.4": "application/vnd.asexec.v1+json",
+}
 
-for filename, pattern in files:
-    path = pathlib.Path(filename)
-    text = path.read_text()
+major, minor, patch, beta = re.fullmatch(
+    r"([0-9]+)\.([0-9]+)\.([0-9]+)(b[0-9]+)?", version
+).groups()
+line = f"{major}.{minor}"
 
-    updated, count = re.subn(
-        pattern,
-        rf'\g<1>{version}\g<2>',
-        text,
+if beta:
+    payload_type = f"application/vnd.asexec.{version}+json"
+elif line in RELEASE_PAYLOAD_TYPES:
+    payload_type = RELEASE_PAYLOAD_TYPES[line]
+else:
+    raise SystemExit(
+        f"Error: no payloadType is set for full releases of {line}; add it to "
+        "RELEASE_PAYLOAD_TYPES in scripts/release.sh"
     )
 
+# The FORMATS entry under development is keyed by the name, a released one by
+# its literal.
+NAME_KEY = r"(?m)^    MANIFEST_PAYLOAD_TYPE: \{$"
+literal_key = f'    "{payload_type}": {{'
+LITERAL_KEY = "(?m)^" + re.escape(literal_key) + "$"
+
+texts = {}
+
+
+def text_of(filename):
+    if filename not in texts:
+        texts[filename] = pathlib.Path(filename).read_text()
+    return texts[filename]
+
+
+def rewrite(filename, pattern, replacement, what):
+    updated, count = re.subn(pattern, lambda _: replacement, text_of(filename))
     if count != 1:
         raise SystemExit(
-            f"{filename}: expected exactly one version declaration, "
-            f"found {count}"
+            f"Error: {filename}: expected exactly one {what}, found {count}"
         )
+    texts[filename] = updated
 
-    path.write_text(updated)
+
+def occurrences(filename, pattern):
+    return len(re.findall(pattern, text_of(filename)))
+
+
+rewrite(
+    init_name,
+    r'(?m)^__version__ = "[^"]+"$',
+    f'__version__ = "{version}"',
+    "version declaration",
+)
+rewrite(
+    pyproject_name,
+    r'(?m)^version = "[^"]+"$',
+    f'version = "{version}"',
+    "version declaration",
+)
+rewrite(
+    constants_name,
+    r'(?m)^MANIFEST_PAYLOAD_TYPE = "[^"]+"$',
+    f'MANIFEST_PAYLOAD_TYPE = "{payload_type}"',
+    "MANIFEST_PAYLOAD_TYPE literal",
+)
+rewrite(
+    pins_name,
+    r'(?m)^    assert constants\.MANIFEST_PAYLOAD_TYPE == "[^"]+"$',
+    f'    assert constants.MANIFEST_PAYLOAD_TYPE == "{payload_type}"',
+    "pinned MANIFEST_PAYLOAD_TYPE literal",
+)
+
+if beta:
+    # A beta's type names the entry under development, so it must exist.
+    if occurrences(constants_name, NAME_KEY) != 1:
+        raise SystemExit(
+            f"Error: {constants_name}: a beta writes the FORMATS entry under "
+            "development, but there is not exactly one keyed by MANIFEST_PAYLOAD_TYPE"
+        )
+elif patch == "0":
+    # The first full release of a line releases the entry under development,
+    # whose literal key must not exist yet.
+    if occurrences(constants_name, LITERAL_KEY) != 0:
+        raise SystemExit(
+            f"Error: {constants_name}: an entry is already keyed by {payload_type}, "
+            "so releasing the entry under development would duplicate that key"
+        )
+    rewrite(
+        constants_name,
+        NAME_KEY,
+        literal_key,
+        "FORMATS entry keyed by MANIFEST_PAYLOAD_TYPE (the entry to release)",
+    )
+elif occurrences(constants_name, NAME_KEY) != 0 or (
+    occurrences(constants_name, LITERAL_KEY) != 1
+):
+    # A later release of the line writes the format its X.Y.0 released, and no
+    # entry under development may share that key.
+    raise SystemExit(
+        f"Error: {constants_name}: a {line} release writes the released "
+        f"{payload_type} entry, which must be keyed by its literal, with no entry "
+        "keyed by MANIFEST_PAYLOAD_TYPE"
+    )
+
+for filename, text in texts.items():
+    pathlib.Path(filename).write_text(text)
+
+print(f"payloadType: {payload_type}")
 PY
 
 # Show and validate the changes.
 echo
-echo "Version changes:"
-git diff -- "$INIT_FILE" "$PYPROJECT_FILE"
+echo "Release changes:"
+git diff -- "$INIT_FILE" "$PYPROJECT_FILE" "$CONSTANTS_FILE" "$PINS_FILE"
 
 # Run lint + tests unless explicitly skipped. This may also update uv.lock
 # (e.g. via `uv sync`/`uv run` picking up the new project version).
@@ -228,7 +342,7 @@ git diff --check
 echo
 echo "Creating release commit..."
 
-git add "$INIT_FILE" "$PYPROJECT_FILE"
+git add "$INIT_FILE" "$PYPROJECT_FILE" "$CONSTANTS_FILE" "$PINS_FILE"
 
 if [[ -n "$(git status --porcelain -- "$LOCK_FILE")" ]]; then
     echo "  (including updated $LOCK_FILE)"

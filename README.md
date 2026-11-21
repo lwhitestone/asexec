@@ -43,24 +43,29 @@ in the form of `asexec verify` providing a code regarding the checks applied.
 
 ### What `asexec` always proves
 
-Every `verify` run checks [`BDR`](./docs/VERIFICATION.md#bdr) and renders the state of each
-commitment (a pre-registration and its signer):
+Every `verify` run checks [`format`](./docs/VERIFICATION.md#format) and
+[`selfsig`](./docs/VERIFICATION.md#selfsig), and renders the state of each commitment (a
+validly signed pre-registration and its signer):
 
 - **Integrity and non-repudiation.** A manifest (pre-registration or post-registration) was
   not altered after signing, and was signed by the private key whose public key its `keyid`
   names, so the holder of that key cannot later deny signing it.
-- **What was committed to.** The signature covers the whole `payload`: its `target` (which
-  `asexec prereg` and `postreg` always write) and, in a post-registration, the
-  pre-registration it `fulfills`.
-- **Commitment state.** Each commitment is rendered as `fulfilled`, `open`,
+- **What was committed to.** The signature covers the whole body, the bytes `dsse.payload`
+  stores, exactly as stored: its `target` (which `asexec prereg` and `postreg` always
+  write) and, in a post-registration, the pre-registration it `fulfills`.
+- **Commitment state.** Each commitment is rendered as `fulfilled`, `no-due`, `open`,
   `elapsed-no-postreg` or `invalid-due`. A post-registration that names a pre-registration
   counts toward fulfilling it only if validly signed by that pre-registration's private key;
-  otherwise it is listed under it as *rejected*, with the reason. A post-registration whose
-  pre-registration was not provided belongs to no commitment, so it has no state: it is
-  listed as *notarization-only*. Silence is on the record too: a pre-registration with no
-  counted post-registration reads `elapsed-no-postreg` once its deadline (`due`) passes. But
-  `asexec` does **not** yet check that a post-registration was created before `due`, so a
-  late one still turns it `fulfilled`; that check (`timely`) arrives in 0.4.0.
+  otherwise it is listed under it as *rejected*, with the reason. A pre-registration whose
+  own signature is invalid is no commitment, so it has no state and nothing counts toward
+  it: it is listed as a *rejected pre-registration*, and each post-registration that names
+  it is listed beneath it as rejected. A post-registration whose pre-registration was not
+  provided belongs to no commitment, so it has no state: it is listed as
+  *notarization-only*. Silence is on the record too: a pre-registration with no
+  counted post-registration reads `elapsed-no-postreg` once its deadline (`due`) passes, and
+  `no-due` if it declared none. A state says only whether it was reported: a late
+  post-registration still turns it `fulfilled`, and whether it came before `due` is the
+  [`timely`](./docs/VERIFICATION.md#timely) test's to say (below).
 
 ### What `asexec` can prove (optional fields and tests)
 
@@ -71,18 +76,38 @@ test:
   artifacts the verifier holds match the digests a manifest records.
 - **Chain** (`prev_hash`; [`chain`](./docs/VERIFICATION.md#chain)). The counted
   post-registrations of a commitment form a single linear chain: one root, no gaps, no
-  forks. *Dropping the last post-registration(s) of a chain is **not** detectable yet;
-  close-out manifests (`final`) are deferred to 0.7.0 or later.*
+  forks. *Dropping the last post-registration(s) of a chain is **not** detectable by
+  `chain`; close-out manifests (`final`) are deferred to 0.7.0 or later. A claim that lists
+  its items can use `complete` (below).*
+- **Every item accounted for** (`items` in the pre-registration, `item_id` and `status` in
+  each post-registration; [`complete`](./docs/VERIFICATION.md#complete)). Each item the
+  pre-registration lists has a counted post-registration with its `item_id` and a status of
+  `reported`, `excluded` or `blocked`, and, if the pre-registration has a `due`, one that is
+  on time as `timely` judges it. A dropped item fails it.
 - **Key consistency** ([`keyconsist`](./docs/VERIFICATION.md#keyconsist)). Every validly
-  signed post-registration that names a pre-registration was signed with the key of a
-  provided pre-registration with that body.
+  signed post-registration that names a commitment was signed with the key of a validly
+  signed pre-registration with that body.
 - **Created no earlier than** (`anchor.floor`; [`floor`](./docs/VERIFICATION.md#floor)). A
   manifest was created after a public moment: a [drand](https://drand.love/) beacon round it
-  embeds.
+  embeds. `--floor` fetches the latest round when signing; `--floor-round` signs with a round
+  fetched earlier, such as the one a run fetched when it started.
 - **Created no later than** (`ceiling`; [`ceiling`](./docs/VERIFICATION.md#ceiling)). A
   manifest existed by time T: a
   [Roughtime](https://datatracker.ietf.org/doc/draft-ietf-ntp-roughtime/) server signed its
   hash (a signature-witness, not proof-of-work).
+- **On time** (`due` and a `ceiling` on each post-registration;
+  [`timely`](./docs/VERIFICATION.md#timely)). Each counted post-registration existed by its
+  pre-registration's `due`: its ceiling verifies, and the latest time the witness allows
+  (`midpoint + radius`) is at or before `due`. A post-registration without a valid ceiling
+  is not shown on time. A pre-registration with no `due` is not examined.
+- **Pre-registered before the post-registration was made** (a `ceiling` on the
+  pre-registration, an `anchor.floor` on each post-registration;
+  [`order`](./docs/VERIFICATION.md#order)). The pre-registration's ceiling (the latest time
+  the witness allows) is before each counted post-registration's floor round, so the
+  pre-registration existed before the post-registration was made. *It bounds the run only as
+  tightly as the run's use of that round: a round the run fetched when it started and used
+  (as its seed, say) lets a re-execution check it; a round it merely records, or one
+  `--floor` fetched at signing, proves nothing about when the run started.*
 
 ### What `asexec` cannot prove
 
@@ -123,9 +148,10 @@ pip install 'asexec[blake3]'  # optional: blake3 as a content-hash algorithm
 # 1. Practitioner, one-time: generate a pseudonymous keypair (no CA, no registration)
 asexec keygen --out lab.key   # refuses to overwrite an existing key unless --force
 
-# 2. Practitioner, BEFORE the run: pre-register the target
+# 2. Practitioner, BEFORE the run: pre-register the target. A subject lists files (no
+#    directories), each named by its path relative to the current directory.
 asexec prereg --key lab.key \
-    --subject ./harness \
+    --subject harness/run.py harness/config.yaml \
     --target "claude-opus-4-8 via the anthropic API" \
     --due 2099-01-01T00:00:00Z \
     --declaration "all runs of this harness against this model, in full" \
@@ -133,14 +159,34 @@ asexec prereg --key lab.key \
 
 # 3. Practitioner, AFTER each run: post-register the run
 asexec postreg --key lab.key --fulfills preregistration.json \
-    --subject ./transcript.txt ./harness \
+    --subject transcript.txt harness/run.py harness/config.yaml \
     --out postregistration.json
 
 # 4. Any verifier, anytime: verify the cycle and render the commitment state.
-#    --tests names exactly which checks to run; 'BDR' (sig + keyid) is required.
+#    --tests names exactly which checks to run; 'format' (the file can be read) and
+#    'selfsig' (sig + keyid) are required. --artifacts is the directory the subjects'
+#    names are relative to.
 asexec verify preregistration.json postregistration.json \
-    --tests BDR,content,chain,keyconsist --artifacts .
+    --tests format,selfsig,content,chain,keyconsist --artifacts .
 ```
+
+To show the run came after the pre-registration ([`order`](./docs/VERIFICATION.md#order)),
+pre-register with `--ceiling`, and have the run fetch a drand round when it starts, use it
+(as its seed, say), and save the response; then sign its post-registration with that round:
+
+```bash
+# when the run starts: the latest round of the quicknet chain, which --floor uses too
+curl -s https://api.drand.sh/52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971/public/latest > round.json
+#   -> {"round": 31036100, "randomness": "c3d4e5f6…", "signature": "8d2f1c3a…"}
+
+asexec postreg --key lab.key --fulfills preregistration.json \
+    --floor-round-file round.json --out postregistration.json
+```
+
+`--floor-round` takes the same JSON inline. The round must be exactly what drand's HTTP API
+returns for a round (`round`, `randomness`, `signature`, of the chain `--floor` uses); it is
+verified at signing, offline, and a round that does not verify is refused. It excludes
+`--floor`.
 
 For a detailed look at parameters and options, see: `asexec --help`.
 
@@ -152,24 +198,28 @@ For a worked end-to-end run, with faults replayed against the verifier, see
 | Status | Meaning |
 |---|---|
 | `0` | Success. For `verify`, every requested test is `PASS`; for `identity match`, the key is bound to the domain. |
-| `1` | Error: the arguments are valid, but the command could not complete with the files or network they name, e.g. a missing or invalid key file, an unreadable `--subject` or `--target-file`, a key file it refuses to overwrite, a failed `identity match` fetch, or a failed `--floor`/`--ceiling` fetch without `--best-effort`. An `error: ...` line is printed; a few bad inputs still print a traceback instead ([#45](https://github.com/lwhitestone/asexec/issues/45)). |
+| `1` | Error: the arguments are valid, but the command could not complete with the files or network they name, e.g. a missing or invalid key file; an unreadable `--subject`; a `--…-file` that is missing, a directory, or does not hold what its option takes (UTF-8 JSON text with no repeated key, nested at most 64 deep counting its outermost array or object as 1, of the option's shape: for `--target-file`, `--declaration-file` and `--notes-file` a non-empty JSON object or string at most 63 deep, since the body holds it one level down and is itself at most 64; for `--floor-round-file` a round that verifies); a `--fulfills` file that fails `format` (malformed, or of a format this release does not read), or that has no target to inherit when none is given; a `--subject` path, or a name in a `--plan-file` or `--evidence-file`, that no manifest can hold (with a NUL character, or one with no UTF-8 form); a key file it refuses to overwrite; a failed `identity match` fetch, or a document there that is not an identity document; a failed `--floor`/`--ceiling` fetch without `--best-effort`; or a stdout that can't be written, such as a full device. One `error: ...` line is printed (after any `--best-effort` warning), never a traceback. |
 | `2` | `verify`: at least one requested test is `FAIL`. `identity match`: the key is not bound. |
-| `64` | Usage error: the arguments themselves are wrong, whatever the files hold. For example: an unknown command or option; a missing argument; two that exclude each other, such as `--target` and `--target-file`; a `--due` without an explicit offset; a `--tests` that names an unknown test, names none, or omits `BDR`; or for `identity match`, not exactly one of `--keyid`, `--pubkey` and `--key`. Usage is printed and nothing runs (`verify` prints no code). A few argument mistakes, such as an empty value, are not caught yet ([#45](https://github.com/lwhitestone/asexec/issues/45)). |
+| `64` | Usage error: the arguments themselves are wrong, whatever the files hold. For example: an unknown command or option; a missing argument; an empty value, for any option or path; two that exclude each other, such as `--target` and `--target-file`, or `--floor` and `--floor-round`; a `--due` that is not an ISO-8601 time with an explicit offset; a `--tests` that names an unknown test, names none, or omits `format` or `selfsig`; an inline `--plan`, `--items`, `--evidence`, `--floor-round` or `--repro-recipe` value that is not JSON, repeats a key, nests more than 64 deep (63 for `--repro-recipe`, which the body holds one level down), or is not of its shape (`--repro-recipe` is an object; a `--plan` or `--evidence` name holds no NUL and has a UTF-8 form), or an inline `--floor-round` that does not verify (`--best-effort` does not sign without it); a `--status` other than `reported`, `excluded` or `blocked`; a `--domain` holding whitespace or a control character; or for `identity match`, not exactly one of `--keyid`, `--pubkey` and `--key`. Usage is printed and nothing runs (`verify` prints no code). |
 
-For `verify`, malformed manifest input is a `FAIL`, never an error.
+For `verify`, malformed manifest input is a `FAIL`, never an error. Its exit status is its
+verdict even when stdout closes before the report is printed, as in
+`asexec verify … | head -1`.
 
 ### Verification output
 
 What each test examines, its exact pass criteria, and what it does not establish are
 specified in the [verification catalog](./docs/VERIFICATION.md).
 
-`verify` runs the tests you name and prints a report for people to read (each manifest,
-each commitment with its state, any notarization-only post-registrations, and each test's
-result with a short reason), then one canonical code, then `Checked at <time>` (UTC, the
-moment commitment states were judged against), e.g.:
+`verify` runs the tests you name and prints a report for people to read (each manifest; what
+nothing checked, under its own headings: each file's unsigned `untrusted` section and any
+key outside the body the format does not define, and any body field it does not define; each
+commitment with its state, any rejected pre-registrations, any notarization-only
+post-registrations, and each test's result with a short reason), then one canonical code,
+then `Checked at <time>` (UTC, the moment commitment states were judged against), e.g.:
 
 ```
-asexec-verify/1 BDR=PASS chain=PASS content=PASS keyconsist=PASS
+asexec-verify/1 chain=PASS content=PASS format=PASS keyconsist=PASS selfsig=PASS
 Checked at 2026-12-31T23:59:59Z
 ```
 
@@ -181,70 +231,94 @@ Grammar (`asexec-verify/1` versions the code format): the literal prefix, then o
 single-space delimited. The same result set is byte-identical everywhere.
 
 - You declare your appetite. `--tests` is required and must include
-  [`BDR`](./docs/VERIFICATION.md#bdr); every other test is opt-in (see
+  [`format`](./docs/VERIFICATION.md#format) and
+  [`selfsig`](./docs/VERIFICATION.md#selfsig); every other test is opt-in (see
   [What `asexec` can prove](#what-asexec-can-prove-optional-fields-and-tests)).
 - Named, not scored, so it's forward-compatible. Because the code names which tests
   ran, adding a test in a later version can never change the meaning of an older code. A code
   means exactly one thing, permanently, from `0.4.0`; until then a test's documented meaning
   may still be corrected (see [Status](#status)).
 - A requested test with nothing to examine is *empty* and `FAIL`, never a silent omission
-  or a pass (e.g. `--tests BDR,ceiling` on manifests with no ceiling -> `ceiling=FAIL`).
+  or a pass (e.g. `--tests format,selfsig,ceiling` on manifests with no ceiling -> `ceiling=FAIL`).
 - The code is not a certificate. Real verification comes from the verifier running the tool
   against the files and getting the code.
 
 ## Manifest at a glance
 
 A pre-registration and a post-registration that fulfills it, as would be built by
-`asexec prereg` and `asexec postreg`, with every field filled in. Fields marked `required`
-are the only ones `verify` needs to read a manifest at all; without one, the file is
-malformed. Every other field is optional: leaving it out is structurally fine, and whether
-a manifest meets a bar is up to the [tests](#what-asexec-can-prove-optional-fields-and-tests)
-you request. Fields marked `always` are always written by `asexec prereg` or `asexec postreg`;
-the rest are the practitioner's call.
+`asexec prereg` and `asexec postreg`, with every field filled in. Each file is a standard
+[DSSE](https://github.com/secure-systems-lab/dsse) envelope, `dsse`, in an asexec wrapper.
+The signed body is stored as bytes: `dsse.payload` is their base64, and the body is the JSON
+object they hold, shown decoded below each file. Fields marked `required` are the only ones
+`verify` needs to read a manifest at all; without one, or with a `payload` that is not
+strict base64 of a JSON object, the file is malformed. Every other field is optional to
+read: leaving it out is structurally fine, and whether a manifest meets a bar is up to the
+[tests](#what-asexec-can-prove-optional-fields-and-tests) you request (the required
+[`selfsig`](./docs/VERIFICATION.md#selfsig) needs `pubkey` and the one signature's `keyid`
+and `sig`). Fields marked `always` are always written by `asexec prereg` or
+`asexec postreg`; the rest are the practitioner's call.
 
 **Pre-registration**
 
 ```jsonc
 {
-  "payloadType": "application/vnd.asexec+json",
-  "payload": {                                       // required: the signed body
-    "schema_id": "asexec",                           // always
-    "predicateType": "https://asexec.dev/manifest",  // always
-    "phase": "prereg",                               // always: prereg | postreg
-    "target": "claude-opus-4-8 via the anthropic API", // always: text or JSON
-    "due": "2099-01-01T00:00:00Z",                   // deadline; none = stays open
-    "declaration": "all runs of this harness against this model, in full", // text or JSON
-    "subject": [                                     // artifacts, hashed
-      { "name": "harness/", "digest": { "sha-256": "2c26b46b…" } }
-    ],
-    "hash_alg": "sha-256",                           // always with subject
-    "anchor": {
-      "floor": {                                     // drand (--floor): not before
-        "floor_type": "drand",
-        "chain_hash": "52db9ba7…",
-        "round": 21102400,
-        "signature": "b7e04a19…",
-        "randomness": "1f0c9d2e…"
+  "dsse": {                                             // required: the DSSE envelope
+    "payloadType": "application/vnd.asexec.v1+json",    // required: the format; must be one this release reads
+    "payload": "eyJhbmNob3IiOnsiZmxvb3IiOnsiY2hh…",     // required: base64 of the body bytes, below
+    "signatures": [                                     // required: always exactly one
+      {
+        "keyid": "sha-256:8f3e0a91…",                   // always: sha-256 of pubkey
+        "sig": "OpHA3nT0…"                              // always: base64, over DSSE's PAE of the body bytes
       }
-    },
-    "identity": ["lab.example"],                     // free-form list
-    "notes": "hypothesis: refusal rate under 2%"     // text or JSON
+    ]
   },
-  "signature": {                                     // required
-    "alg": "ed25519",
-    "keyid": "sha-256:8f3e0a91…",                    // always: sha-256 of pubkey
-    "pubkey": "d75a9801…",                           // required: hex
-    "sig": "3a91c0de…"                               // required: hex
-  },
-  "ceiling": {                                       // Roughtime (--ceiling): not after
+  "pubkey": "d75a9801…",                                // always: hex
+  "ceiling": {                                          // Roughtime (--ceiling): not after
     "ceiling_type": "roughtime",
     "witness_id": "int08h-Roughtime",
     "pubkey": "016e6e02…",
-    "nonce": "4be1c1f8…",                            // = ref(payload)
+    "nonce": "4be1c1f8…",                               // = ref, the sha-256 of the body bytes
     "midpoint": 1785911400.0,
     "radius": 1.0,
     "response": "0400000040…"
+  },
+  "untrusted": {                                        // always written; unsigned, never tested
+    "asexec_version": "0.4.0"                           // always: the release that wrote it
   }
+}
+```
+
+The body (`dsse.payload` decoded):
+
+```jsonc
+{
+  "predicateType": "https://asexec.org/manifest/v1",    // always
+  "phase": "prereg",                                    // always: prereg | postreg
+  "target": "claude-opus-4-8 via the anthropic API",    // always: text or JSON
+  "due": "2099-01-01T00:00:00Z",                        // deadline; none = no-due
+  "declaration": "all runs of this harness against this model, in full", // text or JSON
+  "subject": [                                          // files, each hashed as listed
+    { "name": "harness/run.py", "hash_alg": "sha-256", "digest": { "sha-256": "2c26b46b…" } }
+  ],
+  "plan": {                                             // the plan (--plan), hashed
+    "name": "plan.md", "hash_alg": "sha-256", "digest": { "sha-256": "5d41402a…" },
+    "media_type": "text/markdown", "label": "refusal study plan" // declared, never tested
+  },
+  "items": [                                            // what each postreg accounts for
+    { "id": "R1", "kind": "run" },                      // kind: declared, never tested
+    { "id": "R2", "kind": "ablation" }
+  ],
+  "anchor": {
+    "floor": {                                          // drand (--floor): not before
+      "floor_type": "drand",
+      "chain_hash": "52db9ba7…",
+      "round": 21102400,
+      "signature": "b7e04a19…",
+      "randomness": "1f0c9d2e…"
+    }
+  },
+  "identity": ["lab.example"],                          // free-form list
+  "notes": "hypothesis: refusal rate under 2%"          // text or JSON
 }
 ```
 
@@ -252,46 +326,76 @@ the rest are the practitioner's call.
 
 ```jsonc
 {
-  "payloadType": "application/vnd.asexec+json",
-  "payload": {                                       // required: the signed body
-    "schema_id": "asexec",                           // always
-    "predicateType": "https://asexec.dev/manifest",  // always
-    "phase": "postreg",                              // always: prereg | postreg
-    "target": "claude-opus-4-8 via the anthropic API", // always: text or JSON
-    "due": "2099-01-01T00:00:00Z",                   // deadline; none = stays open
-    "declaration": "all runs of this harness against this model, in full", // text or JSON
-    "subject": [                                     // artifacts, hashed
-      { "name": "transcript.txt", "digest": { "sha-256": "9f86d081…" } },
-      { "name": "harness/", "digest": { "sha-256": "2c26b46b…" } }
-    ],
-    "hash_alg": "sha-256",                           // always with subject
-    "fulfills": "sha-256:4be1c1f8…",                 // always in a postreg
-    "prev_hash": "sha-256:07ad3b2e…",                // previous postreg
-    "anchor": {
-      "floor": {                                     // drand (--floor): not before
-        "floor_type": "drand",
-        "chain_hash": "52db9ba7…",
-        "round": 21543210,
-        "signature": "8d2f1c3a…",
-        "randomness": "c3d4e5f6…"
-      }
-    },
-    "identity": ["lab.example"],                     // free-form list
-    "provenance": "reproducible",                    // asserted | reproducible
-    "repro_recipe": { "seed": 42, "decode": "greedy", "runtime": "vllm 0.9" },
-    "notes": "free-form text or JSON"
-  }
-  // "signature" (required) and "ceiling": same shape as in the prereg
+  "dsse": {                                             // required, as in the prereg
+    "payloadType": "application/vnd.asexec.v1+json",
+    "payload": "eyJhbmNob3IiOnsiZmxvb3IiOnsiY2hh…",     // base64 of the body bytes, below
+    "signatures": [ { "keyid": "sha-256:8f3e0a91…", "sig": "XA9+IVq1…" } ]
+  },
+  "pubkey": "d75a9801…",
+  // "ceiling": same shape as in the prereg
+  "untrusted": { "asexec_version": "0.4.0" }            // always written; unsigned, never tested
 }
 ```
 
-`sig` signs a [DSSE](https://github.com/secure-systems-lab/dsse)-style [PAE](https://github.com/secure-systems-lab/dsse/blob/master/protocol.md#signature-definition)
-(pre-authentication encoding) of `payload`, borrowing [in-toto](https://in-toto.io/) field names.
-A postreg carries its prereg's `target`, `due` and `declaration`, links back with `fulfills`
-(the prereg's ref, which is also its ceiling `nonce`) and `prev_hash`, and, from the CLI,
-adds `provenance` and `repro_recipe`. The ceiling sits outside the signed `payload` because
-its nonce is the payload's own hash; the floor sits inside it, because a value fixed before
-signing can be signed.
+The body (`dsse.payload` decoded):
+
+```jsonc
+{
+  "predicateType": "https://asexec.org/manifest/v1",    // always
+  "phase": "postreg",                                   // always: prereg | postreg
+  "target": "claude-opus-4-8 via the anthropic API",    // always: text or JSON
+  "due": "2099-01-01T00:00:00Z",                        // deadline; none = no-due
+  "declaration": "all runs of this harness against this model, in full", // text or JSON
+  "subject": [                                          // files, each hashed as listed
+    { "name": "transcript.txt", "hash_alg": "sha-256", "digest": { "sha-256": "9f86d081…" } },
+    { "name": "harness/run.py", "hash_alg": "sha-256", "digest": { "sha-256": "2c26b46b…" } }
+  ],
+  "fulfills": "sha-256:4be1c1f8…",                      // always in a postreg
+  "prev_hash": "sha-256:07ad3b2e…",                     // previous postreg
+  "item_id": "R1",                                      // the prereg's item it accounts for
+  "status": "reported",                                 // reported | excluded | blocked
+  "evidence": [                                         // files that back it (--evidence)
+    { "name": "results/r1.json", "hash_alg": "sha-256", "digest": { "sha-256": "7c211433…" },
+      "media_type": "application/json", "uri": "https://lab.example/r1" } // declared
+  ],
+  "anchor": {
+    "floor": {                                          // drand (--floor): not before
+      "floor_type": "drand",
+      "chain_hash": "52db9ba7…",
+      "round": 31036100,
+      "signature": "8d2f1c3a…",
+      "randomness": "c3d4e5f6…"
+    }
+  },
+  "identity": ["lab.example"],                          // free-form list
+  "provenance": "reproducible",                         // asserted | reproducible
+  "repro_recipe": { "seed": 42, "decode": "greedy", "runtime": "vllm 0.9" },
+  "notes": "free-form text or JSON"
+}
+```
+
+`sig` signs the [DSSE](https://github.com/secure-systems-lab/dsse)
+[PAE](https://github.com/secure-systems-lab/dsse/blob/master/protocol.md#signature-definition)
+(pre-authentication encoding) of `payloadType` and the body bytes, `DSSEv1 <len> <type>
+<len> <body>`, and `dsse` is a standard DSSE envelope that DSSE tooling can verify as it is.
+asexec reads only a subset of DSSE envelopes, being stricter than DSSE in four ways: only
+standard base64 (DSSE verifiers must also accept URL-safe; asexec departs from that on
+purpose), with padding (DSSE is silent), a required `keyid` that must be `sha-256:` of
+`pubkey` (optional in DSSE, an unauthenticated hint), and exactly one signature (DSSE allows
+several, with a threshold). Verify checks the bytes the file stores, exactly as stored, and never
+re-serializes them, so a body written by another tool, spaced or ordered differently,
+verifies the same way. The body borrows [in-toto](https://in-toto.io/) field names. A
+postreg carries its prereg's `target`, `due` and `declaration`, links back with `fulfills`
+(the prereg's ref, the sha-256 of its body bytes, which is also its ceiling `nonce`) and
+`prev_hash`, and, from the CLI, adds `provenance` and `repro_recipe`. The ceiling and
+`pubkey` sit outside the signed body: the ceiling's nonce is the body's own hash, and
+`selfsig` requires the signature's `keyid` to derive from `pubkey`, so a substituted key
+fails. The floor sits inside the body, because a value fixed before signing can be signed.
+`untrusted` is the one section of the file nothing checks: unsigned, read by no test and
+never part of `ref`, so anyone can edit it after signing. (The ceiling's own `midpoint` and
+`radius` only restate its signed response, and are not read either.) `verify` shows it, and any field the
+format does not define, under headings saying nothing in them was checked (see
+[Untrusted](./docs/VERIFICATION.md#untrusted)).
 
 ## Keys
 
@@ -307,8 +411,9 @@ signing can be signed.
 A post-registration counts toward a pre-registration only if both were signed with the same
 private key. So:
 
-- **Lose the private key** and your open commitments can never be fulfilled: they stay `open`,
-  or turn `elapsed-no-postreg` once `due` passes. Back up `lab.key` offline (e.g. in an
+- **Lose the private key** and your unfulfilled commitments can never be fulfilled: they stay
+  `open` (or `no-due`, if they declared no `due`), or turn `elapsed-no-postreg` once `due`
+  passes. Back up `lab.key` offline (e.g. in an
   encrypted password manager or vault) before you pre-register.
 - **Leak the private key** and anyone can sign pre- and post-registrations as you, including
   post-registrations that count toward your commitments. `asexec` has no revocation: stop
@@ -347,7 +452,8 @@ everything needed to perform a verification is baked-in to the prereg/postreg ma
 There are a few opt-in registration paths that use a network connection:
 
 - `prereg/postreg --floor`: Fetches a distributed randomness beacon round from `api.drand.sh`
-  (or a fallback) at sign-time.
+  (or a fallback) at sign-time. `--floor-round` / `--floor-round-file` take a round fetched
+  earlier instead, and verify it offline.
 - `prereg/postreg --ceiling`: Makes a UDP socket call (with server-list fallbacks) to a
   Roughtime server at sign-time.
 
@@ -398,16 +504,6 @@ explicitly not.
 > verifiable: a format change adds a new format version and keeps accepting the old ones.
 > Manifests from `0.3.x` are not supported. The verifier support for this is
 > [designed](./docs/MULTIVERSION.md) but not built yet.
-
-## Known issues
-
-Where `asexec` deviates from the [verification contract](./docs/VERIFICATION.md) (`0.4.0`
-closes this by accepting only files as subjects):
-
-- **Directory hashes (v1) are ambiguous**, so `content` can pass for a different tree: a
-  filename containing a newline can make two trees hash identically, and symlinks, empty
-  directories and executable bits inside a directory aren't covered. Use file subjects, such
-  as an archive of the directory, for anything that matters.
 
 ## License
 

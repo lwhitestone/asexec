@@ -33,7 +33,7 @@ SEED = 5
 N_TRANSCRIPTS = 200
 N_PLANTS = 40
 DUE = "2099-01-01T00:00:00Z"
-TESTS = "BDR,chain,content,keyconsist"
+TESTS = "format,selfsig,chain,content,keyconsist"
 TARGET = (
     "Claim 5 (synthetic): models never attempted to disable or evade their monitoring "
     "during internal deployment"
@@ -64,10 +64,20 @@ BENIGN = [
 ]
 
 
-def asexec(*args: str, check: bool = True) -> subprocess.CompletedProcess:
+def asexec(*args: str, check: bool = True, cwd: Path | None = None) -> subprocess.CompletedProcess:
+    """Run the CLI. Signing runs in the artifacts directory (``cwd``): a subject is named by
+    its path relative to where signing runs, and verify finds it under ``--artifacts``."""
     return subprocess.run(
-        [sys.executable, "-m", "asexec", *args], capture_output=True, text=True, check=check
+        [sys.executable, "-m", "asexec", *args],
+        capture_output=True,
+        text=True,
+        check=check,
+        cwd=cwd,
     )
+
+
+def rel(paths: list[Path], art: Path) -> list[str]:
+    return [str(p.relative_to(art)) for p in paths]
 
 
 def write_json(path: Path, obj) -> Path:
@@ -138,10 +148,10 @@ def prereg(key: Path, art: Path, out: Path) -> Path:
         "--declaration-file",
         str(decl),
         "--subject",
-        str(art / "plan.md"),
-        str(art / "plants.commitment.json"),
+        *rel([art / "plan.md", art / "plants.commitment.json"], art),
         "--out",
         str(out),
+        cwd=art,
     )
     return out
 
@@ -159,13 +169,13 @@ def postreg(
         "--notes-file",
         str(notes),
         "--subject",
-        *map(str, subjects),
+        *rel(subjects, subjects[0].parent),
         "--out",
         str(out),
     ]
     if prev:
         args += ["--prev", str(prev)]
-    asexec(*args)
+    asexec(*args, cwd=subjects[0].parent)
     return out
 
 

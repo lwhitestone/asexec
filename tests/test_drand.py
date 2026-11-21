@@ -52,6 +52,65 @@ def test_round_time_roundtrip():
     assert round_time == 1692803367 + (ROUND - 1) * 3
 
 
+def test_pinned_chains_are_quicknet_with_its_genesis_and_period():
+    """The pinned chains, written out: a floor's time (floor, order) is the chain's genesis
+    plus (round - 1) periods, so changing either moves every floor's time, and changing the
+    key fails every floor. One chain, quicknet, the default."""
+    quicknet = "52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971"
+    assert drand.QUICKNET_HASH == drand.DEFAULT_CHAIN == quicknet
+    assert drand.CHAINS == {
+        quicknet: {
+            "beacon_id": "quicknet",
+            "public_key": (
+                "83cf0f2896adee7eb8b5f01fcad3912212c437e0073e911fb90022d3e760183c"
+                "8c4b450b6a0a6c3ac6a5776a2d1064510d1fec758c921cc22b0e17e63aaf4bcb"
+                "5ed66304de9cf809bd274ca73bab4af5a6e9c76a4bc09e76eae8991ef5ece45a"
+            ),
+            "genesis_time": 1692803367,
+            "period": 3,
+            "scheme": "bls-unchained-g1-rfc9380",
+        }
+    }
+    assert drand.time_of_round(1000) == 1692806364  # 2023-08-23T15:59:24Z
+
+
+# --- verified_floor: a round fetched earlier, verified at signing ----------------- #
+def test_verified_floor_of_a_saved_round_is_the_floor_fetch_floor_writes():
+    """A round as drand's HTTP API returns it ({round, randomness, signature}), verified
+    offline, is the anchor.floor record --floor writes for the same round."""
+    saved = {"round": ROUND, "randomness": RAND, "signature": SIG}
+    assert drand.verified_floor(saved) == drand.floor_record(
+        {"chain_hash": drand.DEFAULT_CHAIN, **saved}
+    )
+    assert drand.verified_floor(saved) == {
+        "floor_type": "drand",
+        "chain_hash": drand.QUICKNET_HASH,
+        "round": ROUND,
+        "signature": SIG,
+        "randomness": RAND,
+    }
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"round": ROUND + 1},
+        {"round": 2**70},
+        {"round": -1},
+        {"randomness": "00" * 32},
+        {"signature": "ab" * 48},
+        {"signature": SIG.upper()},
+        {"round": "1000"},
+    ],
+    ids=["another-round", "round-too-large", "round-negative", "randomness", "signature",
+         "signature-uppercase", "round-a-string"],
+)  # fmt: skip
+def test_verified_floor_refuses_a_round_that_does_not_verify(over):
+    """Signing refuses a round that fails the floor conditions: a ValueError, never a floor."""
+    with pytest.raises(ValueError):
+        drand.verified_floor({"round": ROUND, "randomness": RAND, "signature": SIG, **over})
+
+
 # --- verify_floor ------------------------------------------------------------ #
 def _floor(**over):
     """A parsed floor: its shape is FloorInput's job (covered by tests/verify/)."""

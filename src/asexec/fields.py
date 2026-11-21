@@ -11,11 +11,26 @@ from typing import Annotated, Any
 
 from pydantic import AfterValidator, PlainValidator, Strict
 
-from . import drand
+from . import canonical, drand
 
 
 def _fromhex_ok(value: str) -> str:
     bytes.fromhex(value)  # a ValueError here becomes a ValidationError
+    return value
+
+
+def _base64_ok(value: str) -> str:
+    canonical.b64decode(value)  # a ValueError here becomes a ValidationError
+    return value
+
+
+# The length of an ed25519 signature, the one algorithm v1 signs with.
+_SIGNATURE_LENGTH = 64
+
+
+def _signature_ok(value: str) -> str:
+    if len(canonical.b64decode(value)) != _SIGNATURE_LENGTH:  # a ValueError: not base64
+        raise ValueError(f"not {_SIGNATURE_LENGTH} bytes, an ed25519 signature's length")
     return value
 
 
@@ -31,6 +46,23 @@ def _lower_hex(value: str) -> str:
 def _pinned_chain(value: str) -> str:
     if value not in drand.CHAINS:
         raise ValueError("not a drand chain the verifier pins")
+    return value
+
+
+def is_normal_name(name: str) -> bool:
+    """Whether ``name`` is a relative path in normal form (content #3): ``/``-separated
+    segments, none of them empty, ``.`` or ``..``, and no backslash. So an absolute name,
+    ``./a``, ``a//b``, ``a/``, ``a/../b`` and ``a\\b`` are not, and one file has one name."""
+    return (
+        bool(name)
+        and "\\" not in name
+        and all(seg not in ("", ".", "..") for seg in name.split("/"))
+    )
+
+
+def _normal_name(value: str) -> str:
+    if not is_normal_name(value):
+        raise ValueError("not a normalized relative path")
     return value
 
 
@@ -54,9 +86,21 @@ Hex = Annotated[str, AfterValidator(_fromhex_ok)]
 # tool never writes a spelling that an exact comparison with a digest would reject.
 LowerHex = Annotated[str, AfterValidator(_lower_hex)]
 
+# Strict base64 (format #2): the standard alphabet, padded, no whitespace, and the one
+# spelling of its bytes. Kept as the string as written; ``canonical.b64decode`` gives the bytes.
+# The writer models use it too: the only spelling the tool writes is the one verify reads.
+Base64 = Annotated[str, AfterValidator(_base64_ok)]
+
+# A DSSE ``sig`` (selfsig #2): strict base64, as DSSE has it, of an ed25519 signature's 64
+# bytes. Used by the writer too, so the tool writes only what verify reads.
+SignatureBase64 = Annotated[str, AfterValidator(_signature_ok)]
+
+# A subject, plan or evidence ``name`` as this tool writes it (content #3).
+NormalName = Annotated[str, AfterValidator(_normal_name)]
+
 # A drand chain hash the verifier pins (floor #2). ``drand.CHAINS`` is fixed at import.
 PinnedChain = Annotated[str, AfterValidator(_pinned_chain)]
 
-# ``payload.phase`` / ``fulfills`` / ``prev_hash``: compared by string equality, never
+# ``body.phase`` / ``fulfills`` / ``prev_hash``: compared by string equality, never
 # parsed (chain #2). ``None`` when absent; any other non-string value is ``DANGLING``.
 Link = Annotated[str | None, PlainValidator(_link)]

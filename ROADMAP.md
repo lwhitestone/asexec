@@ -9,7 +9,7 @@
 - **M1:** the claim record on the 0.4.0 core format: a P3 claim with a `plan` and an item
   list, one postreg per item, and the `complete` and `order` tests. A run-level study
   test-drives it end to end, recorded as a claim whose items are its runs and ablations.
-  The test drive runs on 0.4.0 betas. The 0.4.0 format (`application/vnd.asexec+json`) is
+  The test drive runs on 0.4.0 betas. The 0.4.0 format (`application/vnd.asexec.v1+json`) is
   fixed when 0.4.0 is released, after the release gate; later formats are added beside it,
   never in its place → asexec 0.4.0.
 - **M2:** a second claim on the same record, the adequacy test (if assessors
@@ -51,10 +51,11 @@ format people adopt is the format we can stand behind.
     release notes.
   - **Until `0.4.0`:** a `MINOR` change may ship as a `0.3.x` `PATCH` instead, with the break
     called out in the release notes. From `0.4.0`, it needs a `MINOR`.
-- **Identifiers baked into signed bytes.** `SIGNING_PAE_VERSION` (`asexec-PAE/v1`) and
-  `MANIFEST_PAYLOAD_TYPE` are in the signing input, and `MANIFEST_SCHEMA_ID` and
-  `MANIFEST_PREDICATE_TYPE` are written into the signed body. Changing any of them is a
-  deliberate format change, never incidental. In 0.4.0 the PAE prefix becomes `DSSEv1`.
+- **Identifiers baked into signed bytes.** The PAE prefix (`DSSEv1`, a `FORMATS` entry's
+  `signing_pae_version`; `asexec-PAE/v1` before the DSSE envelope) and
+  `MANIFEST_PAYLOAD_TYPE` are in the signing input, and `MANIFEST_PREDICATE_TYPE` is written
+  into the signed body. Changing any of them is a deliberate format change, never
+  incidental. `DSSEv1` is fixed by DSSE, so from 0.4.0 `payloadType` carries the version.
   The full list, and how each may change, is in
   [`tests/test_constants.py`](tests/test_constants.py).
 - **The verify-code grammar is versioned separately** (`asexec-verify/N`). The
@@ -83,7 +84,7 @@ diverged from `docs/VERIFICATION.md` changes codes only where they were wrong, a
 release note names which. A
 test name's documented meaning is fixed per code grammar, starting with `asexec-verify/1`.
 How the verifier keeps this is in [`docs/MULTIVERSION.md`](docs/MULTIVERSION.md), which
-isn't built yet.
+is built only in part (the `payloadType` selector).
 
 **Field meanings belong to each format.** A manifest is read under the rules of its own
 `payloadType`. A field that a later format defines is never read from an earlier format's
@@ -115,7 +116,7 @@ manifest, even if that manifest happens to carry it; there, it stays an unknown 
 |---|---|---|
 | 0.3.x | shipped (current 0.3.19; see *History*) | — |
 | **0.4.0b*N*** | every core format change (below); the claim record; the run-level test drive | M1 |
-| **0.4.0** | the first supported format, `application/vnd.asexec+json`, fixed; the wire format and frozen manifests become normative | M1 |
+| **0.4.0** | the first supported format, `application/vnd.asexec.v1+json`, fixed; the wire format and frozen manifests become normative | M1 |
 | **0.4.x** | patches (see *0.4.x*); no format changes | — |
 | **0.5.0** | second claim (the adequacy test, if confirmed) as the second format version; `asexec export --in-toto`; display export | M2 |
 | **0.6.0** | two-sided pilot: lab run record; lab disclosure promises (`origin`: `self` \| `extracted`) | M3 |
@@ -138,17 +139,23 @@ manifest, even if that manifest happens to carry it; there, it stays an unknown 
 
 - DSSE envelope: `payload` is base64 of the exact signed bytes; the PAE prefix is
   `DSSEv1`; `signatures: [...]` (one entry for now). The verifier checks the stored
-  bytes and never re-canonicalizes. `ref` = digest of the payload bytes.
+  bytes and never re-canonicalizes. `ref` = digest of the payload bytes. (Done ahead of
+  0.4.0.)
 - The file is an asexec wrapper around that standard envelope: `dsse`, plus the unsigned
-  `ceiling`, `pubkey` and `untrusted` (see *Wrapper* below).
-- `untrusted`: a section for metadata nothing checks, starting with `asexec_version`.
-- `MANIFEST_PREDICATE_TYPE` → a URL the project controls.
-- Body field `schema_version` is now `schema_id`, since its value has no version in it.
-  (Done ahead of 0.4.0.)
-- `dsse.payloadType` selects the format version, and unknown values fail `BDR`
-  ([`docs/MULTIVERSION.md`](docs/MULTIVERSION.md)).
+  `ceiling`, `pubkey` and `untrusted` (see *Wrapper* below). (Done ahead of 0.4.0.)
+- `untrusted`: a section for metadata nothing checks, starting with `asexec_version`. (Done
+  ahead of 0.4.0.)
+- `payloadType` is `application/vnd.asexec.v1+json` (betas write their own; see
+  *Versioning*), and `predicateType` is `https://asexec.org/manifest/v1`, on a domain the
+  project controls. A later format N is `vN` in both. (Done ahead of 0.4.0.)
+- Body field `schema_id` (formerly `schema_version`) is removed: `predicateType` already
+  says the body is an asexec manifest, and a third format identifier that no test checks
+  could disagree with the other two. (Done ahead of 0.4.0.)
+- `dsse.payloadType` selects the format version, and unknown values fail `format`
+  ([`docs/MULTIVERSION.md`](docs/MULTIVERSION.md)). (Done ahead of 0.4.0.)
 - `hash_alg` moves into each subject entry. A body-level `hash_alg` is no longer read, and is
-  shown as unknown and unchecked, like any unknown field.
+  shown as unknown and unchecked, like any unknown field. (Done ahead of 0.4.0. An entry
+  without its own `hash_alg` fails `content`: no format supplies a default.)
 - Subjects are an explicit list of files, each hashed exactly as listed, because directory
   hash v1 is ambiguous and skips what it can't encode.
   - An entry's `name` is the relative path as given (normalized, `/`-separated), not its
@@ -161,8 +168,13 @@ manifest, even if that manifest happens to carry it; there, it stays an unknown 
     that resolves outside `--artifacts`.
   - The README examples change to match. Nothing is kept for compatibility with
     directory subjects.
+
+  (Done ahead of 0.4.0. The name is relative to the directory signing runs in, and verify
+  resolves it under `--artifacts`. Signing also refuses an absolute path, a `..` component
+  and a backslash, and `content` fails a name not in that normal form.)
 - The claim record: `plan`, `items`, and per-postreg `item_id`, `status` and `evidence`
-  (see *New properties*).
+  (see *New properties*). (Done ahead of 0.4.0: written by `--plan`, `--items`, `--item-id`,
+  `--status` and `--evidence`, and `content` checks `plan` and `evidence`.)
 - Convention: one prereg per commitment (a promise, or an assessment's plan). No
   list-level schema.
 
@@ -176,16 +188,23 @@ How the 0.4.0 envelope is built, compared with 0.3.x, is in
   wins, so two verifiers could read different fields from the same signed bytes. The
   decoded body is held to the same JSON rules as the file, nesting limit included.
 
+(All three done ahead of 0.4.0.)
+
 **Wrapper.** DSSE defines only `payloadType`, `payload` and `signatures`, so what asexec
 adds sits outside it, in the wrapper:
 
 - `dsse` is a standard envelope that DSSE and in-toto tooling can lift out and verify
-  unchanged, which keeps the M2 export simple.
+  unchanged, which keeps the M2 export simple: `payload` and `sig` are base64, as DSSE
+  has them. The promise is that DSSE tools read asexec's `dsse`, not that asexec reads every
+  DSSE envelope: it is stricter than DSSE in four ways, namely standard base64 only (DSSE
+  verifiers must also accept URL-safe), padding required (DSSE is silent), a required
+  `keyid` that is `sha-256:` of `pubkey` (optional in DSSE), and exactly one signature
+  (DSSE allows several, with a threshold). (Done ahead of 0.4.0.)
 - `ceiling` cannot be inside the body (its nonce is the body's own hash). In the wrapper
   it can still be attached after signing; it is bound by `nonce == ref` and authenticated
   by the witness's own signature.
-- `pubkey` needs no signature: `BDR` requires `signatures[0].keyid` to derive from it, so
-  a substituted key fails. With `signer`, `--trusted-keys` additionally decides which
+- `pubkey` needs no signature: `selfsig` requires `signatures[0].keyid` to derive from it,
+  so a substituted key fails. With `signer`, `--trusted-keys` additionally decides which
   keys are accepted.
 - Any other top-level key is treated like `untrusted`: shown under that heading, never
   read by a test.
@@ -196,25 +215,39 @@ adds sits outside it, in the wrapper:
 
 **Verify**
 
+- `BDR` is split into two required tests: `format` (the file can be read as a manifest)
+  and `selfsig` (the file is unchanged since its own key signed it). (Done ahead of 0.4.0.)
+  With the unknown-`payloadType` failure above in `format`, version skew reads as
+  `format=FAIL`, not as a bad signature.
 - `signer`: `--signer` / `--trusted-keys <file>`.
-- `timely`: postreg ceiling ≤ prereg `due`.
+- `timely`: postreg ceiling ≤ prereg `due`. (Done ahead of 0.4.0, with D5's edge cases in
+  `docs/040b1-PATH.md`: the ceiling's time is the later end of the signed interval, `MIDP +
+  RADI`, and a missing ceiling or one that fails the `ceiling` conditions is not on time.)
 - New commitment state `no-due`, separate from `open`. This changes what `open` means, but
-  the code grammar stays `asexec-verify/1`, because the bump rule starts at `0.4.0`.
-- `complete` and `order` (see *New properties*).
+  the code grammar stays `asexec-verify/1`, because the bump rule starts at `0.4.0`. (Done
+  ahead of 0.4.0.)
+- `complete` and `order` (see *New properties*). (Both done ahead of 0.4.0. `order`'s times
+  are the prereg ceiling's `MIDP + RADI` and the floor round's time on the pinned chain,
+  compared in microseconds, "precedes" is strict, and a missing or failing anchor fails.)
 - Malformed means only what stops `verify` reading a manifest: not valid JSON, nested too
   deep, a duplicate key, or a missing frame (`dsse` with `payloadType`, a `payload` that
   decodes to a JSON object, and a `signatures` list). Everything else is judged by tests.
+  (Done ahead of 0.4.0.)
 - `--json`: a report the claim-graph export reads. Outside the support promise until
   0.5.0 (see *Support from 0.4.0*).
 - Unknown signed fields are shown as unknown and unchecked, never dropped. Unknown
   top-level keys are shown with `untrusted`.
 - `untrusted` is printed under its own heading saying nothing in it was checked. No test
-  reads it, and it never affects `ref` or the verify code.
+  reads it, and it never affects `ref` or the verify code. (Both done ahead of 0.4.0. An
+  unknown key nested in an object the format defines is shown too, in the body or out of
+  it, and the file's JSON rules still hold inside `untrusted`: a duplicate key there makes
+  the file malformed.)
 
 **Docs**, rewritten for the 0.4.0 format before release, since the release fixes what they
 describe:
 - `docs/VERIFICATION.md`: every path (body paths inside the decoded `dsse.payload`;
-  `dsse.signatures[]` and `pubkey` for `signature.*`), the malformed rule, the new tests,
+  `dsse.signatures[]` and `pubkey` for `signature.*`; done ahead, as `body.*`), the
+  malformed rule (done ahead), the new tests,
   a *TrustedDeclared* list (signed properties that are shown but never tested) and an
   *Untrusted* section.
 - `README.md`: the manifest examples (DSSE envelope, file-only subjects, the claim
@@ -261,7 +294,9 @@ not here. Where it hooks in waits on the study's choice of runner.
 
 Each run fetches a drand round when it starts and uses it (for example as its seed), and
 its postreg carries that round as its floor. Today `--floor` fetches the latest round at
-signing, so signing needs a way to pass in a round fetched earlier. `order` bounds a run
+signing, so signing needs a way to pass in a round fetched earlier (done ahead of 0.4.0:
+`--floor-round` / `--floor-round-file` take the round as drand's HTTP API returns it, and
+verify it at signing). `order` bounds a run
 only as tightly as the run's use of that round: a round the run merely records proves
 nothing about when the run started. Using it as a seed lets a re-execution check it.
 
@@ -283,7 +318,7 @@ What a 0.4.x release may carry:
 - New test names, including tests that move a *TrustedDeclared* property to
   *TrustedTested*.
 - CLI options and output text, `--json` (outside the promise until 0.5.0), the Python
-  API, and docs. For example, passing in a drand round fetched earlier.
+  API, and docs.
 - Pinned trust roots: added, or withdrawn with a release note.
 - Dependencies and supported Python versions.
 
@@ -361,20 +396,21 @@ the tests that read it; *TrustedDeclared* (signed and shown, never tested); or *
 
 | Property | Description | Stage | Path | Required | Default | Tier | Lands | Real use | Level |
 |---|---|---|---|---|---|---|---|---|---|
-| `dsse` | The standard DSSE envelope: the signed body and its signatures | all | envelope | required | none | TrustedTested: `BDR` | 0.4.0 | M1 | all |
-| `payloadType` | Selects the format version; covered by the signature | all | `dsse.payloadType` | required | none | TrustedTested: `BDR` | 0.4.0 | M1 | all |
-| `payload` | Strict base64 of the exact signed body bytes, which decode to a JSON object | all | `dsse.payload` | required | none | TrustedTested: `BDR` | 0.4.0 | M1 | all |
-| `signatures` | Signatures over the body; `BDR` passes only with exactly one valid entry | all | `dsse.signatures[]` | required | none | TrustedTested: `BDR` | 0.4.0 | M1 | all |
-| `keyid` | `sha-256:` plus the hash of the signer's public key | all | `dsse.signatures[].keyid` | optional | none | TrustedTested: `BDR`, `chain`, `keyconsist`, `signer` | 0.4.0 | M1 | all |
-| `sig` | ed25519 signature over the PAE of the body bytes | all | `dsse.signatures[].sig` | optional | none | TrustedTested: `BDR` | 0.4.0 | M1 | all |
-| `pubkey` | The signer's public key, unsigned; `BDR` requires `keyid` to derive from it | all | envelope | optional | none | TrustedTested: `BDR`, `signer` | 0.4.0 | M1 | all |
+| `dsse` | The standard DSSE envelope: the signed body and its signatures | all | envelope | required | none | TrustedTested: `format`, `selfsig` | 0.4.0 | M1 | all |
+| `payloadType` | Selects the format version; covered by the signature | all | `dsse.payloadType` | required | none | TrustedTested: `format`, `selfsig` | 0.4.0 | M1 | all |
+| `payload` | Strict base64 of the exact signed body bytes, which decode to a JSON object | all | `dsse.payload` | required | none | TrustedTested: `format`, `selfsig` | 0.4.0 | M1 | all |
+| `signatures` | Signatures over the body; `selfsig` passes only with exactly one valid entry | all | `dsse.signatures[]` | required | none | TrustedTested: `format`, `selfsig` | 0.4.0 | M1 | all |
+| `keyid` | `sha-256:` plus the hash of the signer's public key | all | `dsse.signatures[].keyid` | optional | none | TrustedTested: `selfsig`, `chain`, `keyconsist`, `signer` | 0.4.0 | M1 | all |
+| `sig` | ed25519 signature over the PAE of the body bytes | all | `dsse.signatures[].sig` | optional | none | TrustedTested: `selfsig` | 0.4.0 | M1 | all |
+| `pubkey` | The signer's public key, unsigned; `selfsig` requires `keyid` to derive from it | all | envelope | optional | none | TrustedTested: `selfsig`, `signer` | 0.4.0 | M1 | all |
 | `hash_alg` | The algorithm of this entry's digest | all | `subject[].hash_alg` | optional | none | TrustedTested: `content` | 0.4.0 | M1 | all |
 | `untrusted` | Metadata that nothing checks: unsigned, never tested, never part of `ref` | all | envelope | optional | none | Untrusted | 0.4.0 | M1 | all |
 | `asexec_version` | The asexec release that wrote the manifest, for diagnostics only | all | `untrusted.asexec_version` | optional | none | Untrusted | 0.4.0 | M1 | all |
 
 Changed in 0.4.0: `payloadType` and `payload` move into `dsse`; `signature` is replaced
 by `dsse.signatures[]` and `pubkey`; `ceiling` moves to the wrapper; body-level `hash_alg`
-is no longer read; `subject[].name` becomes a relative path to one file.
+is no longer read; `subject[].name` becomes a relative path to one file; `schema_id` is
+no longer written.
 
 **0.4.0: the claim record**
 
@@ -428,7 +464,7 @@ is a file beside the manifests.
 | `subject`, `subject[].name`, `subject[].digest` | TrustedTested: `content` |
 | `anchor`, `anchor.floor` and its fields | TrustedTested: `floor`, `order` |
 | `ceiling` and its fields (envelope) | TrustedTested: `ceiling`, `order`, `timely`, `complete` |
-| `schema_id`, `predicateType`, `target`, `declaration`, `identity`, `provenance`, `repro_recipe`, `notes` | TrustedDeclared |
+| `predicateType`, `target`, `declaration`, `identity`, `provenance`, `repro_recipe`, `notes` | TrustedDeclared |
 
 **Tests**
 
@@ -495,8 +531,8 @@ Kept here so they are not re-litigated:
   `PASS`/`FAIL`, sorted alphabetically — never a percentage or tier — so a
   code is self-describing and forward-compatible. It is a summary of a
   computation, not a certificate: real verification is reproducing it.
-- **Explicit test appetite.** `--tests` is required and must include `BDR`. A
-  requested test that applies nowhere is `FAIL`, never a silent omission.
+- **Explicit test appetite.** `--tests` is required and must include `format` and
+  `selfsig`. A requested test that applies nowhere is `FAIL`, never a silent omission.
 - **Only verifiable claims earn a test.** A self-declaration (e.g. the removed
   `has_run_already` field) is *TrustedDeclared*: listed as such in
   `docs/VERIFICATION.md` and shown as unchecked in the report, so sitting beside tested

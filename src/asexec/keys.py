@@ -15,13 +15,17 @@ import os
 
 import nacl.signing
 
-from .constants import DIGEST_REF_PREFIX, SIGNING_KEY_ALG
+from .constants import FORMATS, MANIFEST_PAYLOAD_TYPE
 from .errors import AsexecError
 
+# The algorithm of the format signing writes: a key file names it, and only such a key signs.
+_ALG = FORMATS[MANIFEST_PAYLOAD_TYPE]["signing_key_alg"]
 
-def keyid_for(public_key: bytes) -> str:
-    """Stable key identifier: ``sha-256:<hex of sha256(pubkey)>``."""
-    return DIGEST_REF_PREFIX + hashlib.sha256(public_key).hexdigest()
+
+def keyid_for(public_key: bytes, payload_type: str = MANIFEST_PAYLOAD_TYPE) -> str:
+    """Stable key identifier: ``sha-256:<hex of sha256(pubkey)>``, with the prefix of format
+    ``payload_type`` (by default the one signing writes)."""
+    return FORMATS[payload_type]["digest_ref_prefix"] + hashlib.sha256(public_key).hexdigest()
 
 
 def generate() -> tuple[bytes, bytes]:
@@ -40,7 +44,7 @@ def save(private_key: bytes, path: str, *, force: bool = False) -> str:
     kid = keyid_for(pub)
     secret = {
         "version": 1,
-        "alg": SIGNING_KEY_ALG,
+        "alg": _ALG,
         "keyid": kid,
         "private_key": private_key.hex(),
         "public_key": pub.hex(),
@@ -63,7 +67,7 @@ def save(private_key: bytes, path: str, *, force: bool = False) -> str:
         json.dump(
             {
                 "version": 1,
-                "alg": SIGNING_KEY_ALG,
+                "alg": _ALG,
                 "keyid": kid,
                 "public_key": pub.hex(),
             },
@@ -79,21 +83,24 @@ def load_signing_key(path: str) -> tuple[bytes, bytes]:
 
     Raises ``OSError`` if the file cannot be read, else ``AsexecError`` if it is not
     a valid key file."""
+    from .manifest import parse_json  # here, not at the top: manifest imports this module
+
     with open(path) as f:
-        try:
-            data = json.load(f)
-        except ValueError as e:
-            raise AsexecError(f"key file {path} is not valid JSON: {e}") from e
+        try:  # a manifest file's JSON rules: no repeated key, and at most 64 deep, so no
+            # parser reaches its recursion limit (which differs between Python versions)
+            data = parse_json(f.read())
+        except (ValueError, AsexecError) as e:  # not UTF-8 or JSON, or a rule broken
+            raise AsexecError(f"key file {path!r} is not valid JSON: {e}") from None
     if not isinstance(data, dict):
-        raise AsexecError(f"key file {path} is not a JSON object")
-    if data.get("alg") != SIGNING_KEY_ALG:
+        raise AsexecError(f"key file {path!r} is not a JSON object")
+    if data.get("alg") != _ALG:
         raise AsexecError(f"unsupported key alg {data.get('alg')!r}")
     try:
         priv = bytes.fromhex(data["private_key"])
         pub = bytes(nacl.signing.SigningKey(priv).verify_key)
         stored = bytes.fromhex(data["public_key"]) if "public_key" in data else pub
     except (KeyError, TypeError, ValueError) as e:  # nacl's errors subclass these
-        raise AsexecError(f"{path} is not a valid key file: {e}") from e
+        raise AsexecError(f"{path!r} is not a valid key file: {e}") from e
     if stored != pub:
         raise AsexecError("key file public_key does not match private_key")
     return priv, pub
