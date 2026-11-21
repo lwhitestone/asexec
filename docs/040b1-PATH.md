@@ -3947,3 +3947,7 @@ format and the meaning of the tests. Each is described in its checkpoint's notes
 - verifying a CLI-made `dsse` envelope with another DSSE implementation;
 - `scripts/release.sh 0.4.0b1` rehearsed in a throwaway clone with a local bare remote, then
   `check.sh` in that clone.
+
+**Addendum (2026-11-21):** item 10 of the human-gate list, the release workflow after 0.4.0,
+is now tracked as #59. It blocks the first 0.5.0 beta and any 0.4.x patch cut once v2 work
+starts on main, but not 0.4.0b1 or 0.4.0.
