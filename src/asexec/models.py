@@ -48,7 +48,7 @@ from pydantic import (
     model_validator,
 )
 
-from . import __version__, drand
+from . import __version__
 from .constants import MANIFEST_PAYLOAD_TYPE, MANIFEST_PREDICATE_TYPE
 from .fields import (
     Base64,
@@ -125,7 +125,7 @@ class FloorInput(InputModel):
     """``body.anchor.floor`` (VERIFICATION.md ### floor)."""
 
     floor_type: Literal["drand"]  # floor #1
-    chain_hash: PinnedChain = drand.DEFAULT_CHAIN  # floor #2
+    chain_hash: PinnedChain  # floor #2: required; verify never picks a chain for a manifest
     round: StrictInt  # floor #3
     signature: Hex  # floor #3
     randomness: Hex | None = None  # floor #4 (shape; the equality is code)

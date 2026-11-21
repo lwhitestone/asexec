@@ -227,6 +227,7 @@ def test_order__fail__3_counted_postreg_has_a_floor(sc):
         pytest.param("round", 999, id="forged-earlier-round"),
         pytest.param("randomness", "00" * 32, id="randomness-not-sha256-of-signature"),
         pytest.param("chain_hash", "00" * 32, id="chain-not-pinned"),
+        pytest.param("chain_hash", None, id="chain-hash-absent"),
         pytest.param("floor_type", "nist", id="not-drand"),
         pytest.param("signature", "zz", id="signature-not-hex"),
         pytest.param("round", "1000", id="round-a-string"),

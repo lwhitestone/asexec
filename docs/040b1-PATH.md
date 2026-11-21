@@ -3954,3 +3954,21 @@ tracked as #59. Releases from 0.4.0 on work as designed until v2 work lands on m
 and 0.4.x patches cut while main carries no new format. #59 is needed before the first 0.5.0
 beta, or before a 0.4.x patch cut once v2 work is on main. Starting v2 work on main is the
 trigger, not the 0.5.0 version number itself.
+
+### After checkpoint 9: changes made in review of PR #60
+
+- **`floor` requires `chain_hash`.** It used to default to `drand.DEFAULT_CHAIN`, the chain
+  signing uses (`models.FloorInput`). That tied verify's default to the writer's choice, so
+  switching the signing chain would have changed the `floor` and `order` verdicts of old
+  manifests without `chain_hash`. An absent `chain_hash` (missing or `null`) now fails `floor`
+  #2, and `order` reads no time from that floor. `verify_round`, `time_of_round` and
+  `round_at_time` take the chain explicitly, so no verify path falls back to a default.
+  `DEFAULT_CHAIN` is now only the writer's choice. The CLI always writes `chain_hash`, so no
+  CLI-made manifest changes its verdict; only a hand-built floor without one flips from
+  `floor=PASS` to `FAIL`. Evidence: three tests were red first and pass after the change:
+  `test_floor__fail__2_chain_hash_is_required[missing|null]` (formerly the pass test
+  `…__pass__2_chain_hash_defaults_to_quicknet`) and
+  `test_order__fail__4_floor_meets_the_floor_conditions[chain-hash-absent]`.
+  `scripts/check.sh` clean, 1320 passed.
+  - Release note for #40, beside the format entries: "`floor`: `body.anchor.floor.chain_hash`
+    is required; a floor without it fails `floor` #2 instead of defaulting to quicknet."

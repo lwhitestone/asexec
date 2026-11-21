@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 
 from .errors import NetworkError
 
-if TYPE_CHECKING:  # models imports this module (for the pinned chains)
+if TYPE_CHECKING:  # models imports this module, through fields (for the pinned chains)
     from .models import FloorInput
 
 # --- pinned chain parameters (verify-time constants; never fetched) ---------
@@ -50,12 +50,12 @@ _API_MIRRORS = [
 ]
 
 
-def time_of_round(round_no: int, chain_hash: str = DEFAULT_CHAIN) -> int:
+def time_of_round(round_no: int, chain_hash: str) -> int:
     p = CHAINS[chain_hash]
     return p["genesis_time"] + (round_no - 1) * p["period"]
 
 
-def round_at_time(ts: int, chain_hash: str = DEFAULT_CHAIN) -> int:
+def round_at_time(ts: int, chain_hash: str) -> int:
     p = CHAINS[chain_hash]
     if ts < p["genesis_time"]:
         return 1
@@ -162,7 +162,8 @@ def verify_round(
     round_no: int,
     signature_hex: str,
     randomness_hex: str | None = None,
-    chain_hash: str = DEFAULT_CHAIN,
+    *,
+    chain_hash: str,
 ) -> bool:
     """Offline BLS verification of a quicknet round.
 

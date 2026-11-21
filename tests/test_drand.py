@@ -16,29 +16,30 @@ SIG = (
     "e342b73a8dd2bacbe47e4b6b63ed5e39"
 )
 RAND = "fe290beca10872ef2fb164d2aa4442de4566183ec51c56ff3cd603d930e54fdd"
+CHAIN = drand.QUICKNET_HASH  # every verify-path helper takes the chain explicitly
 
 
 def test_verify_real_round_offline():
-    assert drand.verify_round(ROUND, SIG, RAND) is True
+    assert drand.verify_round(ROUND, SIG, RAND, chain_hash=CHAIN) is True
 
 
 def test_reject_tampered_round():
-    assert drand.verify_round(ROUND + 1, SIG, RAND) is False
+    assert drand.verify_round(ROUND + 1, SIG, RAND, chain_hash=CHAIN) is False
 
 
 def test_reject_wrong_randomness():
-    assert drand.verify_round(ROUND, SIG, "00" * 32) is False
+    assert drand.verify_round(ROUND, SIG, "00" * 32, chain_hash=CHAIN) is False
 
 
 def test_reject_garbage_signature():
     # randomness=None skips the sha256(sig) check so the BLS decompress/pairing
     # path itself is what rejects the signature (costs ~1s).
-    assert drand.verify_round(ROUND, "ab" * 48, None) is False
+    assert drand.verify_round(ROUND, "ab" * 48, None, chain_hash=CHAIN) is False
 
 
 def test_reject_undecodable_signature_point():
     # 0xff.. is not a valid compressed G1 point; decompress must fail closed.
-    assert drand.verify_round(ROUND, "ff" * 48, None) is False
+    assert drand.verify_round(ROUND, "ff" * 48, None, chain_hash=CHAIN) is False
 
 
 def test_reject_unknown_chain():
@@ -46,8 +47,8 @@ def test_reject_unknown_chain():
 
 
 def test_round_time_roundtrip():
-    round_time = drand.time_of_round(ROUND)
-    assert drand.round_at_time(round_time) == ROUND
+    round_time = drand.time_of_round(ROUND, CHAIN)
+    assert drand.round_at_time(round_time, CHAIN) == ROUND
     # quicknet genesis + (round-1)*period
     assert round_time == 1692803367 + (ROUND - 1) * 3
 
@@ -71,7 +72,7 @@ def test_pinned_chains_are_quicknet_with_its_genesis_and_period():
             "scheme": "bls-unchained-g1-rfc9380",
         }
     }
-    assert drand.time_of_round(1000) == 1692806364  # 2023-08-23T15:59:24Z
+    assert drand.time_of_round(1000, CHAIN) == 1692806364  # 2023-08-23T15:59:24Z
 
 
 # --- verified_floor: a round fetched earlier, verified at signing ----------------- #
@@ -126,7 +127,7 @@ def test_verify_floor_accepts_real_round():
         "status": "verified",
         "floor_type": "drand",
         "round": ROUND,
-        "created_no_earlier_than": drand.time_of_round(ROUND),
+        "created_no_earlier_than": drand.time_of_round(ROUND, CHAIN),
     }
 
 

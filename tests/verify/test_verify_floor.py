@@ -39,17 +39,18 @@ def test_floor__pass__all(sc):
     assert report["code"] == PASS
     floor = report["manifests"][0]["floor"]
     assert floor["status"] == "verified"
-    assert floor["created_no_earlier_than"] == drand.time_of_round(1000)
+    assert floor["created_no_earlier_than"] == drand.time_of_round(1000, drand.QUICKNET_HASH)
 
 
 @pytest.mark.parametrize("absent", ["missing", "null"])
-def test_floor__pass__2_chain_hash_defaults_to_quicknet(sc, absent):
-    """floor #2: an absent (missing or null) chain_hash means the pinned quicknet chain."""
+def test_floor__fail__2_chain_hash_is_required(sc, absent):
+    """floor #2: an absent (missing or null) chain_hash fails: verify never picks a chain
+    for a manifest, so changing the chain signing uses can't change an old verdict."""
     if absent == "missing":
         sc.unset("prereg", "body.anchor.floor.chain_hash")
     else:
         sc.set("prereg", "body.anchor.floor.chain_hash", None)
-    assert sc.code("floor") == PASS
+    assert sc.code("floor") == FAIL
 
 
 @pytest.mark.parametrize("absent", ["missing", "null"])

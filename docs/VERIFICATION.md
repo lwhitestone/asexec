@@ -177,7 +177,7 @@ Checked at 2026-12-31T23:59:59Z
 | [`chain`](#chain) | • `body.phase`<br>• `body.fulfills`<br>• `body.prev_hash`<br>• `pubkey`<br>• `dsse.signatures`<br>• `dsse.signatures[0].sig`<br>• `dsse.signatures[0].keyid` | 1. exactly one counted postreg has no `body.prev_hash`<br>2. every other `body.prev_hash` is the `ref` of a counted postreg<br>3. no `ref` is the `body.prev_hash` of more than one counted postreg |
 | [`complete`](#complete) | • `body.items`<br>• `body.items[].id`<br>• `body.due` (of the prereg)<br>• `body.item_id` and `body.status`, of each counted postreg<br>• which postregs are counted, and their `ceiling` (as for `timely`) | (for each commitment whose prereg lists at least one item)<br>1. `body.items` is an array of objects with string ids<br>2. no two items have the same `id`<br>3. each item has a counted postreg with its `item_id` and a `status` of `reported`, `excluded` or `blocked`<br>4. a `body.due`, if present, is parseable<br>5. with a `due`, such a postreg is on time, as `timely` judges it |
 | [`content`](#content) | • `body.subject`<br>• `body.subject[].name`<br>• `body.subject[].hash_alg`<br>• `body.subject[].digest`<br>• `body.plan` and its `name`, `hash_alg`, `digest`<br>• `body.evidence` and each entry's `name`, `hash_alg`, `digest`<br>• `--artifacts` | 1. `body.subject` and `body.evidence` are non-empty arrays, and `body.plan` an object, of well-formed entries<br>2. the entry's `hash_alg` is available<br>3. `name` is a normalized relative path<br>4. no other entry of the list has the same `name`<br>5. `name` resolves inside `--artifacts`<br>6. the artifact exists<br>7. the artifact is a regular file<br>8. the artifact is readable<br>9. recomputed digest equals `digest[hash_alg]` |
-| [`floor`](#floor) | • `body.anchor.floor.floor_type`<br>• `body.anchor.floor.chain_hash`<br>• `body.anchor.floor.round`<br>• `body.anchor.floor.signature`<br>• `body.anchor.floor.randomness` | 1. `floor_type` is `drand`<br>2. `chain_hash` is pinned<br>3. `round` is an integer and `signature` is hex<br>4. `randomness`, if present, equals `sha256(signature)`<br>5. `signature` BLS-verifies for `round` under the pinned key |
+| [`floor`](#floor) | • `body.anchor.floor.floor_type`<br>• `body.anchor.floor.chain_hash`<br>• `body.anchor.floor.round`<br>• `body.anchor.floor.signature`<br>• `body.anchor.floor.randomness` | 1. `floor_type` is `drand`<br>2. `chain_hash` is present and pinned<br>3. `round` is an integer and `signature` is hex<br>4. `randomness`, if present, equals `sha256(signature)`<br>5. `signature` BLS-verifies for `round` under the pinned key |
 | [`format`](#format) | • the file<br>• `dsse`<br>• `dsse.payloadType`<br>• `dsse.signatures`<br>• `dsse.payload` | 1. file is a well-formed JSON object with the `dsse` frame<br>2. `dsse.payload` is strict base64 of a well-formed JSON object<br>3. `dsse.payloadType` names a format this release reads |
 | [`keyconsist`](#keyconsist) | • `body.phase`<br>• `body.fulfills`<br>• `pubkey`<br>• `dsse.signatures`<br>• `dsse.signatures[0].sig`<br>• `dsse.signatures[0].keyid` | 1. every validly signed postreg naming the commitment's `ref` has the `dsse.signatures[0].keyid` of a commitment with that `ref` |
 | [`order`](#order) | • `ceiling` and its fields, of the prereg<br>• which postregs are counted (as for `chain`)<br>• `body.anchor.floor` and its fields, of each counted postreg | (for each commitment with a counted postreg)<br>1. the prereg has a `ceiling`<br>2. that ceiling meets the `ceiling` conditions<br>3. each counted postreg has a `body.anchor.floor`<br>4. that floor meets the `floor` conditions<br>5. the ceiling's time, `MIDP + RADI`, is strictly before the floor's round time |
@@ -546,11 +546,12 @@ drand beacon: the manifest was created no earlier than time T.
 
 **Passes when all**
 1. `body.anchor.floor` is an object and `floor_type == "drand"`.
-2. `chain_hash` (default: the pinned quicknet chain) is a chain the verifier pins.
+2. `chain_hash` is present and names a chain the verifier pins. An absent one (missing or
+   `null`) fails: verify never picks a chain for a manifest.
 3. `round` is an integer and `signature` is hex.
 4. If `randomness` is present, it equals `sha256(signature)` in hex.
 5. `signature` is a valid BLS12-381 signature over `sha256(round as 8-byte big-endian)`
-   under the pinned group public key.
+   under that chain's pinned group public key.
 
 **When empty:** if no manifest that passes `format` has a `body.anchor.floor`, the test
 has nothing to examine and is `FAIL`, with the reason `requested but no manifest carries an
