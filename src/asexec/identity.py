@@ -57,12 +57,15 @@ def fetch_wellknown(domain: str, timeout: int = 10) -> dict:
             data = resp.read()
     except Exception as e:
         raise NetworkError(f"could not fetch {url}: {e}") from e
-    try:  # a manifest file's JSON rules, so a document reads the same on every Python
-        return parse_json(data.decode("utf-8"))
+    try:  # JSON's encodings, as json.load of bytes reads them: UTF-8 (a BOM dropped), -16, -32
+        text = data.decode(json.detect_encoding(data))
     except UnicodeDecodeError as e:
         raise AsexecError(
-            f"{url} is not an asexec identity document: not UTF-8 text ({e})"
+            f"{url} is not an asexec identity document: not JSON text in UTF-8, UTF-16 or "
+            f"UTF-32 ({e})"
         ) from None
+    try:  # a manifest file's JSON rules, so a document reads the same on every Python
+        return parse_json(text)
     except (ValueError, AsexecError) as e:
         raise AsexecError(f"{url} is not an asexec identity document: {e}") from None
 

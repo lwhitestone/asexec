@@ -1167,7 +1167,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             status = _run(argv)
         except SystemExit:  # a usage error, --help, or an error message: flush what is printed
-            _flush_stdout()
+            _flush_finished_output()
             raise
         _flush_stdout()  # what is still buffered, before the exit status is returned
         return status
@@ -1191,10 +1191,16 @@ def _run(argv: list[str] | None) -> int:
         # fetch, ...): a message, not a traceback. verify turns these into FAILs itself.
         sys.stderr.write(f"error: {e}\n")
         return EXIT_ERROR
+    _flush_finished_output()
+    return status
+
+
+def _flush_finished_output() -> None:
+    """Flush what a finished command (or argparse, exiting) printed. If the reader has gone,
+    the status stands: stdout is dropped. Any other failure raises ``_StdoutError``."""
     try:
         _flush_stdout()
     except _StdoutError as e:
         if not isinstance(e.error, BrokenPipeError):
             raise
-        _drop_stdout()  # closed after the command finished: its exit status stands
-    return status
+        _drop_stdout()

@@ -1088,7 +1088,7 @@ def test_a_path_with_a_newline_stays_on_one_error_line(tmp_path, key, case, caps
         (b"[" * 100_000 + b"]" * 100_000, "nested more than 64 deep"),
         (b'{"keys": [], "keys": []}', "duplicate JSON key 'keys'"),
         (b"not json", "Expecting value"),
-        (b'\xff{"keys": []}', "not UTF-8 text"),
+        (b'\xff{"keys": []}', "not JSON text in UTF-8, UTF-16 or UTF-32"),
     ],
     ids=["deep", "duplicate-key", "not-json", "not-utf8"],
 )
@@ -1101,6 +1101,25 @@ def test_identity_match_reads_the_document_under_the_json_rules(monkeypatch, bod
         "error: https://lab.example/.well-known/asexec.json is not an asexec identity document: "
     )
     assert why in line
+
+
+@pytest.mark.parametrize(
+    "encode",
+    [
+        lambda text: b"\xef\xbb\xbf" + text.encode("utf-8"),
+        lambda text: text.encode("utf-16"),
+        lambda text: text.encode("utf-16-le"),
+        lambda text: text.encode("utf-32"),
+    ],
+    ids=["utf-8-bom", "utf-16", "utf-16-le", "utf-32"],
+)
+def test_identity_match_reads_a_document_in_any_json_encoding(key, monkeypatch, encode, capsys):
+    """A document in UTF-16 or UTF-32, or UTF-8 with a byte order mark, is read as the base read
+    it (``json.load`` of bytes detects the encoding), and the key is matched."""
+    doc = json.dumps({"keys": [{"keyid": json.load(open(key))["keyid"]}]})
+    monkeypatch.setattr(identity.urllib.request, "urlopen", lambda url, timeout: _Resp(encode(doc)))
+    assert run("identity", "match", "--domain", "lab.example", "--key", key) == 0
+    assert "IS asserted by lab.example" in capsys.readouterr().out
 
 
 class _Resp(io.BytesIO):
@@ -1402,6 +1421,24 @@ def test_signing_succeeds_when_stdout_closes(tmp_path, key):
         "",
     )
     assert _body(out)["target"] == "t"
+
+
+@pytest.mark.parametrize(
+    "argv,code,err",
+    [
+        (("--version",), 0, ""),
+        (("--help",), 0, ""),
+        (("verify", "--help"), 0, ""),
+        (("verify", "pre.json", "--tests", "chain"), 64, "usage: "),
+    ],
+    ids=["version", "help", "verify-help", "usage-error"],
+)
+def test_what_argparse_prints_keeps_its_status_when_stdout_closes(tmp_path, argv, code, err):
+    """``asexec --version | true``: argparse printed and exits; a reader that has gone does not
+    change its status, as for a command that finished (before: exit 1, "stdout was closed")."""
+    status, stderr = _with_stdout_closed(tmp_path, *argv)
+    assert status == code and stderr.startswith(err)
+    assert "stdout was closed" not in stderr and "Traceback" not in stderr
 
 
 def _with_stdout(cwd, how, *argv, env=None):
