@@ -62,13 +62,6 @@ def time_of_round(round_no: int, chain_hash: str) -> int:
     return p["genesis_time"] + (round_no - 1) * p["period"]
 
 
-def round_at_time(ts: int, chain_hash: str) -> int:
-    p = CHAINS[chain_hash]
-    if ts < p["genesis_time"]:
-        return 1
-    return (ts - p["genesis_time"]) // p["period"] + 1
-
-
 def fetch_latest_round(chain_hash: str) -> dict:
     """Fetch the latest round of ``chain_hash`` from a public drand mirror. SIGN-TIME ONLY."""
     last_err = None

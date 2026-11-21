@@ -3983,3 +3983,6 @@ trigger, not the 0.5.0 version number itself.
   Its one caller, `fetch_floor` (`--floor`), always fetched the latest round; only the tests
   asked for a numbered round. A run that signs with an earlier round saves it itself and
   passes it with `--floor-round`. No behaviour change.
+- **`drand.round_at_time` is removed.** Nothing outside one test called it. That test now
+  checks `time_of_round` alone, which `order` and the floor report use, and which is also
+  pinned at round 1000. No behaviour change.

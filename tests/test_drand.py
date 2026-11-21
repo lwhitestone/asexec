@@ -46,11 +46,9 @@ def test_reject_unknown_chain():
     assert drand.verify_round(ROUND, SIG, RAND, chain_hash="00" * 32) is False
 
 
-def test_round_time_roundtrip():
-    round_time = drand.time_of_round(ROUND, CHAIN)
-    assert drand.round_at_time(round_time, CHAIN) == ROUND
+def test_time_of_round_is_genesis_plus_periods():
     # quicknet genesis + (round-1)*period
-    assert round_time == 1692803367 + (ROUND - 1) * 3
+    assert drand.time_of_round(ROUND, CHAIN) == 1692803367 + (ROUND - 1) * 3
 
 
 def test_pinned_chains_are_quicknet_with_its_genesis_and_period():
