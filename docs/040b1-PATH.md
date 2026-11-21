@@ -3685,3 +3685,143 @@ key, now refused in a key file as well) is checked before any parser runs. The t
 whole line. `tests/test_cli.py` was run locally on 3.14 (453 passed) before pushing. Commit
 `42a15bb`. `scripts/check.sh`: clean, 1271 passed. CI on `42a15bb` (run 44858156292): lint,
 python-matrix, test (3.12, 3.13, 3.14) and build pass.
+
+**Review round 1** (findings on PR #58; every fix is in `8dd74d7`, test first. With only the
+tests changed, **196 failed** in `tests/test_cli.py`, `tests/test_identity.py` and
+`tests/test_manifest.py`, mostly the quoted-path messages, then each finding's cases below):
+1. **blocking: a closed or full stdout gave a traceback** (`69e5796` called `sys.stdout.flush()`,
+   which is `None` under `>&-`, and flushed in a `finally`). `verify … >&-` exited 1 with an
+   `AttributeError` where the base exits 0/2, and so did prereg, keygen, `--help` and usage
+   errors (64 → 1). `>/dev/full` printed `error: [Errno 28]` and then a traceback, exit 120.
+   → `main` wraps stdout (`cli._GuardedStdout`), so a failed write or flush raises
+   `_StdoutError`, which is not an `OSError` and so is never taken for an input file's error.
+   With `sys.stdout` `None` nothing is flushed. A broken pipe keeps verify's verdict and a
+   finished command's status, as before. Any other write failure gives one line, `error: could
+   not write the output: [Errno 28] No space left on device`, exit 1, flushed inside the try,
+   and stdout is then pointed at the null device so Python's exit flush can't fail again.
+   Tests: `test_verify_with_stdout_closed_keeps_its_verdict[pass|fail]` (`>&-`: 0 / 2, stderr
+   empty), `test_other_commands_with_stdout_closed[keygen|prereg|help|usage-error]`,
+   `test_a_full_stdout_is_one_error_line[verify|prereg]`,
+   `test_a_usage_error_with_a_full_stdout_is_still_a_usage_error` (`/dev/full`, skipped where
+   it doesn't exist).
+2. **blocking: a NUL or a lone surrogate in a `--plan`/`--evidence` name gave a traceback**
+   (`os.path.isdir`/`exists` swallow the error, then `open` raised `ValueError` or
+   `UnicodeEncodeError`). → `hashing.name_problem`: a name holding a NUL, or a character with
+   no UTF-8 form, names no file a manifest can hold. `cli._spec_shape` refuses it (inline 64,
+   file 1), and `hashing.entry_name` and `build_entry` refuse it before asking the filesystem
+   (`--subject`, exit 1, including a non-UTF-8 argv byte, which Python decodes to a
+   surrogate). Tests: `test_a_name_no_file_can_have_is_refused` (8: plan and evidence × NUL and
+   surrogate × inline and file), `test_a_subject_no_manifest_can_name_is_refused` (3).
+3. should-fix: **the regular-file check refused pipes**, so `--target-file <(echo …)`,
+   `--declaration-file /dev/stdin` and README's own `--floor-round-file <(curl …)` failed.
+   → only a directory is refused (`--<flag> is a directory: '<path>'`); a pipe, a character
+   device or anything else is opened and read, and an `OSError` from that is one line. **This
+   brings back the FIFO hang for every `--…-file` whose FIFO has no writer**, which is
+   ordinary Unix behaviour (observation below). Tests:
+   `test_a_json_file_that_is_a_directory_is_one_error_line` (10),
+   `test_a_json_file_may_be_a_pipe` (10: a FIFO with a writer thread, each option signs),
+   `test_a_json_file_may_be_a_character_device` (`/dev/null`: read, and not JSON). It replaces
+   `test_a_json_file_that_is_not_a_regular_file_is_one_error_line`.
+4. should-fix: **a newline in a path split the error line.** → Every error that names a path
+   shows it quoted (`{path!r}`): `_get_arg_or_file`, `_read_json`, `_free_form_file`,
+   `_read_prereg`, `_load_manifest_body`, the no-target message, `keygen`'s already-exists
+   message, and `keys.load_signing_key`'s three. Test:
+   `test_a_path_with_a_newline_stays_on_one_error_line` (6: not found, a directory, bad JSON,
+   a free-form shape, `--fulfills`, a key file). The tests that pin those messages now expect
+   the quoted path.
+5. should-fix: **the 64-deep limit was one off for a value the body holds.** A 64-deep
+   `--target-file` exited 1 at signing ("body would be nested more than 64 deep"), and a 64-deep
+   inline `--repro-recipe` parsed and then exited 1 at signing instead of 64. → A value that sits
+   one level down in the body (`--target-file`, `--declaration-file`, `--notes-file`,
+   `--repro-recipe`) is held to 63 when it is read (`manifest.parse_json(text, max_depth)`,
+   `cli._IN_BODY_DEPTH`), with the reason `nested more than 63 deep (its value sits one level
+   down in a body, which is at most 64)`: inline 64, file 1. README now says what the 64
+   counts (the outermost array or object is 1) and that these hold 63. The signing check stays
+   as a backstop, now pinned in `tests/test_manifest.py::
+   test_sign_refuses_a_body_nested_deeper_than_format_reads` (65 refused, 64 signed). Tests:
+   `test_a_free_form_file_is_at_most_63_deep_so_its_body_is_at_most_64` (6: 64 refused, 63
+   signed and passing `format`), `test_an_inline_repro_recipe_is_at_most_63_deep`. The
+   earlier `test_a_body_nested_deeper_than_format_reads_is_not_signed` is replaced by these.
+6. should-fix: **`identity.fetch_wellknown` used bare `json.load`**, so a deep document was
+   exit 1 on 3.12 and exit 0 on 3.14. → It reads the bytes, then parses them with
+   `manifest.parse_json`. A broken rule, bytes that are not UTF-8 or not JSON give `<url> is
+   not an asexec identity document: …` (an `AsexecError`; a failed fetch is still a
+   `NetworkError`). Tests: `test_identity_match_reads_the_document_under_the_json_rules` (4:
+   deep, a duplicate key, not JSON, not UTF-8, through a monkeypatched `urlopen`), and
+   `tests/test_identity.py::test_fetch_wellknown_refuses_a_document_that_is_not_json`. That
+   case was split out of `test_fetch_wellknown_errors_map_to_network_error`, which had pinned
+   it as a `NetworkError`.
+7. should-fix: **`PYTHONIOENCODING=ascii` gave a `UnicodeEncodeError` traceback** on `✓` (the
+   base too). → `main` reconfigures stdout and stderr with `errors="backslashreplace"`, guarded
+   for `None` and for streams that can't be reconfigured. Test:
+   `test_verify_on_an_ascii_stdout_escapes_what_it_cannot_encode` (exit 0, `✓
+   format=PASS`, stderr empty).
+8. nit: **any `BrokenPipeError` was reported as "stdout was closed"**, including one from an
+   `--out` FIFO whose reader left. → Only `_StdoutError` is; a file's `BrokenPipeError` is its
+   own `error: [Errno 32] Broken pipe`. Test:
+   `test_a_broken_pipe_writing_a_file_is_not_reported_as_stdout`.
+
+**Scope decisions (orchestrator), applied in `8dd74d7`:**
+- **Reverted: postreg refusing a `--fulfills` prereg that fails `selfsig`.** That is a D2
+  policy choice, beyond #45. Postreg still refuses a file it can't read (malformed, or of an
+  unknown or beta format), since no ref or inherited target can be computed from one. A
+  `selfsig`-failing prereg is fulfilled as before:
+  `test_postreg_fulfils_a_prereg_that_fails_selfsig_as_before` (a changed `sig`, a keyid that
+  does not derive, two signatures: exit 0, `fulfills` its ref, the target inherited).
+  `test_postreg_refuses_to_fulfil_a_prereg_it_cannot_read` keeps the three format cases.
+  **OPEN FOR THE HUMAN GATE**: whether postreg should refuse to fulfil a prereg that fails
+  `selfsig`. `--prev` isn't checked for `format` or `selfsig` either.
+- **Kept: `{}` and `""` refused in `--target-file`, `--declaration-file` and `--notes-file`.**
+  **OPEN FOR THE HUMAN GATE.**
+- **Kept: a key file that repeats a key is refused** (a side effect of `42a15bb`). It is added
+  to the release-note entry below.
+- **Kept:** `--domain` refusing whitespace and control characters, and signing refusing a
+  body deeper than 64.
+- The judgement calls above that say otherwise (postreg refusing a `selfsig`-failing prereg,
+  the regular-file check) are kept as written at the time. This list is what holds now.
+
+**Release-note entry, amended** (it replaces the first entry in the checkpoint 9 summary):
+
+```
+Identifier: the CLI's argument checks (no constant): empty values, inline JSON shapes, --repro-recipe, --domain, JSON rules on every JSON input
+Impact: BREAKS_USERS
+Affected: scripts that pass an empty value (it was read as absent: inherited, dropped or defaulted; now exit 64); a --repro-recipe that is not an object (exit 1 -> 64); any JSON value, --…-file, key file or .well-known document with a repeated key or nested more than 64 deep (63 for a value the body holds: --target-file, --declaration-file, --notes-file, --repro-recipe), now refused; a postreg --fulfills file that fails format (it was signed against; now exit 1)
+Action: pass a value or leave the option out; fix the file
+```
+
+**Evidence (round 1):**
+- `scripts/check.sh`, in full, exit status checked: clean, **1311 passed** at `8dd74d7` (1271
+  before the round). `tests/test_cli.py` and `tests/test_identity.py` on Python 3.14 (a
+  separate scratch environment, so the project's `.venv` stays 3.12): 498 passed.
+- **Fuzzer, rerun** (974 runs): **19 problems, all FIFO hangs** with no writer: every
+  `--…-file` again (finding 3), `--key`, `--out` and a `verify` path. No traceback, no exit 1
+  that is not one line, no exit 64 without usage, no empty value accepted.
+- **Reviewer's probe classes** (scratch, `cp9/fuzz2.py`, 105 probes, **0 problems**):
+  - a newline in the path for every file option (missing, a directory, bad content): one
+    `error:` line each;
+  - `>&-` and `>/dev/full` for prereg, postreg, verify pass and fail, keygen, `identity emit`,
+    a usage error and `--help`: `>&-` keeps each status (0, 2, 64), and `/dev/full` gives 1 and
+    one line, or 64 for the usage error;
+  - NUL, lone-surrogate and non-UTF-8-byte names in `--plan`/`--evidence` (inline 64, file 1)
+    and `--subject` (1);
+  - every `--…-file` as `<(printf …)` and as `/dev/stdin` with a writer: exit 0;
+  - `PYTHONIOENCODING=ascii` for each command: its usual status, no traceback.
+
+**Observations added in review round 1 (out of scope):**
+- **FOR THE HUMAN GATE: `due` is parsed differently by Python version** (`datetime.fromisoformat`,
+  on the base too). `2023-11-14T24:00:00Z` parses on 3.14 (as 2023-11-15T00:00:00Z) and is
+  refused on 3.12 and 3.13; `2023-11-14T22:13:21.Z` parses on 3.12 only. A signed prereg with
+  such a `due` therefore reads as `elapsed-no-postreg` (or on time / late) on one version and
+  `invalid-due` on another, and `timely` and `complete` can flip. Now that `verifier.parse_due`
+  is the one parse, its grammar can be pinned there (a fixed ISO-8601 subset, rather than
+  whatever `fromisoformat` takes); checked on 3.12.3, 3.13.15 and 3.14.7.
+- `scripts/check.sh` runs on one interpreter only (the project's `.venv`); the 3.14 failure in
+  CI round 1 was found by CI, not locally.
+- A lone-surrogate object **key** in a value the CLI signs (`--notes-file {"\ud800": 1}`) is not
+  refused like a lone-surrogate string: `--notes-file` holding `{"\ud800": 1}` exits 0 and signs
+  `"notes":{"\ufffd\ufffd\ufffd":1}` (checked on the CLI), so the signed body differs from the
+  input without a word.
+- `--status` without `--item-id`, and `--provenance reproducible` without `--repro-recipe`, are
+  signed without complaint.
+- **The FIFO hangs** (as in the observations above, plus every `--…-file` again): a FIFO with no
+  writer blocks `open`, as it does for any Unix tool.
