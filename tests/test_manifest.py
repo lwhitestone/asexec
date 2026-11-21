@@ -1,4 +1,4 @@
-"""Manifest build/sign/ref + bedrock enforcement (asexec schema)."""
+"""Manifest build/sign/ref + the signing gate (asexec schema)."""
 
 import base64
 
@@ -122,7 +122,7 @@ def test_subject_optional_at_prereg():
     priv, pub = keys.generate()
     body = manifest.build_prereg(_target(), due=DUE)
     assert "subject" not in body and "hash_alg" not in body
-    signed = manifest.sign(body, priv, pub)  # bedrock without subject is fine
+    signed = manifest.sign(body, priv, pub)  # the gate needs no subject
     assert manifest.read_body(signed)[1]["phase"] == "prereg"
 
 
@@ -175,9 +175,8 @@ def test_writer_refuses_a_name_that_is_not_a_normalized_relative_path(name):
         manifest.build_prereg(_target(), subject=_subj(name))
 
 
-def test_missing_semantic_bedrock_rejected():
+def test_signing_refuses_a_body_without_target():
     priv, pub = keys.generate()
-    # no target (the only semantic bedrock field)
     body = {
         "predicateType": MANIFEST_PREDICATE_TYPE,
         "phase": "prereg",
@@ -187,10 +186,10 @@ def test_missing_semantic_bedrock_rejected():
         manifest.sign(body, priv, pub)
 
 
-def test_missing_structural_bedrock_rejected():
+def test_signing_refuses_a_body_without_predicate_type():
     priv, pub = keys.generate()
     body = manifest.build_prereg(_target(), due=DUE, subject=_subj())
-    del body["predicateType"]  # structural frame invariant gone
+    del body["predicateType"]
     with pytest.raises(ManifestError):
         manifest.sign(body, priv, pub)
 

@@ -27,8 +27,9 @@ written once.
 Schema note (v3 term/type refactor): ``phase`` is ``prereg`` | ``postreg``;
 the commitment is expressed as a free-form ``target`` (what) plus an optional
 ``due`` deadline (by when) and an optional ``declaration`` (plain-language or
-structured description). Semantic bedrock is ``target`` alone. ``due`` is
-optional (a commitment with no deadline can never elapse: its state is ``no-due``).
+structured description). Signing requires ``predicateType``, ``phase`` and ``target``,
+and ``fulfills`` in a postreg (the signing gate, in ``manifest.py``). ``due`` is optional
+(a commitment with no deadline never elapses: ``no-due`` until a postreg counts).
 """
 
 from __future__ import annotations
@@ -283,11 +284,11 @@ class ManifestBody(BaseModel):
 
     model_config = ConfigDict(strict=True, extra="forbid")
 
-    # structural bedrock - the body frame
+    # required to sign: phase drives matching; predicateType names the body for in-toto
     predicateType: str = MANIFEST_PREDICATE_TYPE
     phase: str
 
-    # semantic bedrock - WHAT was committed to (the only mandatory claim)
+    # required to sign: WHAT was committed to
     target: Freeform
 
     # the commitment's optional shape
@@ -323,8 +324,8 @@ class ManifestBody(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def _bedrock(self) -> ManifestBody:
-        # semantic bedrock: target is the only mandatory claim (due is optional).
+    def _required_and_unique(self) -> ManifestBody:
+        # the signing gate's target (due is optional).
         if self.target in (None, "", {}, []):
             raise ValueError("manifest body missing mandatory 'target'")
         # content #4: one file, one entry, in each list.

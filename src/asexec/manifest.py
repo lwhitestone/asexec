@@ -36,22 +36,24 @@ from .constants import FORMATS, MANIFEST_PAYLOAD_TYPE
 from .errors import ManifestError
 from .models import Anchor, Dsse, Manifest, ManifestBody, Signature
 
-# Bedrock = the mandatory minimum whose absence breaks verifiability of the
-# central commitment -> fulfillment / gap claim. Two disjoint reasons a field is
-# bedrock:
+# The signing gate: what signing refuses to go without. It is the writer's rule, not a
+# verify test. format and selfsig check every file's frame and signature, never body
+# fields, and signing meets both by construction. This gate adds what makes a body
+# mean something to the tests that read it:
 #
-#   structural : body-frame invariants - a body without these is not an
-#                asexec manifest at all (they scope every other check).
-#   semantic   : the claim the tool actually adjudicates - what was committed to
-#                (``target``). The deadline (``due``) is *optional*: a commitment
-#                with no deadline can never elapse (its state is ``no-due``), so it is
-#                not bedrock.
+#   phase          : how verify matches a manifest (commitments, chain, keyconsist,
+#                    timely, complete, order).
+#   fulfills       : a postreg's link to its prereg's ref; without it, the postreg is
+#                    notarization-only. Required of a postreg only (see _check_signable).
+#   target         : what was committed to. No test reads it; it is the claim itself.
+#   predicateType  : names the body for in-toto consumers. verify selects the format by
+#                    dsse.payloadType and never reads it.
 #
-# Everything else - the drand floor, the Roughtime ceiling witness, subject, declaration,
-# free-text - is individually optional. Each subject entry carries its own `hash_alg`:
-# a digest is meaningless without its algorithm, and no default supplies one.
-_BEDROCK_STRUCTURAL = ("predicateType", "phase")
-_BEDROCK_SEMANTIC = ("target",)
+# Everything else in the body is optional, due included: a commitment with no due never
+# elapses (no-due until a postreg counts). Each subject, plan and evidence entry carries
+# its own hash_alg: a digest means nothing without its algorithm, and no default
+# supplies one.
+_REQUIRED_TO_SIGN = ("predicateType", "phase", "target")
 
 
 def _build(
@@ -146,7 +148,7 @@ def ref(body_bytes: bytes, payload_type: str = MANIFEST_PAYLOAD_TYPE) -> str:
 def sign(body: dict[str, Any], private_key: bytes, public_key: bytes) -> dict[str, Any]:
     """Serialize ``body`` to its body bytes and sign them: the file, as a dict, with the
     unsigned ``untrusted.asexec_version`` of this release beside them."""
-    _check_bedrock(body)
+    _check_signable(body)
     body_bytes = canonical_bytes(body)
     try:  # a body deeper than this would fail format #2 (and parse_body) when verified
         _check_nesting(body_bytes.decode("utf-8"))
@@ -162,19 +164,15 @@ def sign(body: dict[str, Any], private_key: bytes, public_key: bytes) -> dict[st
     return Manifest(dsse=dsse, pubkey=public_key.hex()).model_dump(mode="json")
 
 
-def _check_bedrock(body: dict[str, Any]) -> None:
-    """Dict-level signing gate.
+def _check_signable(body: dict[str, Any]) -> None:
+    """The signing gate, checked on the dict.
 
     Kept alongside the model so a body assembled by hand (not via ``build_*``)
-    still cannot be signed if it is missing a bedrock field - the model would
+    still cannot be signed if it is missing a field the gate requires - the model would
     silently re-supply the structural defaults, so presence must be checked on
     the dict as given.
     """
-    missing = [
-        f
-        for f in (_BEDROCK_STRUCTURAL + _BEDROCK_SEMANTIC)
-        if f not in body or body[f] in (None, "", [], {})
-    ]
+    missing = [f for f in _REQUIRED_TO_SIGN if f not in body or body[f] in (None, "", [], {})]
     if missing:
         raise ManifestError(f"manifest body missing mandatory field(s): {', '.join(missing)}")
     _check_entries(body.get("subject"), "subject")
