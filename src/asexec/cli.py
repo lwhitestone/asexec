@@ -54,30 +54,18 @@ def _load_json(path: str) -> str | dict:
 
 
 def _get_arg_or_file[T](
-    args,
-    arg_name: str,
-    file_arg_name: str,
-    load_file: Callable[[str], T],
-    parse_value: Callable[[str], T] | None = None,
+    args, arg_name: str, file_arg_name: str, load_file: Callable[[str], T]
 ) -> str | T | None:
     """Load a value from ``--<arg>`` or ``--<file-arg>`` (argparse allows at most one).
 
-    ``parse_value``, if given, parses the inline ``--<arg>`` value into ``T`` (for example
-    ``_strict_json`` and a shape check), as ``load_file`` reads the file. A ``ValueError``
-    from it is a usage error: only the argument is wrong, so it exits ``EXIT_USAGE`` and
-    nothing runs. What a file holds is not an argument: ``load_file`` fails with exit 1."""
+    The inline ``--<arg>`` value is already parsed and checked by its argparse ``type``
+    (``_add_arg_or_file``), so a bad one was a usage error before anything ran. What a file
+    holds is not an argument: ``load_file`` fails with exit 1."""
     value = getattr(args, arg_name, None)
     file_path = getattr(args, file_arg_name, None)
-    if value:
-        if parse_value is None:
-            return value
-        try:
-            return parse_value(value)
-        except ValueError as e:
-            flag = "--" + arg_name.replace("_", "-")
-            sys.stderr.write(f"asexec {args.cmd}: error: argument {flag}: {e}\n")
-            raise SystemExit(EXIT_USAGE) from None
-    if file_path:
+    if value is not None:
+        return value
+    if file_path is not None:
         try:
             return load_file(file_path)
         except FileNotFoundError:
@@ -109,20 +97,15 @@ _PLAN_FIELDS = ("name", "media_type", "label")
 _EVIDENCE_FIELDS = ("name", "media_type", "uri")
 
 
-def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:
-    out: dict = {}
-    for key, value in pairs:
-        if key in out:  # parsers disagree on which value wins, so neither is taken
-            raise ValueError(f"duplicate JSON key {key!r}")
-        out[key] = value
-    return out
-
-
 def _strict_json(text: str):
-    """An inline JSON value: valid JSON with no duplicate key (``ValueError`` otherwise)."""
+    """A JSON value held to a manifest file's JSON rules (``manifest.parse_json``: no
+    duplicate key, since parsers disagree on which value wins, and at most 64 deep);
+    ``ValueError`` otherwise."""
     try:
-        return json.loads(text, object_pairs_hook=_reject_duplicate_keys)
-    except json.JSONDecodeError as e:
+        return manifest.parse_json(text)
+    except ManifestError as e:  # a duplicate key, or nested too deep
+        raise ValueError(str(e)) from None
+    except ValueError as e:  # not JSON, or an integer of more digits than Python reads
         raise ValueError(f"not valid JSON: {e}") from None
 
 
@@ -193,19 +176,31 @@ def _shaped_arg_or_file(args, name: str, shape: Callable):
         with open(path) as f:
             text = f.read()
         try:  # the same JSON rules as an inline value: no duplicate key
-            value = json.loads(text, object_pairs_hook=_reject_duplicate_keys)
+            value = json.loads(text, object_pairs_hook=manifest._reject_duplicate_keys)
         except json.JSONDecodeError as e:
             raise ManifestError(f"{path} must contain valid JSON: {e}") from None
-        except ValueError as e:  # a duplicate key
+        except ManifestError as e:  # a duplicate key
             raise ManifestError(f"{path}: {e}") from None
         try:
             return shape(value)
         except ValueError as e:
             raise ManifestError(str(e)) from None
 
-    return _get_arg_or_file(
-        args, name, f"{name}_file", load_file, lambda text: shape(_strict_json(text))
-    )
+    return _get_arg_or_file(args, name, f"{name}_file", load_file)
+
+
+def _repro_recipe_shape(value) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError(
+            f'--repro-recipe must be a JSON object, like {{"seed": 0}}: {_short(value)}'
+        )
+    return value
+
+
+def _short(value) -> str:
+    """``value`` for an error message: its repr, cut to a line's length."""
+    text = repr(value)
+    return text if len(text) <= 80 else text[:77] + "..."
 
 
 def _described_entries(specs: list, alg: str) -> list[dict]:
@@ -732,7 +727,7 @@ def _add_anchor_flags(p):
     )
     floor.add_argument(
         "--floor-round",
-        type=_nonempty_arg,
+        type=_json_arg(_round_shape),
         help="attach as the floor a drand round fetched earlier, for example when a run "
         'started, as drand\'s HTTP API returns it: JSON {"round": ..., "randomness": ..., '
         '"signature": ...} of the chain --floor fetches from. Verified at signing (offline); '
@@ -793,23 +788,44 @@ def _due_arg(value: str) -> str:
 
 
 def _nonempty_arg(value: str) -> str:
+    """Any option's value: an empty one is no value, and is never read as absent."""
     if not value:
         raise argparse.ArgumentTypeError("must not be empty")
     return value
 
 
-def _json_arg(value: str):
-    try:
-        return json.loads(value)
-    except json.JSONDecodeError as e:
-        raise argparse.ArgumentTypeError(f"not valid JSON: {e}") from None
+def _domain_arg(value: str) -> str:
+    """``--domain``: a name with no whitespace or control character (it goes into a URL)."""
+    _nonempty_arg(value)
+    if any(c.isspace() or not c.isprintable() for c in value):
+        raise argparse.ArgumentTypeError(
+            f"a domain name has no whitespace or control character: {value!r}"
+        )
+    return value
 
 
-def _add_arg_or_file(p, name: str, required: bool = False, help=None, file_help=None, **kw):
-    """``--<name>`` and ``--<name>-file``: at most one (exactly one if ``required``)."""
+def _json_arg(shape: Callable):
+    """An argparse ``type`` for an inline JSON value: not empty, JSON under a manifest file's
+    rules (``_strict_json``), and held to ``shape``. A value that fails is a usage error."""
+
+    def parse(value: str):
+        _nonempty_arg(value)
+        try:
+            return shape(_strict_json(value))
+        except ValueError as e:
+            raise argparse.ArgumentTypeError(str(e)) from None
+
+    return parse
+
+
+def _add_arg_or_file(
+    p, name: str, required: bool = False, help=None, file_help=None, type=_nonempty_arg
+):
+    """``--<name>`` and ``--<name>-file``: at most one (exactly one if ``required``). Neither
+    may be empty; ``type`` checks the inline value."""
     group = p.add_mutually_exclusive_group(required=required)
-    group.add_argument(f"--{name}", help=help, **kw)
-    group.add_argument(f"--{name}-file", help=file_help)
+    group.add_argument(f"--{name}", help=help, type=type)
+    group.add_argument(f"--{name}-file", help=file_help, type=_nonempty_arg)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -828,7 +844,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     # asexec keygen
     kg = sub.add_parser("keygen", help="generate an ed25519 keypair (no CA)")
-    kg.add_argument("--out", default=None, help="secret key file (default: asexec-<uuid>.key)")
+    kg.add_argument(
+        "--out",
+        type=_nonempty_arg,
+        default=None,
+        help="secret key file (default: asexec-<uuid>.key)",
+    )
     kg.add_argument(
         "--force", action="store_true", help="overwrite an existing key file (the old key is lost)"
     )
@@ -836,12 +857,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     # asexec prereg
     pr = sub.add_parser("prereg", help="sign a pre-registration before a run")
-    pr.add_argument("--key", required=True, help="key that signs the prereg")
+    pr.add_argument("--key", required=True, type=_nonempty_arg, help="key that signs the prereg")
     _add_arg_or_file(
         pr,
         "target",
         required=True,
-        type=_nonempty_arg,
         help="plain-text target details (what you commit to run)",
         file_help="structured JSON target details",
     )
@@ -860,6 +880,7 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument(
         "--subject",
         nargs="+",
+        type=_nonempty_arg,
         help="file(s) to hash, each named by its path relative to the current directory "
         "(no directories; verify finds them under --artifacts; optional at prereg time)",
     )
@@ -881,6 +902,7 @@ def build_parser() -> argparse.ArgumentParser:
         help='the plan the claim is tested against, as JSON: {"name": <file path>, '
         '"media_type": ..., "label": ...}; asexec hashes the file (--hash-alg)',
         file_help="the --plan JSON, from a file",
+        type=_json_arg(_plan_shape),
     )
     _add_arg_or_file(
         pr,
@@ -888,17 +910,19 @@ def build_parser() -> argparse.ArgumentParser:
         help='what the claim commits to deliver, as a JSON array: [{"id": "S1", "kind": '
         '"run"}, ...]; ids must be unique, and each is accounted for by a postreg\'s --item-id',
         file_help="the --items JSON array, from a file",
+        type=_json_arg(_items_shape),
     )
     _add_anchor_flags(pr)
-    pr.add_argument("--out", default="preregistration.json")
+    pr.add_argument("--out", type=_nonempty_arg, default="preregistration.json")
     pr.set_defaults(func=cmd_prereg)
 
     # asexec postreg
     po = sub.add_parser("postreg", help="sign a post-registration after a run")
-    po.add_argument("--key", required=True)
+    po.add_argument("--key", required=True, type=_nonempty_arg)
     po.add_argument(
         "--fulfills",
         required=True,
+        type=_nonempty_arg,
         help="pre-registration file, or a literal sha-256:<64 hex> ref, this fulfils",
     )
     _add_arg_or_file(po, "target", help="override target (default: inherit from prereg)")
@@ -912,6 +936,7 @@ def build_parser() -> argparse.ArgumentParser:
     po.add_argument(
         "--subject",
         nargs="+",
+        type=_nonempty_arg,
         help="file(s) to hash (outputs, transcript, harness files), each named by its path "
         "relative to the current directory (no directories)",
     )
@@ -923,16 +948,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     po.add_argument(
         "--prev",
+        type=_nonempty_arg,
         help="prior postreg file (or sha-256:<64 hex> ref) in this commitment's chain",
     )
     po.add_argument("--provenance", choices=["asserted", "reproducible"], default="asserted")
     po.add_argument(
         "--repro-recipe",
-        type=_json_arg,
+        type=_json_arg(_repro_recipe_shape),
         help="JSON: {seed, decode, runtime} if provenance=reproducible",
     )
     _add_arg_or_file(po, "notes")
-    po.add_argument("--item-id", help="the id of the prereg's item this postreg accounts for")
+    po.add_argument(
+        "--item-id",
+        type=_nonempty_arg,
+        help="the id of the prereg's item this postreg accounts for",
+    )
     po.add_argument(
         "--status",
         choices=STATUSES,
@@ -944,14 +974,17 @@ def build_parser() -> argparse.ArgumentParser:
         help='files that back this postreg, as a JSON array: [{"name": <file path>, '
         '"media_type": ..., "uri": ...}, ...]; asexec hashes each file (--hash-alg)',
         file_help="the --evidence JSON array, from a file",
+        type=_json_arg(_evidence_shape),
     )
     _add_anchor_flags(po)
-    po.add_argument("--out", default="postregistration.json")
+    po.add_argument("--out", type=_nonempty_arg, default="postregistration.json")
     po.set_defaults(func=cmd_postreg)
 
     # asexec verify
     vy = sub.add_parser("verify", help="verify manifests offline; produce a canonical verify code")
-    vy.add_argument("paths", nargs="+", help="manifest file(s) or a directory of them")
+    vy.add_argument(
+        "paths", nargs="+", type=_nonempty_arg, help="manifest file(s) or a directory of them"
+    )
     vy.add_argument(
         "--tests",
         required=True,
@@ -960,25 +993,29 @@ def build_parser() -> argparse.ArgumentParser:
         f"{' and '.join(repr(t) for t in sorted(verifier.REQUIRED_TESTS))}). "
         f"available: {', '.join(verifier.TEST_CATALOG)}",
     )
-    vy.add_argument("--artifacts", help="directory of original artifacts, to check content hashes")
+    vy.add_argument(
+        "--artifacts",
+        type=_nonempty_arg,
+        help="directory of original artifacts, to check content hashes",
+    )
     vy.set_defaults(func=cmd_verify)
 
     # asexec identity
     idp = sub.add_parser("identity", help="key<->domain binding via .well-known (no CA)")
     isub = idp.add_subparsers(dest="identity_cmd", required=True)
     ie = isub.add_parser("emit", help="write a .well-known/asexec.json for your key")
-    ie.add_argument("--key", required=True)
-    ie.add_argument("--domain")
-    ie.add_argument("--out", default="asexec.json")
+    ie.add_argument("--key", required=True, type=_nonempty_arg)
+    ie.add_argument("--domain", type=_domain_arg)
+    ie.add_argument("--out", type=_nonempty_arg, default="asexec.json")
     ie.set_defaults(func=cmd_identity)
     iv = isub.add_parser(
         "match", help="check a key matches that which is asserted by a domain (network)"
     )
-    iv.add_argument("--domain", required=True)
+    iv.add_argument("--domain", required=True, type=_domain_arg)
     which = iv.add_mutually_exclusive_group(required=True)  # exactly one key to look for
-    which.add_argument("--keyid")
-    which.add_argument("--pubkey")
-    which.add_argument("--key", help="a key file, to derive the keyid")
+    which.add_argument("--keyid", type=_nonempty_arg)
+    which.add_argument("--pubkey", type=_nonempty_arg)
+    which.add_argument("--key", type=_nonempty_arg, help="a key file, to derive the keyid")
     iv.set_defaults(func=cmd_identity)
 
     return p

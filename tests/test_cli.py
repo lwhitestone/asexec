@@ -516,6 +516,158 @@ def test_usage_errors_exit_EXIT_USAGE_not_the_FAIL_status(argv, capsys):
     assert capsys.readouterr().err.startswith("usage: ")
 
 
+_PREREG = ("prereg", "--key", "k.key", "--target", "t")
+_POSTREG = ("postreg", "--key", "k.key", "--fulfills", REF)
+_MATCH = ("identity", "match", "--domain", "d")
+# Every option whose empty value cannot be meant, with a command it is valid in. An empty
+# value must not be read as "absent" (inherited, dropped, or the default).
+EMPTY_VALUES = [
+    (("keygen",), "--out"),
+    *((_PREREG, flag) for flag in (
+        "--key", "--declaration", "--declaration-file", "--subject", "--notes",
+        "--notes-file", "--plan", "--plan-file", "--items", "--items-file", "--floor-round",
+        "--floor-round-file", "--out",
+    )),
+    (("prereg", "--key", "k.key"), "--target-file"),
+    *((_POSTREG, flag) for flag in (
+        "--target", "--target-file", "--declaration", "--declaration-file", "--subject",
+        "--prev", "--repro-recipe", "--notes", "--notes-file", "--item-id", "--evidence",
+        "--evidence-file", "--floor-round", "--floor-round-file", "--out",
+    )),
+    (("postreg", "--key", "k.key"), "--fulfills"),
+    (("postreg", "--fulfills", REF), "--key"),
+    (("verify", "pre.json"), "--artifacts"),
+    (("identity", "emit", "--key", "k.key"), "--domain"),
+    (("identity", "emit", "--key", "k.key"), "--out"),
+    (("identity", "emit"), "--key"),
+    (("identity", "match", "--keyid", "kid"), "--domain"),
+    (_MATCH, "--keyid"),
+    (_MATCH, "--pubkey"),
+    (_MATCH, "--key"),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    "base,flag", EMPTY_VALUES, ids=[f"{base[0]}-{base[-1]}-{flag}" for base, flag in EMPTY_VALUES]
+)
+def test_an_empty_value_is_a_usage_error(tmp_path, monkeypatch, base, flag, capsys):
+    """An empty value is no value: a usage error (64) with the usage line, and nothing runs.
+    Before, ``postreg --target ""`` inherited the prereg's target, ``--notes-file ""`` was
+    dropped, and ``identity match --keyid ""`` fetched."""
+    monkeypatch.chdir(tmp_path)
+    if base[0] == "verify":
+        base = (*base, "--tests", "format,selfsig")
+    with pytest.raises(SystemExit) as e:
+        run(*base, flag, "")
+    assert e.value.code == cli.EXIT_USAGE
+    err = capsys.readouterr().err
+    assert err.startswith("usage: ")
+    assert err.endswith(f": error: argument {flag}: must not be empty\n")
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("verify", "", "--tests", "format,selfsig"),
+        ("verify", "pre.json", "", "--tests", "format,selfsig"),
+        ("prereg", "--key", "k.key", "--target", "t", "--subject", "a.txt", ""),
+    ],
+    ids=["verify-path", "verify-second-path", "subject-second-file"],
+)
+def test_an_empty_path_in_a_list_is_a_usage_error(tmp_path, monkeypatch, argv, capsys):
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as e:
+        run(*argv)
+    assert e.value.code == cli.EXIT_USAGE
+    err = capsys.readouterr().err
+    assert err.startswith("usage: ") and err.endswith(": must not be empty\n")
+
+
+@pytest.mark.parametrize(
+    "value,message",
+    [
+        ("[1]", "--repro-recipe must be a JSON object"),
+        ('"seed"', "--repro-recipe must be a JSON object"),
+        ("5", "--repro-recipe must be a JSON object"),
+        ("null", "--repro-recipe must be a JSON object"),
+        ('{"seed": 1, "seed": 2}', "duplicate JSON key 'seed'"),
+        ('{"seed": ' + "1" * 5000 + "}", "not valid JSON: Exceeds the limit (4300 digits)"),
+        ("[" * 100 + "]" * 100, "nested more than 64 deep"),
+    ],
+    ids=["list", "string", "number", "null", "duplicate-key", "long-integer", "deep"],
+)
+def test_repro_recipe_not_an_object_is_a_usage_error(tmp_path, key, value, message, capsys):
+    out = tmp_path / "out.json"
+    with pytest.raises(SystemExit) as e:
+        run(*_POSTREG[:2], key, *_POSTREG[3:], "--repro-recipe", value, "--out", out)
+    assert e.value.code == cli.EXIT_USAGE
+    err = capsys.readouterr().err
+    assert err.startswith("usage: ") and f"error: argument --repro-recipe: {message}" in err
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("cmd", ["emit", "match"])
+@pytest.mark.parametrize("domain", ["lab example", "lab.example\n", "\tlab.example", "a\x1bb"])
+def test_identity_domain_with_whitespace_or_control_characters_is_a_usage_error(
+    tmp_path, monkeypatch, key, cmd, domain, capsys
+):
+    """A domain name has no whitespace or control character: such a --domain is a usage
+    error, not a fetch of another URL or an error message split over two lines."""
+    monkeypatch.chdir(tmp_path)
+    given = ("--key", key) if cmd == "emit" else ("--keyid", "kid")
+    with pytest.raises(SystemExit) as e:
+        run("identity", cmd, *given, "--domain", domain)
+    assert e.value.code == cli.EXIT_USAGE
+    err = capsys.readouterr().err
+    assert err.startswith("usage: ") and "argument --domain: " in err
+
+
+@pytest.mark.parametrize(
+    "flag,value",
+    [
+        ("--plan", '{"name": ' + "1" * 5000 + "}"),
+        ("--items", "[" + "1" * 5000 + "]"),
+        ("--evidence", "[" + "1" * 5000 + "]"),
+        ("--floor-round", '{"round": ' + "1" * 5000 + "}"),
+    ],
+)
+def test_an_inline_integer_past_the_digit_limit_is_not_valid_json(
+    tmp_path, key, flag, value, capsys
+):
+    """Python reads no integer of more than 4,300 digits: such a value is not valid JSON here,
+    and says so, as any other unreadable value does (checkpoint 8's note)."""
+    cmd = "postreg" if flag == "--evidence" else "prereg"
+    link = ["--target", "t"] if cmd == "prereg" else ["--target", "t", "--fulfills", REF]
+    with pytest.raises(SystemExit) as e:
+        run(cmd, "--key", key, *link, flag, value, "--out", tmp_path / "out.json")
+    assert e.value.code == cli.EXIT_USAGE
+    err = capsys.readouterr().err
+    assert err.startswith("usage: ")
+    assert f"error: argument {flag}: not valid JSON: Exceeds the limit (4300 digits)" in err
+
+
+@pytest.mark.parametrize(
+    "flag,value",
+    [
+        ("--plan", '{"name": ' + "[" * 70 + "]" * 70 + "}"),
+        ("--items", "[" * 70 + "]" * 70),
+        ("--evidence", "[" * 100_000 + "]" * 100_000),
+        ("--floor-round", "[" * 100_000 + "]" * 100_000),
+    ],
+)
+def test_an_inline_value_nested_too_deep_is_a_usage_error(tmp_path, key, flag, value, capsys):
+    """An inline JSON value is held to the manifest file's JSON rules: no duplicate key, and
+    nested at most 64 deep (so no parser reaches its recursion limit)."""
+    cmd = "postreg" if flag == "--evidence" else "prereg"
+    link = ["--target", "t"] if cmd == "prereg" else ["--target", "t", "--fulfills", REF]
+    with pytest.raises(SystemExit) as e:
+        run(cmd, "--key", key, *link, flag, value, "--out", tmp_path / "out.json")
+    assert e.value.code == cli.EXIT_USAGE
+    err = capsys.readouterr().err
+    assert err.startswith("usage: ")
+    assert f"error: argument {flag}: nested more than 64 deep" in err
+
+
 @pytest.mark.parametrize(
     "argv",
     [
@@ -888,11 +1040,12 @@ INLINE_USAGE_ERRORS = [
     pytest.param(("prereg", "--items", "[1,"), "not valid JSON", id="items-not-json"),
     pytest.param(("postreg", "--evidence", "not json"), "not valid JSON", id="evidence-not-json"),
     pytest.param(("postreg", "--status", "done"), "invalid choice", id="status-unknown"),
-    pytest.param(("prereg", "--plan", "{}", "--plan-file", "p.json"), "not allowed",
-                 id="plan-and-file"),
+    pytest.param(("prereg", "--plan", '{"name": "plan.md"}', "--plan-file", "p.json"),
+                 "not allowed", id="plan-and-file"),
     pytest.param(("prereg", "--items", "[]", "--items-file", "i.json"), "not allowed",
                  id="items-and-file"),
-    pytest.param(("postreg", "--evidence", "[]", "--evidence-file", "e.json"), "not allowed",
+    pytest.param(("postreg", "--evidence", '[{"name": "plan.md"}]', "--evidence-file", "e.json"),
+                 "not allowed",
                  id="evidence-and-file"),
     pytest.param(("prereg", "--plan", "[]"), "--plan must be a JSON object", id="plan-list"),
     pytest.param(("prereg", "--plan", '"plan.md"'), "--plan must be a JSON object",
@@ -943,7 +1096,7 @@ def test_claim_record_argument_errors_are_usage_errors(
         run(cmd, "--key", key, *link, *rest, "--out", tmp_path / "out.json")
     assert e.value.code == cli.EXIT_USAGE
     err = capsys.readouterr().err
-    assert "error: argument" in err and message in err
+    assert err.startswith("usage: ") and "error: argument" in err and message in err
     assert not (tmp_path / "out.json").exists()
 
 
@@ -1347,7 +1500,8 @@ def test_floor_round_argument_errors_are_usage_errors(tmp_path, key, value, mess
             "--out", out)  # fmt: skip
     assert e.value.code == cli.EXIT_USAGE
     err = capsys.readouterr().err
-    assert "error: argument --floor-round: " in err and message in err
+    assert err.startswith("usage: ") and "error: argument --floor-round: " in err
+    assert message in err
     assert not out.exists()
 
 

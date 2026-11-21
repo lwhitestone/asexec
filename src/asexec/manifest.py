@@ -270,12 +270,19 @@ def _check_nesting(text: str) -> None:
             depth -= 1
 
 
-def _parse_object(text: str, what: str) -> dict[str, Any]:
-    """The JSON rules a file and a body are both held to: a JSON object with unique keys,
-    nested at most ``MAX_NESTING_DEPTH`` deep. Raises ``ManifestError`` or
-    ``json.JSONDecodeError`` (a ``ValueError``)."""
+def parse_json(text: str) -> Any:
+    """A JSON value held to the JSON rules of a manifest file: unique keys, nested at most
+    ``MAX_NESTING_DEPTH`` deep. Raises ``ManifestError`` for either rule, else a
+    ``ValueError`` if ``text`` is not JSON (``json.JSONDecodeError``, or an integer of more
+    digits than Python reads). The CLI holds every JSON value it is given to these rules."""
     _check_nesting(text)
-    data = json.loads(text, object_pairs_hook=_reject_duplicate_keys)
+    return json.loads(text, object_pairs_hook=_reject_duplicate_keys)
+
+
+def _parse_object(text: str, what: str) -> dict[str, Any]:
+    """The JSON rules a file and a body are both held to (``parse_json``), and a JSON object.
+    Raises ``ManifestError`` or ``json.JSONDecodeError`` (a ``ValueError``)."""
+    data = parse_json(text)
     if not isinstance(data, dict):
         raise ManifestError(f"{what} must be a JSON object")
     return data
