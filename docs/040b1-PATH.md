@@ -3825,3 +3825,32 @@ Action: pass a value or leave the option out; fix the file
   signed without complaint.
 - **The FIFO hangs** (as in the observations above, plus every `--…-file` again): a FIFO with no
   writer blocks `open`, as it does for any Unix tool.
+
+**Review round 2** (PR #58; the reviewer re-checked round 1's fixes and found them correct, and
+the PR mergeable. Two nits, both restoring what the base did, are in `d939b28`, test first.
+With only the tests changed, **8 failed**; the usage-error case already passed):
+1. nit: **`identity` refused a `.well-known` document with a UTF-8 BOM, or in UTF-16**, which
+   the base accepted (`json.load` of bytes detects the encoding). Round 1's decode was UTF-8
+   only. → The bytes are decoded with `json.detect_encoding` (UTF-8 with a BOM dropped,
+   UTF-16, UTF-32) before `manifest.parse_json`. Bytes that decode in none of these stay one
+   line: `… is not an asexec identity document: not JSON text in UTF-8, UTF-16 or UTF-32 (…)`.
+   Test: `test_identity_match_reads_a_document_in_any_json_encoding[utf-8-bom|utf-16|utf-16-le|utf-32]`
+   (each matches the key, exit 0). The `not-utf8` case of
+   `test_identity_match_reads_the_document_under_the_json_rules` now pins the new wording.
+2. nit: **`asexec --version | true` and `asexec verify --help | true` exited 1** with "stdout
+   was closed before the command finished" (base: 120), while `prereg … | true` exited 0. →
+   `main`'s `except SystemExit` branch flushes through `cli._flush_finished_output`, the
+   helper `_run` uses after a finished command: a broken pipe drops stdout, and the
+   `SystemExit` code stands. Any other write failure is still one `error:` line, exit 1. Test:
+   `test_what_argparse_prints_keeps_its_status_when_stdout_closes[version|help|verify-help|usage-error]`
+   (0, 0, 0, 64 into a pipe whose reader has gone, and no "stdout was closed").
+3. notes only, **a consistency point:** inline `--plan` (and `--evidence`) splits its name
+   refusals two ways. A NUL or a character with no UTF-8 form is refused by the shape check,
+   on the argument alone: exit 64. A `..` component or an absolute name is refused when the
+   file is hashed (`hashing.entry_name`, checkpoint 7's rule, which `--subject` shares): exit
+   1. README states each case as it behaves. Both refusals need only the argument, so a later
+   change could move the `..` and absolute checks into the shape (64) for inline values.
+
+`scripts/check.sh`, in full, exit status checked: clean, **1319 passed** at `d939b28`.
+`uv run --python 3.14 pytest tests/test_cli.py tests/test_identity.py` (in a scratch
+environment): 506 passed.
