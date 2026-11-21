@@ -520,9 +520,22 @@ def cmd_verify(args) -> int:
     """Run a series of verification tests on the prereg-postreg cycle to prove that
     this execution met the desired standards. Produces a code summarizing the tests
     performed and the results of each. ``args.tests`` is already validated (see
-    ``_tests_arg``)."""
-    report = verifier.verify_paths(args.paths, args.tests, artifacts_dir=args.artifacts)
+    ``_tests_arg``).
 
+    The verdict is decided before anything is printed, so a reader that closes stdout early
+    (``asexec verify … | head -1``) does not change the exit status."""
+    report = verifier.verify_paths(args.paths, args.tests, artifacts_dir=args.artifacts)
+    status = EXIT_OK if report["ok"] else EXIT_FAIL
+    try:
+        _show_report(report)
+        sys.stdout.flush()
+    except BrokenPipeError:  # the reader has gone: the rest of the report has no one to read it
+        _drop_stdout()
+    return status
+
+
+def _show_report(report: dict) -> None:
+    """The verify report, for people to read; then the code and the time it was checked."""
     _show("=== manifests ===")
     for m in report["manifests"]:
         ss = m["selfsig"]
@@ -619,7 +632,6 @@ def cmd_verify(args) -> int:
 
     _show(f"\n{report['code']}")
     _show(f"Checked at {report['checked_at']}")
-    return EXIT_OK if report["ok"] else EXIT_FAIL
 
 
 UNTRUSTED_HEADING = "=== untrusted (unsigned, and read by no test: nothing here was checked) ==="
@@ -1068,12 +1080,37 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+def _drop_stdout() -> None:
+    """Point stdout at the null device once its reader has gone, so no later write, nor
+    Python's flush at exit, fails again (which would print to stderr and exit 120)."""
     try:
-        return args.func(args)
-    except (AsexecError, OSError) as e:
-        # an input the arguments name could not be used (missing or bad key file, failed
-        # fetch, ...): a message, not a traceback. verify turns these into FAILs itself.
-        sys.stderr.write(f"error: {e}\n")
-        return EXIT_ERROR
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+        os.close(devnull)
+    except (OSError, ValueError):  # no file descriptor behind stdout (a test's capture)
+        pass
+
+
+def _flush_stdout() -> None:
+    try:
+        sys.stdout.flush()
+    except BrokenPipeError:  # closed after the command finished: its exit status stands
+        _drop_stdout()
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        args = build_parser().parse_args(argv)
+        try:
+            return args.func(args)
+        except BrokenPipeError:  # stdout closed while the command printed, before it ended
+            _drop_stdout()
+            sys.stderr.write("error: stdout was closed before the command finished\n")
+            return EXIT_ERROR
+        except (AsexecError, OSError) as e:
+            # an input the arguments name could not be used (missing or bad key file, failed
+            # fetch, ...): a message, not a traceback. verify turns these into FAILs itself.
+            sys.stderr.write(f"error: {e}\n")
+            return EXIT_ERROR
+    finally:
+        _flush_stdout()  # what is still buffered, before the exit status is returned

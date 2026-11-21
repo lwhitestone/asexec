@@ -12,6 +12,7 @@ import os
 import re
 import runpy
 import stat
+import subprocess
 import sys
 
 import pytest
@@ -1162,6 +1163,51 @@ def test_identity_match_passes_explicit_keyid_or_pubkey(monkeypatch, flag, expec
 def test_identity_without_subcommand_is_usage_error():
     with pytest.raises(SystemExit):
         run("identity")
+
+
+# --- a closed stdout ---------------------------------------------------------- #
+def _with_stdout_closed(cwd, *argv):
+    """Run ``asexec argv`` with stdout a pipe whose reader has already gone, as ``asexec … |
+    head -1`` has once head exits: every write to it fails (EPIPE)."""
+    read, write = os.pipe()
+    os.close(read)
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "asexec", *map(str, argv)],
+            stdout=write, stderr=subprocess.PIPE, cwd=cwd, timeout=120,
+        )  # fmt: skip
+    finally:
+        os.close(write)
+    return proc.returncode, proc.stderr.decode()
+
+
+@pytest.mark.parametrize("copies", [1, 300], ids=["short-report", "long-report"])
+@pytest.mark.parametrize("tampered,code", [(False, 0), (True, 2)], ids=["pass", "fail"])
+def test_verify_keeps_its_verdict_when_stdout_closes(tmp_path, key, prereg, copies, tampered, code):
+    """``verify … | head -1``: the reader closing stdout changes nothing about the verdict, so
+    the exit status is still 0 or 2, with nothing on stderr. A short report fails at Python's
+    flush on exit; a long one while it prints. Before: exit 120 or 1."""
+    files = tmp_path / "manifests"
+    files.mkdir()
+    for i in range(copies):
+        (files / f"pre-{i}.json").write_text(open(prereg).read())
+    if tampered:
+        _edit_body_after_signing(files / "pre-0.json", lambda body: body.update(target="u"))
+    assert _with_stdout_closed(tmp_path, "verify", files, "--tests", "format,selfsig") == (
+        code,
+        "",
+    )
+
+
+def test_signing_succeeds_when_stdout_closes(tmp_path, key):
+    """prereg writes its file and then prints: a closed stdout leaves exit 0, the file
+    written, and nothing on stderr."""
+    out = tmp_path / "pre.json"
+    assert _with_stdout_closed(tmp_path, "prereg", "--key", key, "--target", "t", "--out", out) == (
+        0,
+        "",
+    )
+    assert _body(out)["target"] == "t"
 
 
 # --- entry points ------------------------------------------------------------ #
