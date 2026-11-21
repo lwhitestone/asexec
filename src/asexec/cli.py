@@ -17,7 +17,6 @@ import sys
 import uuid
 from collections import Counter
 from collections.abc import Callable
-from datetime import datetime
 
 from pydantic import ValidationError
 
@@ -829,16 +828,17 @@ def _tests_arg(spec: str) -> list[str]:
 
 
 def _due_arg(value: str) -> str:
-    """``--due``: an ISO-8601 deadline, returned verbatim.
+    """``--due``: an ISO-8601 deadline, returned verbatim, as verify parses it
+    (``verifier.parse_due``, the one parse of ``due``).
 
-    An explicit UTC offset (or ``Z``) is required: a timezone-less deadline
-    would mean different instants to verifiers in different timezones.
+    An explicit UTC offset (or ``Z``) is required: verify reads a timezone-less deadline as
+    UTC, but flags it, since its writer may have meant local time.
     """
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        _instant, naive = verifier.parse_due(value)
     except ValueError:
         raise argparse.ArgumentTypeError(f"not a valid ISO-8601 timestamp: {value!r}") from None
-    if parsed.tzinfo is None:
+    if naive:
         raise argparse.ArgumentTypeError(
             "needs an explicit UTC offset or 'Z' "
             f"(e.g. 2026-08-30T00:00:00Z or 2026-08-30T00:00:00+02:00): {value!r}"

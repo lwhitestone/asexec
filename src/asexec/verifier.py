@@ -195,12 +195,28 @@ _EPOCH = datetime.datetime(1970, 1, 1, tzinfo=datetime.UTC)
 _MICROSECOND = datetime.timedelta(microseconds=1)
 
 
-def _parse_due(raw: Any) -> tuple[bool, float | None, bool, int | None]:
-    """Parse a ``due`` value to ``(present, epoch_seconds, naive, epoch_microseconds)``.
+def parse_due(text: str) -> tuple[datetime.datetime, bool]:
+    """The instant an ISO-8601 ``due`` names, and whether it has no UTC offset. The one parse
+    of ``due``: signing (``cli._due_arg``, which refuses a naive one) and verify both use it,
+    so what signing takes is what verify reads.
 
-    A timezone-less value is read as UTC so the result never depends on the
-    verifier's local timezone; ``naive`` flags it. ``epoch_seconds`` (for states) and
-    ``epoch_microseconds`` (exact, for comparing with a ceiling's signed integer time) are
+    ``Z`` stands for ``+00:00``. A value with no offset is read as UTC, so the instant never
+    depends on the reader's local timezone. Digits past the microsecond are dropped (Python's
+    ``fromisoformat``). Raises ``ValueError`` if ``text`` is not such a timestamp.
+    """
+    dt = datetime.datetime.fromisoformat(text.replace("Z", "+00:00"))
+    naive = dt.tzinfo is None
+    if naive:
+        dt = dt.replace(tzinfo=datetime.UTC)
+    return dt, naive
+
+
+def _parse_due(raw: Any) -> tuple[bool, float | None, bool, int | None]:
+    """Parse a ``due`` value (``parse_due``) to ``(present, epoch_seconds, naive,
+    epoch_microseconds)``.
+
+    ``naive`` flags a value read as UTC for want of an offset. ``epoch_seconds`` (for states)
+    and ``epoch_microseconds`` (exact, for comparing with a ceiling's signed integer time) are
     None if ``due`` is absent (missing or null) or not a parseable ISO-8601 string.
     """
     try:
@@ -210,12 +226,9 @@ def _parse_due(raw: Any) -> tuple[bool, float | None, bool, int | None]:
     if due is None:
         return False, None, False, None
     try:
-        dt = datetime.datetime.fromisoformat(due.replace("Z", "+00:00"))
+        dt, naive = parse_due(due)
     except ValueError:
         return True, None, False, None
-    naive = dt.tzinfo is None
-    if naive:
-        dt = dt.replace(tzinfo=datetime.UTC)
     return True, dt.timestamp(), naive, (dt - _EPOCH) // _MICROSECOND
 
 

@@ -14,6 +14,7 @@ import runpy
 import stat
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -1506,6 +1507,71 @@ def test_verify_flags_an_unparseable_due_on_a_fulfilled_commitment(tmp_path, key
     out = capsys.readouterr().out
     assert "[FULFILLED]" in out
     assert f"    {cli.NO} due is not a parseable ISO-8601 timestamp\n" in out
+
+
+# One parse of due (verifier.parse_due) for signing and verify. The witness's time T is
+# 2023-11-14T22:13:21Z (MIDP + RADI); "on-time" is T <= due, in whole microseconds.
+DUE_READINGS = [
+    pytest.param("2023-11-14T22:13:21Z", True, "on-time", id="z-at-T"),
+    pytest.param("2023-11-14T22:13:20.999999Z", True, "late", id="one-microsecond-before-T"),
+    pytest.param("2023-11-14T23:13:21+01:00", True, "on-time", id="offset-at-T"),
+    pytest.param("2023-11-14T12:13:20.999999-10:00", True, "late", id="negative-offset-before-T"),
+    pytest.param("2023-11-14T22:13:21.0000009Z", True, "on-time", id="sub-microsecond-truncated"),
+    pytest.param("2023-11-14T22:13:20.9999999Z", True, "late", id="sub-microsecond-not-rounded-up"),
+    pytest.param("2023-11-14T22:13:21", False, "naive-on-time", id="naive-read-as-utc"),
+    pytest.param("2023-11-14", False, "naive-late", id="date-only-read-as-utc-midnight"),
+    pytest.param("2023-11-14T22:13:21Z ", False, "invalid", id="trailing-space"),
+    pytest.param("2023-11-14T22:13:21+24:00", False, "invalid", id="offset-out-of-range"),
+    pytest.param("2023-02-30T00:00:00Z", False, "invalid", id="no-such-day"),
+    pytest.param("someday", False, "invalid", id="words"),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize("due,signs,reading", DUE_READINGS)
+def test_due_is_parsed_once_for_signing_and_verify(
+    tmp_path, key, capsys, monkeypatch, witness, due, signs, reading
+):
+    """Signing takes a --due exactly when verify parses it with an offset (``parse_due`` for
+    both), and verify reads each the same way: a naive due as UTC (flagged) whatever the local
+    timezone, an offset applied, digits past the microsecond truncated, and an unparseable due
+    named as such."""
+    if not hasattr(time, "tzset"):
+        pytest.skip("time.tzset is POSIX-only")
+    monkeypatch.setenv("TZ", "Pacific/Kiritimati")  # UTC+14: a naive due read locally is off
+    time.tzset()
+    try:
+        out = tmp_path / "signed.json"
+        if signs:
+            assert run("prereg", "--key", key, "--target", "t", "--due", due, "--out", out) == 0
+            assert _body(out)["due"] == due  # written verbatim
+        else:
+            with pytest.raises(SystemExit) as e:
+                run("prereg", "--key", key, "--target", "t", "--due", due, "--out", out)
+            assert e.value.code == cli.EXIT_USAGE
+            assert "error: argument --due: " in capsys.readouterr().err
+        # verify reads the same string, signed as anyone could
+        pre, post = tmp_path / "pre.json", tmp_path / "post.json"
+        _sign_stored_bytes(pre, key, json.dumps({"phase": "prereg", "target": "t", "due": due,
+                                                 "predicateType": "x"}).encode())  # fmt: skip
+        body = {"phase": "postreg", "target": "t", "fulfills": _ref(pre), "predicateType": "x"}
+        _sign_stored_bytes(post, key, json.dumps(body).encode())
+        witness(post)
+        capsys.readouterr()
+        code = run("verify", pre, post, "--tests", "format,selfsig,timely")
+        report = capsys.readouterr().out
+    finally:
+        monkeypatch.undo()
+        time.tzset()
+    naive_line = (
+        f"    {cli.NO} due has no timezone; read as UTC (re-sign with an explicit offset)\n"
+    )
+    invalid_line = f"    {cli.NO} due is not a parseable ISO-8601 timestamp\n"
+    assert (naive_line in report) == reading.startswith("naive")
+    assert (invalid_line in report) == (reading == "invalid")
+    assert ("is late: its ceiling (no later than 2023-11-14T22:13:21Z)" in report) == (
+        reading.endswith("late")
+    )
+    assert code == (0 if reading.endswith("on-time") else 2)
 
 
 # --- complete ---------------------------------------------------------------------- #
