@@ -294,17 +294,16 @@ def verify_response(
 def verify_ceiling(
     ceiling: CeilingInput,
     expected_nonce: str,
-    servers: dict[str, dict[str, object]] | None = None,
+    servers: dict[str, dict[str, object]],
 ) -> dict[str, object]:
     """Verify a parsed envelope ``ceiling`` and its binding to ``expected_nonce``:
     ceiling #2-#5 beyond their shape, which is ``models.CeilingInput``'s job.
 
     ``expected_nonce`` is the manifest's ``ref`` (``sha-256:<hex>``); the ceiling
     binds iff its nonce equals that digest. The long-term key is resolved from
-    the pinned ``servers`` map (default ``SERVERS``) by ``witness_id``, NOT taken
+    the pinned ``servers`` map (in production ``SERVERS``) by ``witness_id``, NOT taken
     from the record.
     """
-    servers = SERVERS if servers is None else servers
     out: dict[str, object] = {
         "status": "invalid",
         "witness_id": ceiling.witness_id,

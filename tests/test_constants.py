@@ -324,7 +324,11 @@ def test_current_format_sign_then_verify_roundtrip(tmp_path):
     (artifacts / "a.txt").write_bytes(b"x")
     priv, pub = keys.generate()
     subject = [
-        {"name": "a.txt", "hash_alg": "sha-256", "digest": {"sha-256": hashing.hash_bytes(b"x")}}
+        {
+            "name": "a.txt",
+            "hash_alg": "sha-256",
+            "digest": {"sha-256": hashlib.sha256(b"x").hexdigest()},
+        }
     ]
     written = manifest.sign(manifest.build_prereg("m", subject=subject), priv, pub)
     # Not from the writer: a body signed as anyone could, with the entry's own hash_alg.
@@ -451,12 +455,16 @@ def test_digest_ref_prefix():
     )
 
 
-def test_subject_default_hash_alg():
+def test_subject_default_hash_alg(tmp_path):
     # NEW_OUTPUT: the signing default only, which picks the hash_alg a new subject entry is
     # hashed with. Signing writes it into every entry, so changing it fails nothing
     # published. Verify has no fallback: it reads each entry's own (below).
     assert constants.SUBJECT_DEFAULT_HASH_ALG == "sha-256"
-    assert hashing.hash_bytes(b"") == hashlib.sha256(b"").hexdigest()
+    empty = tmp_path / "empty"
+    empty.write_bytes(b"")
+    assert hashing.hash_file(str(empty), constants.SUBJECT_DEFAULT_HASH_ALG) == (
+        hashlib.sha256(b"").hexdigest()
+    )
 
 
 @frozen_v1
@@ -483,7 +491,7 @@ def test_signing_key_alg(tmp_path):
     assert _signing_format()["signing_key_alg"] == "ed25519"
     keys.save(bytes(32), str(tmp_path / "k.key"))
     assert json.loads((tmp_path / "k.key.pub").read_text())["alg"] == "ed25519"
-    assert identity.build_wellknown([{"keyid": "k", "pubkey": "p"}])["keys"][0]["alg"] == (
+    assert identity.build_wellknown([{"keyid": "k", "pubkey": "p"}], None)["keys"][0]["alg"] == (
         "ed25519"
     )
     (entry,) = _signed_prereg()["dsse"]["signatures"]
@@ -497,7 +505,7 @@ def test_verify_code_version():
     # grammar or the documented meaning of an existing test name changes; adding a test name
     # needs no bump. From 0.4.0, never change what a number means; 0.4.0 keeps /1.
     assert constants.VERIFY_CODE_VERSION == "asexec-verify/1"
-    assert verify_paths([], ["format", "selfsig"])["code"].startswith("asexec-verify/1 ")
+    assert verify_paths([], ["format", "selfsig"], None)["code"].startswith("asexec-verify/1 ")
 
 
 def test_identity_well_known_path():
@@ -524,7 +532,7 @@ def test_manifest_predicate_type():
 def test_identity_document_version():
     # NEW_OUTPUT: nothing reads the number back. Bump it when the document's shape changes.
     assert constants.IDENTITY_DOCUMENT_VERSION == 1
-    assert identity.build_wellknown([])["asexec_identity_version"] == 1
+    assert identity.build_wellknown([], None)["asexec_identity_version"] == 1
 
 
 @frozen_v1

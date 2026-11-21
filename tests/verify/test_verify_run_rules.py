@@ -291,7 +291,7 @@ def test_run__directory_argument_expands_to_json_files_only(scenario):
     (scenario.manifest_dir / "notes.txt").write_text("not a manifest")
     (scenario.manifest_dir / "subdir").mkdir()  # not recursed into
     scenario.write()
-    report = verify_paths([str(scenario.manifest_dir)], ["format", "selfsig"])
+    report = verify_paths([str(scenario.manifest_dir)], ["format", "selfsig"], None)
     names = sorted(m["path"].rsplit("/", 1)[-1] for m in report["manifests"])
     assert names == ["postreg0.json", "postreg1.json", "postreg2.json", "prereg.json"]
 

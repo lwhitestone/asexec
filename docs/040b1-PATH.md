@@ -3990,3 +3990,22 @@ trigger, not the 0.5.0 version number itself.
   It can still be `None`, because a floor may leave `randomness` out (`floor` #4). The
   docstring now says "a round of `chain_hash`" instead of "a quicknet round". No behaviour
   change.
+- **Internal defaults that no production caller relied on are removed.** An AST pass over
+  `src/asexec` compared every default with its production call sites, and each candidate was
+  then checked by hand:
+  - `hashing`: the `alg` default on `hash_file`, `build_entry`, `build_entries` and
+    `build_subject`, and `hash_bytes` itself, which nothing in production called. Only the
+    CLI's `--hash-alg` default reads `SUBJECT_DEFAULT_HASH_ALG` now.
+  - `servers` on both `verify_ceiling`s. `verify_paths` now resolves `None` to the pinned
+    `roughtime.SERVERS` once.
+  - `identity.build_wellknown(domain)`, `fetch_wellknown(timeout)` and
+    `match_binding(keyid, pubkey_hex)`.
+  - `verify_paths(artifacts_dir)`.
+  - `build_prereg` and `build_postreg`'s named defaults. They are now `**fields` passed to
+    `_build`, whose defaults production does use.
+  - `cli._strict_json(max_depth)` and `cli._show(text)`.
+
+  Kept, because production uses them: `verify_paths(now, servers)`, `match_binding(timeout)`,
+  `fetch_ceiling(servers)`, `manifest.ref(payload_type)`, the `max_depth` defaults that
+  calls omit, `_build`'s fields, and every argparse default. No behaviour change.
+  `scripts/check.sh` clean, 1319 passed; the adequacy example exits 0.

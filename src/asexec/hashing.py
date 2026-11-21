@@ -22,7 +22,6 @@ import os
 from collections.abc import Callable
 from typing import Any
 
-from .constants import SUBJECT_DEFAULT_HASH_ALG
 from .errors import HashAlgError, ManifestError
 from .fields import is_normal_name
 
@@ -54,13 +53,7 @@ def _new(alg: str):
         ) from None
 
 
-def hash_bytes(data: bytes, alg: str = SUBJECT_DEFAULT_HASH_ALG) -> str:
-    h = _new(alg)
-    h.update(data)
-    return h.hexdigest()
-
-
-def hash_file(path: str, alg: str = SUBJECT_DEFAULT_HASH_ALG, chunk: int = 1 << 20) -> str:
+def hash_file(path: str, alg: str, chunk: int = 1 << 20) -> str:
     h = _new(alg)
     with open(path, "rb") as f:
         for block in iter(lambda: f.read(chunk), b""):
@@ -113,7 +106,7 @@ def entry_name(path: str) -> str:
     return name
 
 
-def build_entry(path: str, alg: str = SUBJECT_DEFAULT_HASH_ALG) -> dict[str, Any]:
+def build_entry(path: str, alg: str) -> dict[str, Any]:
     """``{"name", "hash_alg", "digest": {alg: hex}}`` for the one file at ``path``.
 
     Refuses (``ManifestError``) a directory, anything else that exists but is not a regular
@@ -130,7 +123,7 @@ def build_entry(path: str, alg: str = SUBJECT_DEFAULT_HASH_ALG) -> dict[str, Any
     return {"name": name, "hash_alg": alg, "digest": {alg: hash_file(path, alg)}}
 
 
-def build_entries(paths: list[str], alg: str = SUBJECT_DEFAULT_HASH_ALG) -> list[dict[str, Any]]:
+def build_entries(paths: list[str], alg: str) -> list[dict[str, Any]]:
     """One entry per path (``build_entry``), refusing two paths with the same name."""
     entries: list[dict[str, Any]] = []
     seen: dict[str, str] = {}
@@ -146,6 +139,6 @@ def build_entries(paths: list[str], alg: str = SUBJECT_DEFAULT_HASH_ALG) -> list
     return entries
 
 
-def build_subject(paths: list[str], alg: str = SUBJECT_DEFAULT_HASH_ALG) -> list[dict[str, Any]]:
+def build_subject(paths: list[str], alg: str) -> list[dict[str, Any]]:
     """Build the manifest ``subject`` array from a list of file paths (``build_entries``)."""
     return build_entries(paths, alg)

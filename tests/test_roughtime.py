@@ -278,7 +278,10 @@ def test_fetch_ceiling_happy_path(monkeypatch, make_server):
     # the returned record round-trips through the offline verifier
     monkeypatch.setitem(roughtime.SERVERS, "s0", {"pubkey": lt_pub})
     parsed = CeilingInput.model_validate(got)
-    assert roughtime.verify_ceiling(parsed, "sha-256:" + nonce.hex())["status"] == "verified"
+    assert (
+        roughtime.verify_ceiling(parsed, "sha-256:" + nonce.hex(), roughtime.SERVERS)["status"]
+        == "verified"
+    )
 
 
 def test_fetch_ceiling_strips_udp_framing(monkeypatch, make_server, wire):

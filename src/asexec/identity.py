@@ -25,7 +25,7 @@ from .errors import AsexecError, NetworkError
 from .manifest import parse_json
 
 
-def build_wellknown(keyid_pubkey_pairs: list[dict[str, str]], domain: str | None = None) -> dict:
+def build_wellknown(keyid_pubkey_pairs: list[dict[str, str]], domain: str | None) -> dict:
     """Build the ``.well-known/asexec.json`` document a domain publishes."""
     alg = FORMATS[MANIFEST_PAYLOAD_TYPE]["signing_key_alg"]  # the format signing writes
     doc: dict = {
@@ -49,7 +49,7 @@ def _wellknown_url(domain: str) -> str:
     return f"https://{domain.rstrip('/')}/{IDENTITY_WELL_KNOWN_PATH}"
 
 
-def fetch_wellknown(domain: str, timeout: int = 10) -> dict:
+def fetch_wellknown(domain: str, timeout: int) -> dict:
     """HTTPS GET https://<domain>/.well-known/asexec.json (network; identity-check only)."""
     url = _wellknown_url(domain)
     try:
@@ -71,7 +71,7 @@ def fetch_wellknown(domain: str, timeout: int = 10) -> dict:
 
 
 def match_binding(
-    domain: str, keyid: str | None = None, pubkey_hex: str | None = None, timeout: int = 10
+    domain: str, keyid: str | None, pubkey_hex: str | None, timeout: int = 10
 ) -> dict:
     """Check whether a key is asserted by a domain. Returns a result dict."""
     doc = fetch_wellknown(domain, timeout=timeout)

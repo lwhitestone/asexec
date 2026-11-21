@@ -379,15 +379,15 @@ def verify_floor(body: dict[str, Any]) -> dict[str, Any]:
 
 
 def verify_ceiling(
-    mani: dict[str, Any], ref: str, servers: dict[str, dict[str, object]] | None = None
+    mani: dict[str, Any], ref: str, servers: dict[str, dict[str, object]]
 ) -> dict[str, Any]:
     """Verify the ceiling witness in the file's wrapper (if present).
 
     Two conditions: (1) the witness signature verifies against a pinned key,
     and (2) the witness's nonce binds to THIS manifest (nonce == ``ref``, the digest of
     its body bytes). Called only for a manifest that passed ``format``. Delegates the
-    binding, the pin lookup in ``servers`` (default: the pinned
-    ``roughtime.SERVERS``) and the witness cryptography to the ``roughtime`` module.
+    binding, the pin lookup in ``servers`` (the pinned witnesses, which ``verify_paths``
+    resolves) and the witness cryptography to the ``roughtime`` module.
     """
     present, ceiling = _lookup(mani, "ceiling")
     if not present:
@@ -499,7 +499,7 @@ def verify_content(body: dict[str, Any], artifacts_dir: str | None) -> dict[str,
 def verify_paths(
     paths: list[str],
     tests: list[str],
-    artifacts_dir: str | None = None,
+    artifacts_dir: str | None,
     now: float | None = None,
     servers: dict[str, dict[str, object]] | None = None,
 ) -> dict[str, Any]:
@@ -510,6 +510,10 @@ def verify_paths(
     states are judged at, and is reported as ``checked_at``.
     """
     now = time.time() if now is None else now
+    if servers is None:
+        from . import roughtime
+
+        servers = roughtime.SERVERS
     files = _expand(paths)
 
     # (ref, keyid) -> record. A commitment is a prereg's ref and its signer: the body holds

@@ -46,10 +46,10 @@ def test_strict_base64_has_one_spelling_per_byte_string(text):
         b64decode(text)
 
 
-def test_hash_bytes_and_file(tmp_path):
+def test_hash_file(tmp_path):
     path = tmp_path / "f.txt"
     path.write_bytes(b"hello")
-    assert hashing.hash_file(str(path)) == hashing.hash_bytes(b"hello")
+    assert hashing.hash_file(str(path), "sha-256") == hashlib.sha256(b"hello").hexdigest()
 
 
 def _files(root, *names):
@@ -73,7 +73,7 @@ def test_build_subject_names_each_file_by_its_normalized_relative_path(tmp_path,
     # "/"-separated: two files with the same basename stay distinct.
     monkeypatch.chdir(tmp_path)
     _files(tmp_path, "a/run.py", "b/run.py", "c.txt")
-    subject = hashing.build_subject(["a/run.py", "./b//run.py", "c.txt"])
+    subject = hashing.build_subject(["a/run.py", "./b//run.py", "c.txt"], "sha-256")
     assert subject == [
         {"name": "a/run.py", "hash_alg": "sha-256", "digest": {"sha-256": _sha("a/run.py")}},
         {"name": "b/run.py", "hash_alg": "sha-256", "digest": {"sha-256": _sha("b/run.py")}},
@@ -88,7 +88,7 @@ def test_build_subject_hashes_a_symlink_through_to_its_target(tmp_path, monkeypa
         (tmp_path / "link.txt").symlink_to(tmp_path / "real.txt")
     except (OSError, NotImplementedError):
         pytest.skip("symlinks unavailable on this platform")
-    (entry,) = hashing.build_subject(["link.txt"])
+    (entry,) = hashing.build_subject(["link.txt"], "sha-256")
     assert entry == {
         "name": "link.txt",
         "hash_alg": "sha-256",
@@ -124,7 +124,7 @@ def test_build_subject_refuses_what_content_would_fail(tmp_path, monkeypatch, pa
     _files(tmp_path, "c.txt", "d/x.txt")
     paths = [p.format(abs=tmp_path / "c.txt") for p in paths]
     with pytest.raises(ManifestError, match=message):
-        hashing.build_subject(paths)
+        hashing.build_subject(paths, "sha-256")
 
 
 @pytest.mark.skipif(os.sep != "/", reason="a backslash is a separator on Windows")
@@ -133,7 +133,7 @@ def test_build_subject_refuses_a_backslash_in_a_name(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _files(tmp_path, "a\\b.txt")
     with pytest.raises(ManifestError, match="backslash"):
-        hashing.build_subject(["a\\b.txt"])
+        hashing.build_subject(["a\\b.txt"], "sha-256")
 
 
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="os.mkfifo is POSIX-only")
@@ -141,18 +141,20 @@ def test_build_subject_refuses_what_is_not_a_regular_file(tmp_path, monkeypatch)
     monkeypatch.chdir(tmp_path)
     os.mkfifo(tmp_path / "pipe")
     with pytest.raises(ManifestError, match="not a regular file"):
-        hashing.build_subject(["pipe"])
+        hashing.build_subject(["pipe"], "sha-256")
 
 
 def test_build_subject_of_a_missing_file_raises_os_error(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     with pytest.raises(FileNotFoundError):
-        hashing.build_subject(["absent.txt"])
+        hashing.build_subject(["absent.txt"], "sha-256")
 
 
-def test_unknown_hash_alg_raises():
+def test_unknown_hash_alg_raises(tmp_path):
+    path = tmp_path / "f.txt"
+    path.write_bytes(b"x")
     with pytest.raises(HashAlgError):
-        hashing.hash_bytes(b"x", "md5")
+        hashing.hash_file(str(path), "md5")
 
 
 def test_keyid_stable_and_sign_verify():

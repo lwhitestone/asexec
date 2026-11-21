@@ -168,7 +168,7 @@ def test_format__fail__1_nested_at_most_64_deep(scenario):
 def test_format__fail__1_missing_file_is_examined_and_malformed(tmp_path):
     """format #1: a path that is not a directory is examined even if it does not exist. It
     is the only file and fails format, so selfsig has nothing to examine."""
-    report = verify_paths([str(tmp_path / "absent.json")], REQUIRED)
+    report = verify_paths([str(tmp_path / "absent.json")], REQUIRED, None)
     assert report["code"] == "asexec-verify/1 format=FAIL selfsig=FAIL"
     assert report["results"]["format"]["applicable"] == 1
     assert report["results"]["selfsig"]["applicable"] == 0
@@ -183,7 +183,7 @@ def test_format__fail__1_unlistable_directory_is_examined_and_malformed(tmp_path
         raise PermissionError(13, "Permission denied", path)
 
     monkeypatch.setattr(os, "listdir", denied)
-    report = verify_paths([str(tmp_path)], REQUIRED)
+    report = verify_paths([str(tmp_path)], REQUIRED, None)
     assert report["code"] == "asexec-verify/1 format=FAIL selfsig=FAIL"
     assert report["results"]["format"]["applicable"] == 1
     (entry,) = report["manifests"]
@@ -503,7 +503,7 @@ def test_format__fail__3_file_laid_out_before_0_4_0(scenario, payload_type, erro
 def test_format__fail__empty_no_manifests():
     """format (*): with no manifest to verify, format fails rather than passing with nothing
     examined, and so does selfsig."""
-    report = verify_paths([], REQUIRED)
+    report = verify_paths([], REQUIRED, None)
     assert report["code"] == "asexec-verify/1 format=FAIL selfsig=FAIL"
     assert report["results"]["format"]["reason"] == "no manifests to verify"
     assert report["results"]["selfsig"]["reason"] == NONE_PASSES
@@ -512,7 +512,7 @@ def test_format__fail__empty_no_manifests():
 def test_format__fail__empty_directory_with_no_json_files(tmp_path):
     """format (*): a directory with no *.json file in it yields no manifest file to examine."""
     (tmp_path / "notes.txt").write_text("not a manifest")
-    report = verify_paths([str(tmp_path)], REQUIRED)
+    report = verify_paths([str(tmp_path)], REQUIRED, None)
     assert report["code"] == "asexec-verify/1 format=FAIL selfsig=FAIL"
     assert report["results"]["format"]["applicable"] == 0
     assert report["results"]["format"]["reason"] == "no manifests to verify"

@@ -236,7 +236,7 @@ def test_selfsig__fail__empty_no_manifest_passes_format(scenario):
 
 def test_selfsig__fail__empty_no_manifests():
     """selfsig (*): with no manifest file at all, selfsig fails rather than passing unchecked."""
-    report = verify_paths([], ["format", "selfsig"])
+    report = verify_paths([], ["format", "selfsig"], None)
     assert report["code"] == "asexec-verify/1 format=FAIL selfsig=FAIL"
     assert report["results"]["selfsig"]["applicable"] == 0
     assert report["results"]["selfsig"]["reason"] == NONE_PASSES

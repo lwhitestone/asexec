@@ -142,7 +142,7 @@ _PLAN_FIELDS = ("name", "media_type", "label")
 _EVIDENCE_FIELDS = ("name", "media_type", "uri")
 
 
-def _strict_json(text: str, max_depth: int = _FILE_DEPTH):
+def _strict_json(text: str, max_depth: int):
     """A JSON value held to a manifest file's JSON rules (``manifest.parse_json``: no
     duplicate key, since parsers disagree on which value wins, and at most ``max_depth``
     deep); ``ValueError`` otherwise."""
@@ -417,7 +417,7 @@ def _attach_ceiling(mani: dict, ref: str, want_ceiling: bool, best_effort: bool)
     )
 
 
-def _show(text: str = "") -> None:
+def _show(text: str) -> None:
     """Print a report line. A manifest's strings are printed as they are, except that a
     character with no UTF-8 form (a lone surrogate, which a body may hold as valid JSON) is
     shown as its escape, ``\\udXXX``, so the report never fails to print."""

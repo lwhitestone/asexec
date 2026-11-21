@@ -190,7 +190,7 @@ def test_content__fail__5_name_resolves_inside_artifacts(scenario):
     """content #5: name resolved with symlinks stays inside --artifacts (a symlink that
     points outside fails)."""
     _symlink(scenario.artifacts / "link.txt", scenario.outside)
-    digest = hashing.hash_file(str(scenario.outside))
+    digest = hashing.hash_file(str(scenario.outside), "sha-256")
     _prereg_subject(scenario, _entry("link.txt", digest))
     report = scenario.verify("content")
     assert report["code"] == FAIL

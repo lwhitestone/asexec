@@ -100,37 +100,12 @@ def _build(
     return body.to_body()
 
 
-def build_prereg(target, *, due=None, declaration=None, subject=None, **optional) -> dict[str, Any]:
-    return _build(
-        "prereg",
-        target,
-        due=due,
-        declaration=declaration,
-        subject=subject,
-        **optional,
-    )
+def build_prereg(target, **fields) -> dict[str, Any]:
+    return _build("prereg", target, **fields)
 
 
-def build_postreg(
-    target,
-    *,
-    fulfills,
-    due=None,
-    declaration=None,
-    subject=None,
-    prev_hash=None,
-    **optional,
-) -> dict[str, Any]:
-    return _build(
-        "postreg",
-        target,
-        due=due,
-        declaration=declaration,
-        subject=subject,
-        fulfills=fulfills,
-        prev_hash=prev_hash,
-        **optional,
-    )
+def build_postreg(target, *, fulfills, **fields) -> dict[str, Any]:
+    return _build("postreg", target, fulfills=fulfills, **fields)
 
 
 def ref(body_bytes: bytes, payload_type: str = MANIFEST_PAYLOAD_TYPE) -> str:

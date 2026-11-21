@@ -22,14 +22,14 @@ def test_build_wellknown_shape():
 def test_match_binding_positive_and_negative(monkeypatch):
     priv, pub = keys.generate()
     kid = keys.keyid_for(pub)
-    doc = identity.build_wellknown([{"keyid": kid, "pubkey": pub.hex()}])
+    doc = identity.build_wellknown([{"keyid": kid, "pubkey": pub.hex()}], None)
     monkeypatch.setattr(identity, "fetch_wellknown", lambda domain, timeout=10: doc)
 
-    ok = identity.match_binding("lab.example", keyid=kid)
+    ok = identity.match_binding("lab.example", keyid=kid, pubkey_hex=None)
     assert ok["bound"] is True and ok["matched"]["keyid"] == kid
 
     other = keys.keyid_for(keys.generate()[1])
-    bad = identity.match_binding("lab.example", keyid=other)
+    bad = identity.match_binding("lab.example", keyid=other, pubkey_hex=None)
     assert bad["bound"] is False
     assert "point-in-time" in bad["caveat"]
 
@@ -60,19 +60,19 @@ def test_fetch_wellknown_errors_map_to_network_error(monkeypatch):
 
     monkeypatch.setattr(identity.urllib.request, "urlopen", fake)
     with pytest.raises(NetworkError, match="lab.example"):
-        identity.fetch_wellknown("lab.example")
+        identity.fetch_wellknown("lab.example", timeout=10)
 
 
 def test_fetch_wellknown_refuses_a_document_that_is_not_json(monkeypatch):
     """What was fetched is not JSON: the fetch worked, the document is not one."""
     monkeypatch.setattr(identity.urllib.request, "urlopen", lambda url, timeout: _Resp(b"no"))
     with pytest.raises(AsexecError, match="is not an asexec identity document") as e:
-        identity.fetch_wellknown("lab.example")
+        identity.fetch_wellknown("lab.example", timeout=10)
     assert not isinstance(e.value, NetworkError)
 
 
 def test_match_binding_by_pubkey(monkeypatch):
     _, pub = keys.generate()
-    doc = identity.build_wellknown([{"keyid": "k", "pubkey": pub.hex()}])
+    doc = identity.build_wellknown([{"keyid": "k", "pubkey": pub.hex()}], None)
     monkeypatch.setattr(identity, "fetch_wellknown", lambda domain, timeout=10: doc)
-    assert identity.match_binding("d", pubkey_hex=pub.hex())["bound"] is True
+    assert identity.match_binding("d", keyid=None, pubkey_hex=pub.hex())["bound"] is True
