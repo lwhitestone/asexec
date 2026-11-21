@@ -7,8 +7,6 @@ that speaks those protocols; asexec does not get to choose them.
 may change. Read it before editing this file.
 
 Names start with what they belong to and end with what they are. Keep them alphabetical.
-A ``_VERSION`` value carries a version that changes with the format; a value with no version
-in it is not called one.
 """
 
 # Appears in: identity document (asexec_identity_version). Written by identity emit, read by
