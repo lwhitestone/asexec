@@ -3934,8 +3934,9 @@ format and the meaning of the tests. Each is described in its checkpoint's notes
 9. **Forgeable report lines.** Unauthenticated strings (a claimed `keyid`, item ids, paths)
    are printed raw in the older report blocks, so a newline can fake a line. The verify code
    and exit status are unaffected. The new `untrusted` and unknown-field blocks are escaped.
-10. **Release workflow after 0.4.0, checkpoint 4:** there's no designed way to cut a 0.5.0
-    beta, or a patch release while a new format is in development. Neither blocks b1.
+10. **Releasing the next format, checkpoint 4:** 0.4.0 and its 0.4.x patches release as
+    designed. What isn't designed is the 0.5 line: its betas and release, and a 0.4.x patch
+    cut once v2 work is on main. Neither blocks b1 or 0.4.0.
 11. **ROADMAP's tier check isn't built,** and it would fail today: *TrustedDeclared* lacks
     `target`, `declaration`, `notes` and others.
 12. **Before the release gate's dry run:** porting the adequacy example to the claim record
@@ -3948,6 +3949,8 @@ format and the meaning of the tests. Each is described in its checkpoint's notes
 - `scripts/release.sh 0.4.0b1` rehearsed in a throwaway clone with a local bare remote, then
   `check.sh` in that clone.
 
-**Addendum (2026-11-21):** item 10 of the human-gate list, the release workflow after 0.4.0,
-is now tracked as #59. It blocks the first 0.5.0 beta and any 0.4.x patch cut once v2 work
-starts on main, but not 0.4.0b1 or 0.4.0.
+**Addendum (2026-11-21):** item 10 of the human-gate list, releasing the next format, is now
+tracked as #59. Releases from 0.4.0 on work as designed until v2 work lands on main: 0.4.0,
+and 0.4.x patches cut while main carries no new format. #59 is needed before the first 0.5.0
+beta, or before a 0.4.x patch cut once v2 work is on main. Starting v2 work on main is the
+trigger, not the 0.5.0 version number itself.
