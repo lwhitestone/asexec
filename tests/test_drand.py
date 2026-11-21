@@ -58,7 +58,7 @@ def test_pinned_chains_are_quicknet_with_its_genesis_and_period():
     plus (round - 1) periods, so changing either moves every floor's time, and changing the
     key fails every floor. One chain, quicknet, the default."""
     quicknet = "52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971"
-    assert drand.QUICKNET_HASH == drand.DEFAULT_CHAIN == quicknet
+    assert drand.QUICKNET_HASH == drand.SIGNING_CHAIN == quicknet
     assert drand.CHAINS == {
         quicknet: {
             "beacon_id": "quicknet",
@@ -80,10 +80,8 @@ def test_verified_floor_of_a_saved_round_is_the_floor_fetch_floor_writes():
     """A round as drand's HTTP API returns it ({round, randomness, signature}), verified
     offline, is the anchor.floor record --floor writes for the same round."""
     saved = {"round": ROUND, "randomness": RAND, "signature": SIG}
-    assert drand.verified_floor(saved) == drand.floor_record(
-        {"chain_hash": drand.DEFAULT_CHAIN, **saved}
-    )
-    assert drand.verified_floor(saved) == {
+    assert drand.verified_floor(saved, CHAIN) == drand.floor_record({"chain_hash": CHAIN, **saved})
+    assert drand.verified_floor(saved, CHAIN) == {
         "floor_type": "drand",
         "chain_hash": drand.QUICKNET_HASH,
         "round": ROUND,
@@ -109,7 +107,7 @@ def test_verified_floor_of_a_saved_round_is_the_floor_fetch_floor_writes():
 def test_verified_floor_refuses_a_round_that_does_not_verify(over):
     """Signing refuses a round that fails the floor conditions: a ValueError, never a floor."""
     with pytest.raises(ValueError):
-        drand.verified_floor({"round": ROUND, "randomness": RAND, "signature": SIG, **over})
+        drand.verified_floor({"round": ROUND, "randomness": RAND, "signature": SIG, **over}, CHAIN)
 
 
 # --- verify_floor ------------------------------------------------------------ #
@@ -156,7 +154,7 @@ def test_fetch_round_builds_url_and_maps_fields(monkeypatch):
         return _payload()
 
     monkeypatch.setattr(drand.urllib.request, "urlopen", fake)
-    got = drand.fetch_round(ROUND)
+    got = drand.fetch_round(ROUND, chain_hash=CHAIN)
     assert seen == [(f"https://api.drand.sh/{drand.QUICKNET_HASH}/public/{ROUND}", 10)]
     assert got == {
         "beacon": "quicknet",
@@ -172,7 +170,7 @@ def test_fetch_round_default_is_latest(monkeypatch):
     monkeypatch.setattr(
         drand.urllib.request, "urlopen", lambda url, timeout: urls.append(url) or _payload()
     )
-    drand.fetch_round()
+    drand.fetch_round(chain_hash=CHAIN)
     assert urls[0].endswith("/public/latest")
 
 
@@ -186,7 +184,7 @@ def test_fetch_round_falls_back_to_next_mirror(monkeypatch):
         return _payload()
 
     monkeypatch.setattr(drand.urllib.request, "urlopen", fake)
-    assert drand.fetch_round(ROUND)["round"] == ROUND
+    assert drand.fetch_round(ROUND, chain_hash=CHAIN)["round"] == ROUND
     assert urls[0].startswith("https://api.drand.sh/")
     assert urls[1].startswith("https://api2.drand.sh/")
 
@@ -197,7 +195,7 @@ def test_fetch_round_all_mirrors_fail_raises_network_error(monkeypatch):
 
     monkeypatch.setattr(drand.urllib.request, "urlopen", fake)
     with pytest.raises(NetworkError, match="any mirror"):
-        drand.fetch_round(ROUND)
+        drand.fetch_round(ROUND, chain_hash=CHAIN)
 
 
 def test_fetch_round_malformed_body_is_network_error(monkeypatch):
@@ -205,7 +203,7 @@ def test_fetch_round_malformed_body_is_network_error(monkeypatch):
         drand.urllib.request, "urlopen", lambda url, timeout: _Resp(b'{"round": 1}')
     )
     with pytest.raises(NetworkError):
-        drand.fetch_round(ROUND)
+        drand.fetch_round(ROUND, chain_hash=CHAIN)
 
 
 @pytest.mark.parametrize(
@@ -225,16 +223,16 @@ def test_fetch_round_malformed_round_falls_back_to_next_mirror(monkeypatch, bad)
         "urlopen",
         lambda url, timeout: _Resp(json.dumps(bodies.pop(0)).encode()),
     )
-    assert drand.fetch_floor() == _floor().model_dump()
+    assert drand.fetch_floor(CHAIN) == _floor().model_dump()
 
 
 def test_fetch_floor_every_mirror_malformed_is_network_error(monkeypatch):
     body = json.dumps({"round": ROUND, "randomness": RAND, "signature": "not-hex"}).encode()
     monkeypatch.setattr(drand.urllib.request, "urlopen", lambda url, timeout: _Resp(body))
     with pytest.raises(NetworkError, match="any mirror"):
-        drand.fetch_floor()
+        drand.fetch_floor(CHAIN)
 
 
 def test_fetch_floor_returns_floor_record(monkeypatch):
     monkeypatch.setattr(drand.urllib.request, "urlopen", lambda url, timeout: _payload())
-    assert drand.fetch_floor() == _floor().model_dump()
+    assert drand.fetch_floor(CHAIN) == _floor().model_dump()

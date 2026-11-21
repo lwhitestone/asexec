@@ -315,7 +315,7 @@ def _round_shape(value) -> dict:
                 f"{value[field]!r}"
             )
     try:
-        return drand.verified_floor(value)
+        return drand.verified_floor(value, drand.SIGNING_CHAIN)
     except ValueError as e:
         raise ValueError(f"--floor-round: {e}") from None
 
@@ -332,7 +332,7 @@ def _get_floor(args) -> dict | None:
     if not args.floor:
         return None
     try:
-        return drand.fetch_floor()
+        return drand.fetch_floor(drand.SIGNING_CHAIN)
     except Exception as e:
         if not args.best_effort:
             raise SystemExit(

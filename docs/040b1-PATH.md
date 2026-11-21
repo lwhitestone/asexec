@@ -3972,3 +3972,10 @@ trigger, not the 0.5.0 version number itself.
   `scripts/check.sh` clean, 1320 passed.
   - Release note for #40, beside the format entries: "`floor`: `body.anchor.floor.chain_hash`
     is required; a floor without it fails `floor` #2 instead of defaulting to quicknet."
+- **`drand.DEFAULT_CHAIN` is renamed `drand.SIGNING_CHAIN`, and the sign-time helpers lose
+  their defaults.** After the `chain_hash` change above, the constant only chooses the chain
+  signing uses. The CLI has no option to choose one, so "default" no longer described it.
+  `fetch_round`, `fetch_floor` and `verified_floor` now take the chain explicitly, and
+  `cli.py` passes `drand.SIGNING_CHAIN` from its two call sites, so the choice is made in one
+  place. No behaviour change. `roughtime`'s `servers=SERVERS` default stays, because it is
+  the pinned set of trusted servers, not a choice made for a manifest.

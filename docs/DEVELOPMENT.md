@@ -186,7 +186,7 @@ numbers can never be reused, so fix forward with a new version.
 Verify never fetches a root and never takes a key from a manifest. A manifest names its root
 (`body.anchor.floor.chain_hash`, `ceiling.witness_id`), and verify never picks one for it: a
 missing name fails the test. Which root signing uses is a separate choice:
-`drand.DEFAULT_CHAIN` for `--floor` and `--floor-round`, and the order of `roughtime.SERVERS`
+`drand.SIGNING_CHAIN` for `--floor` and `--floor-round`, and the order of `roughtime.SERVERS`
 for `--ceiling`, which tries each server in turn.
 
 An entry is never edited or removed, so that manifests naming it keep verifying
@@ -206,7 +206,7 @@ An entry is never edited or removed, so that manifests naming it keep verifying
   - Without one, say so in `docs/VERIFICATION.md` (`ceiling`, *Trust class*).
 - Name the new root wherever `docs/VERIFICATION.md` and the README list the pinned roots.
 
-**Switching what signing uses** (a `PATCH`, with a release note): change `DEFAULT_CHAIN`, or
+**Switching what signing uses** (a `PATCH`, with a release note): change `SIGNING_CHAIN`, or
 reorder `SERVERS`, after adding the new root if it is new. No existing verdict changes,
 because each manifest names its own root.
 

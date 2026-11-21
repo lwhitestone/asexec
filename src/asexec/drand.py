@@ -43,8 +43,9 @@ CHAINS: dict[str, dict] = {
     },
 }
 
-# The chain signing uses (--floor, --floor-round). Verify never reads it.
-DEFAULT_CHAIN = QUICKNET_HASH
+# The chain signing uses: --floor fetches from it, and --floor-round must be a round of it.
+# The CLI passes it to every sign-time helper (none has a default). Verify never reads it.
+SIGNING_CHAIN = QUICKNET_HASH
 
 # RFC 9380 ciphersuite DST for BLS signatures on G1 (minimal-signature-size).
 _DST = b"BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_"
@@ -68,7 +69,7 @@ def round_at_time(ts: int, chain_hash: str) -> int:
     return (ts - p["genesis_time"]) // p["period"] + 1
 
 
-def fetch_round(round_no: int | None = None, chain_hash: str = DEFAULT_CHAIN) -> dict:
+def fetch_round(round_no: int | None = None, *, chain_hash: str) -> dict:
     """Fetch a round (default: latest) from a public drand mirror. SIGN-TIME ONLY."""
     suffix = "latest" if round_no is None else str(round_no)
     last_err = None
@@ -111,11 +112,11 @@ def floor_record(round_data: dict) -> dict:
     ).model_dump(mode="json", exclude_none=True)
 
 
-def verified_floor(round_data: dict, chain_hash: str = DEFAULT_CHAIN) -> dict:
+def verified_floor(round_data: dict, chain_hash: str) -> dict:
     """An ``anchor.floor`` record for a round fetched earlier, verified offline at signing.
 
     ``round_data`` is a round as drand's HTTP API returns it (``round``, ``randomness``,
-    ``signature``) for ``chain_hash`` (default: the chain ``--floor`` fetches from). The
+    ``signature``) for ``chain_hash``, the chain the caller signs with. The
     record must meet every floor condition, as verify judges it (``verify_floor``): a pinned
     chain, an integer round, lowercase hex, ``randomness == sha256(signature)``, and a BLS
     signature for the round under the pinned key. Raises ``ValueError`` otherwise (a
@@ -138,8 +139,9 @@ def verified_floor(round_data: dict, chain_hash: str = DEFAULT_CHAIN) -> dict:
     return floor
 
 
-def fetch_floor(chain_hash: str = DEFAULT_CHAIN) -> dict:
-    """Fetch the latest round and return it as an ``anchor.floor`` record. SIGN-TIME ONLY."""
+def fetch_floor(chain_hash: str) -> dict:
+    """Fetch the latest round of ``chain_hash`` as an ``anchor.floor`` record. SIGN-TIME
+    ONLY."""
     return floor_record(fetch_round(chain_hash=chain_hash))
 
 
