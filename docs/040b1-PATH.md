@@ -3986,3 +3986,7 @@ trigger, not the 0.5.0 version number itself.
 - **`drand.round_at_time` is removed.** Nothing outside one test called it. That test now
   checks `time_of_round` alone, which `order` and the floor report use, and which is also
   pinned at round 1000. No behaviour change.
+- **`drand.verify_round`'s `randomness_hex` has no default.** Every caller already passes it.
+  It can still be `None`, because a floor may leave `randomness` out (`floor` #4). The
+  docstring now says "a round of `chain_hash`" instead of "a quicknet round". No behaviour
+  change.

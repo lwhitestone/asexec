@@ -161,14 +161,15 @@ def verify_floor(floor: FloorInput) -> dict:
 def verify_round(
     round_no: int,
     signature_hex: str,
-    randomness_hex: str | None = None,
+    randomness_hex: str | None,
     *,
     chain_hash: str,
 ) -> bool:
-    """Offline BLS verification of a quicknet round.
+    """Offline BLS verification of a round of ``chain_hash``.
 
-    Checks (a) randomness == sha256(signature) if provided, and (b) the
-    BLS12-381 signature over sha256(round) against the pinned group public key.
+    Checks (a) randomness == sha256(signature) unless ``randomness_hex`` is None (a floor
+    may leave it out), and (b) the BLS12-381 signature over sha256(round) against that
+    chain's pinned group public key.
     """
     if chain_hash not in CHAINS:
         return False
