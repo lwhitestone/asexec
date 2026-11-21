@@ -148,6 +148,12 @@ def sign(body: dict[str, Any], private_key: bytes, public_key: bytes) -> dict[st
     unsigned ``untrusted.asexec_version`` of this release beside them."""
     _check_bedrock(body)
     body_bytes = canonical_bytes(body)
+    try:  # a body deeper than this would fail format #2 (and parse_body) when verified
+        _check_nesting(body_bytes.decode("utf-8"))
+    except ManifestError:
+        raise ManifestError(
+            f"the body would be nested more than {MAX_NESTING_DEPTH} deep"
+        ) from None
     sig = keys.sign(private_key, signing_input(body_bytes))
     dsse = Dsse(
         payload=b64encode(body_bytes),

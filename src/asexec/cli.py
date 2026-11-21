@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import re
+import stat
 import sys
 import uuid
 from collections import Counter
@@ -44,13 +45,37 @@ EXIT_USAGE = 64  # usage error (sysexits EX_USAGE): the arguments themselves are
 # --------------------------------------------------------------------------- #
 # input helpers
 # --------------------------------------------------------------------------- #
-def _load_json(path: str) -> str | dict:
-    """Load JSON from the given path."""
+def _read_json(path: str):
+    """The JSON value a ``--…-file`` holds, held to a manifest file's JSON rules: UTF-8 JSON
+    text (RFC 8259), no duplicate key, at most 64 deep (``manifest.parse_json``). Raises
+    ``ManifestError`` (exit 1, one line) otherwise: what a file holds is not an argument."""
+    with open(path, "rb") as f:
+        data = f.read()
     try:
-        with open(path) as f:
-            return json.load(f)
-    except json.JSONDecodeError as e:
-        raise SystemExit(f"error: {path} must contain valid JSON: {e}") from e
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise ManifestError(f"{path} must contain valid JSON: it is not UTF-8 text ({e})") from None
+    try:
+        return manifest.parse_json(text)
+    except ManifestError as e:  # a duplicate key, or nested too deep
+        raise ManifestError(f"{path}: {e}") from None
+    except ValueError as e:  # not JSON, or an integer of more digits than Python reads
+        raise ManifestError(f"{path} must contain valid JSON: {e}") from None
+
+
+def _free_form_file(flag: str) -> Callable[[str], str | dict]:
+    """A loader for ``--target-file``, ``--declaration-file`` or ``--notes-file``: what the
+    field is, a JSON object or a string, and not an empty one."""
+
+    def load(path: str) -> str | dict:
+        value = _read_json(path)
+        if not (isinstance(value, str | dict) and value):
+            raise ManifestError(
+                f"{flag} {path} must hold a non-empty JSON object or string: {_short(value)}"
+            )
+        return value
+
+    return load
 
 
 def _get_arg_or_file[T](
@@ -66,28 +91,32 @@ def _get_arg_or_file[T](
     if value is not None:
         return value
     if file_path is not None:
+        flag = "--" + file_arg_name.replace("_", "-")
         try:
-            return load_file(file_path)
+            mode = os.stat(file_path).st_mode
         except FileNotFoundError:
-            raise SystemExit(
-                f"error: --{file_arg_name.replace('_', '-')} not found: {file_path}"
-            ) from None
+            raise SystemExit(f"error: {flag} not found: {file_path}") from None
+        if not stat.S_ISREG(mode):  # a directory, or a FIFO, which would block forever
+            raise SystemExit(f"error: {flag} is not a file: {file_path}")
+        return load_file(file_path)
     return None
 
 
 def _get_target(args) -> str | dict | None:
     """Retrieve the target value (from arg xor file), if any."""
-    return _get_arg_or_file(args, "target", "target_file", _load_json)
+    return _get_arg_or_file(args, "target", "target_file", _free_form_file("--target-file"))
 
 
 def _get_declaration(args) -> str | dict | None:
     """Retrieve the declaration value (from arg xor file), if any."""
-    return _get_arg_or_file(args, "declaration", "declaration_file", _load_json)
+    return _get_arg_or_file(
+        args, "declaration", "declaration_file", _free_form_file("--declaration-file")
+    )
 
 
 def _get_notes(args) -> str | dict | None:
     """Retrieve the notes value (from arg xor file), if any."""
-    return _get_arg_or_file(args, "notes", "notes_file", _load_json)
+    return _get_arg_or_file(args, "notes", "notes_file", _free_form_file("--notes-file"))
 
 
 # What a --plan / --evidence entry may say. asexec hashes the file at ``name`` and fills in
@@ -173,14 +202,7 @@ def _shaped_arg_or_file(args, name: str, shape: Callable):
     fails it is a usage error (64); a file's content that fails it exits 1."""
 
     def load_file(path: str):
-        with open(path) as f:
-            text = f.read()
-        try:  # the same JSON rules as an inline value: no duplicate key
-            value = json.loads(text, object_pairs_hook=manifest._reject_duplicate_keys)
-        except json.JSONDecodeError as e:
-            raise ManifestError(f"{path} must contain valid JSON: {e}") from None
-        except ManifestError as e:  # a duplicate key
-            raise ManifestError(f"{path}: {e}") from None
+        value = _read_json(path)  # the same JSON rules as an inline value
         try:
             return shape(value)
         except ValueError as e:
@@ -317,6 +339,27 @@ def _load_manifest_body(path: str, flag: str) -> tuple[bytes, dict]:
         raise SystemExit(f"error: {flag} {path} is not a readable manifest: {e}") from e
 
 
+def _read_prereg(path: str) -> tuple[str, dict]:
+    """The ref and body of the ``--fulfills`` file, read as verify reads it. It must pass
+    ``format`` (a file of a format this release does not read has no ref or body it can
+    take) and ``selfsig`` (one that fails is no commitment, D2: verify rejects every postreg
+    fulfilling it, so none is signed)."""
+    try:
+        mani = manifest.load(path)
+    except (ManifestError, ValueError) as e:  # not UTF-8, not JSON, not an object, ...
+        raise SystemExit(f"error: --fulfills {path} is not a readable manifest: {e}") from None
+    fmt = verifier.verify_format(mani)
+    if not fmt["ok"]:
+        raise SystemExit(f"error: --fulfills {path} is not a readable manifest: {fmt['errors'][0]}")
+    selfsig = verifier.verify_selfsig(mani, fmt["body_bytes"], fmt["payload_type"])
+    if not (selfsig["signature_ok"] and selfsig["keyid_ok"]):
+        raise SystemExit(
+            f"error: --fulfills {path} fails selfsig, so it is no commitment: a postreg "
+            "fulfilling it never counts"
+        )
+    return fmt["ref"], fmt["body"]
+
+
 def _resolve_ref(value: str, flag: str) -> str:
     """A --fulfills/--prev value is an existing manifest file (its ref: the digest of the
     body bytes it stores) or a well-formed ``sha-256:<64 lowercase hex>`` ref; anything else
@@ -390,9 +433,7 @@ def cmd_keygen(args) -> int:
 
 def cmd_prereg(args) -> int:
     """Write a signed pre-registration, signalling the intended execution."""
-    target = _get_target(args)
-    if target is None:  # argparse requires one; only a file holding null gets here
-        raise SystemExit(f"error: --target-file {args.target_file!r} holds no target")
+    target = _get_target(args)  # argparse requires one
     priv, pub = keys.load_signing_key(args.key)
     subject = _build_subject(args.subject, args.hash_alg)
     plan, items = _get_plan(args), _get_items(args)
@@ -423,11 +464,12 @@ def cmd_postreg(args) -> int:
     a pre-registration as promised."""
     priv, pub = keys.load_signing_key(args.key)
 
-    fulfills = _resolve_ref(args.fulfills, "--fulfills")
-    prev_hash = _resolve_ref(args.prev, "--prev") if args.prev else None
     prereg_body = None  # the decoded body of the prereg file, to inherit from
     if os.path.isfile(args.fulfills):
-        prereg_body = _load_manifest_body(args.fulfills, "--fulfills")[1]
+        fulfills, prereg_body = _read_prereg(args.fulfills)
+    else:
+        fulfills = _resolve_ref(args.fulfills, "--fulfills")
+    prev_hash = _resolve_ref(args.prev, "--prev") if args.prev else None
 
     # target / due / declaration inherit from the fulfilled prereg unless overridden on this
     # postreg. Each subject entry names its own hash_alg: --hash-alg, or the default.
@@ -435,7 +477,12 @@ def cmd_postreg(args) -> int:
     if target is None:
         if prereg_body is None:
             raise SystemExit("error: no --target and --fulfills is not a readable prereg")
-        target = prereg_body["target"]
+        target = prereg_body.get("target")
+        if not (isinstance(target, str | dict) and target):
+            raise SystemExit(
+                f"error: --fulfills {args.fulfills} has no target to inherit (a non-empty "
+                "string or JSON object); give --target or --target-file"
+            )
 
     due = args.due or (prereg_body or {}).get("due")
     declaration = _get_declaration(args) or (prereg_body or {}).get("declaration")

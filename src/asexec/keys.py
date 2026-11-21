@@ -86,8 +86,8 @@ def load_signing_key(path: str) -> tuple[bytes, bytes]:
     with open(path) as f:
         try:
             data = json.load(f)
-        except ValueError as e:
-            raise AsexecError(f"key file {path} is not valid JSON: {e}") from e
+        except (ValueError, RecursionError) as e:  # RecursionError: nested too deep to read
+            raise AsexecError(f"key file {path} is not valid JSON: {e}") from None
     if not isinstance(data, dict):
         raise AsexecError(f"key file {path} is not a JSON object")
     if data.get("alg") != _ALG:
