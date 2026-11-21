@@ -464,7 +464,7 @@ is a file beside the manifests.
 | `subject`, `subject[].name`, `subject[].digest` | TrustedTested: `content` |
 | `anchor`, `anchor.floor` and its fields | TrustedTested: `floor`, `order` |
 | `ceiling` and its fields (envelope) | TrustedTested: `ceiling`, `order`, `timely`, `complete` |
-| `predicateType`, `target`, `declaration`, `identity`, `provenance`, `repro_recipe`, `notes` | TrustedDeclared |
+| `predicateType`, `target`, `declaration`, `provenance`, `repro_recipe`, `notes` | TrustedDeclared |
 
 **Tests**
 

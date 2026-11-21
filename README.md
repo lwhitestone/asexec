@@ -317,7 +317,6 @@ The body (`dsse.payload` decoded):
       "randomness": "1f0c9d2e…"
     }
   },
-  "identity": ["lab.example"],                          // free-form list
   "notes": "hypothesis: refusal rate under 2%"          // text or JSON
 }
 ```
@@ -367,7 +366,6 @@ The body (`dsse.payload` decoded):
       "randomness": "c3d4e5f6…"
     }
   },
-  "identity": ["lab.example"],                          // free-form list
   "provenance": "reproducible",                         // asserted | reproducible
   "repro_recipe": { "seed": 42, "decode": "greedy", "runtime": "vllm 0.9" },
   "notes": "free-form text or JSON"

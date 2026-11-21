@@ -352,7 +352,7 @@ def test_writer_refuses_an_empty_entry_list(field):
 
 # What this format defines, as verify reads it to list unknown fields (VERIFICATION.md,
 # Untrusted): each field, and for an object or an array of objects the format defines, its
-# fields. A free-form value (target, declaration, notes, identity, repro_recipe, a digest) has
+# fields. A free-form value (target, declaration, notes, repro_recipe, a digest) has
 # no fields: what it holds is its value.
 _ENTRY = {"name": None, "hash_alg": None, "digest": None}
 KNOWN_BODY = {
@@ -379,7 +379,6 @@ KNOWN_BODY = {
             )
         },
     ),
-    "identity": None,
     "provenance": None,
     "repro_recipe": None,
     "notes": None,

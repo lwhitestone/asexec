@@ -1341,14 +1341,14 @@ the asexec writer can write: `body.predicateType`, `phase`, `target`, `due`, `de
 (`name`, `hash_alg`, `digest`, `media_type`, `label`), `items` (each `id`, `kind`),
 `item_id`, `status`, `evidence` (each entry `name`, `hash_alg`, `digest`, `media_type`,
 `uri`), `anchor` (`anchor.floor`: `floor_type`, `chain_hash`, `round`, `signature`,
-`randomness`), `identity`, `provenance`, `repro_recipe` and `notes`.
+`randomness`), `provenance`, `repro_recipe` and `notes`.
 - An unknown field is listed at the top of the body or inside an object the format defines,
   or an object in an array of them: an extra key in a subject entry (`body.subject[0].colour`),
   in `body.anchor` or `body.anchor.floor`, in the plan, an item or an evidence entry. A
-  body-level `body.hash_alg` (where asexec before 0.4.0 wrote it) is an unknown field.
-- What a free-form field holds (`target`, `declaration`, `notes`, `identity`,
-  `repro_recipe`, and a `digest` object, keyed by algorithm) is its value, not fields: nothing
-  in it is listed.
+  body-level `body.hash_alg` (where asexec before 0.4.0 wrote it) is an unknown field, and so
+  is `body.identity`, which earlier writers accepted.
+- What a free-form field holds (`target`, `declaration`, `notes`, `repro_recipe`, and a
+  `digest` object, keyed by algorithm) is its value, not fields: nothing in it is listed.
 - A field the format defines that holds a value of the wrong shape (a `body.subject` that is
   not an array, say) is judged by the tests that examine it, and nothing inside it is listed.
 - A field whose value is `null` is absent, and is not listed.

@@ -4009,3 +4009,18 @@ trigger, not the 0.5.0 version number itself.
   `fetch_ceiling(servers)`, `manifest.ref(payload_type)`, the `max_depth` defaults that
   calls omit, `_build`'s fields, and every argparse default. No behaviour change.
   `scripts/check.sh` clean, 1319 passed; the adequacy example exits 0.
+- **`body.identity` is removed from the format.**
+  - Why: the writer model accepted it, but no production flow wrote it, since the CLI has no
+    option for it, and no test read it. The README nevertheless showed it as a field the
+    practitioner could set.
+  - What changed: `ManifestBody`, `manifest._build`, the README examples, VERIFICATION.md's
+    list of defined fields and ROADMAP's *TrustedDeclared* row no longer include it.
+  - Effect on files: a body that still carries `identity` is now listed as an unknown field,
+    and no verdict changes. That is pinned by the `identity` case of
+    `test_unknown__signed_fields_this_format_does_not_define_are_shown`, which failed first.
+  - Unaffected: no CLI-made manifest changes, and the frozen vectors pass unedited. The
+    `asexec identity` command, which binds a key to a domain through `.well-known`, is a
+    separate thing and stays.
+  - `scripts/check.sh` clean, 1320 passed.
+  - Release note for #40: "`body.identity` is no longer part of the format: the CLI never
+    wrote it, and a body that carries it lists it as an unknown field."

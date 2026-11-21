@@ -311,7 +311,6 @@ class ManifestBody(BaseModel):
 
     # optional context
     anchor: Anchor | None = None
-    identity: list[Any] | None = None
     provenance: str | None = None
     repro_recipe: dict[str, Any] | None = None
     notes: Freeform | None = None
