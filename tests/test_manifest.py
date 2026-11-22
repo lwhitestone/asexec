@@ -1,6 +1,9 @@
 """Manifest build/sign/ref + the signing gate (asexec schema)."""
 
 import base64
+import subprocess
+import sys
+import time
 
 import pytest
 from pydantic import ValidationError
@@ -93,7 +96,9 @@ def test_sign_refuses_a_body_nested_deeper_than_format_reads():
     deep: dict = {}
     for _ in range(63):  # 64 deep, so the body holding it is 65
         deep = {"a": deep}
-    body = manifest.build_prereg(_target(), notes=deep)
+    with pytest.raises(ManifestError, match="the body would be nested more than 64 deep"):
+        manifest.build_prereg(_target(), notes=deep)
+    body = {**manifest.build_prereg(_target()), "notes": deep}  # built by hand
     with pytest.raises(ManifestError, match="the body would be nested more than 64 deep"):
         manifest.sign(body, priv, pub)
     manifest.sign(manifest.build_prereg(_target(), notes=deep["a"]), priv, pub)  # 64: signed
@@ -115,6 +120,76 @@ def test_sign_refuses_a_body_nested_deeper_than_format_reads():
 def test_read_body_refuses_what_is_not_a_body(mani):
     with pytest.raises(ManifestError):
         manifest.read_body(mani)
+
+
+def test_an_unterminated_string_is_refused_in_linear_time():
+    # each escaped quote was rescanned to the end: this took about half a minute
+    text = '"' + '\\"' * 40_000
+    start = time.monotonic()
+    with pytest.raises(ManifestError):
+        manifest.parse_body(text.encode())
+    assert time.monotonic() - start < 5
+
+
+# Run in a thread with a small stack, where recursing into a deep body segfaults instead of
+# raising RecursionError, so in a process of its own.
+_REFUSE_DEEP_BODY = """
+import sys, threading
+from asexec import keys, manifest
+from asexec.errors import ManifestError
+
+value = {}
+for _ in range(5000):
+    value = {"a": value}
+
+def refuse():
+    try:
+        if sys.argv[1] == "sign":
+            body = {"predicateType": "x", "phase": "prereg", "target": value}
+            manifest.sign(body, *keys.generate())
+        elif sys.argv[1] == "target":
+            manifest.build_prereg(value)
+        else:
+            manifest.build_prereg("t", repro_recipe=value)
+    except ManifestError as e:
+        print(e)
+
+threading.stack_size(256 * 1024)
+thread = threading.Thread(target=refuse)
+thread.start()
+thread.join()
+"""
+
+
+@pytest.mark.parametrize("route", ["sign", "target", "repro_recipe"])
+def test_a_deep_body_is_refused_before_anything_recurses_into_it(route):
+    run = subprocess.run(
+        [sys.executable, "-c", _REFUSE_DEEP_BODY, route], capture_output=True, text=True, timeout=60
+    )
+    assert (run.returncode, run.stdout) == (0, "the body would be nested more than 64 deep\n")
+
+
+def test_a_cyclic_body_is_refused():
+    target = {}
+    target["self"] = target
+    with pytest.raises(ManifestError, match="more than 64 deep"):
+        manifest.build_prereg(target)
+
+
+def test_the_depth_check_visits_a_shared_value_once_per_level():
+    shared = []
+    for _ in range(70):
+        shared = [shared, shared]  # 2**70 paths, 71 distinct lists
+    with pytest.raises(ManifestError, match="more than 64 deep"):
+        manifest.sign({"predicateType": "x", "phase": "prereg", "target": shared}, *keys.generate())
+
+
+@pytest.mark.parametrize("value", [None, "", 123, ["sha-256:00"]])
+def test_sign_refuses_a_postreg_whose_fulfills_is_not_a_non_empty_string(value):
+    body = manifest.build_postreg(_target(), fulfills="sha-256:00")
+    body["fulfills"] = value
+    with pytest.raises(ManifestError, match="fulfills"):
+        manifest.sign(body, *keys.generate())
 
 
 def test_subject_optional_at_prereg():

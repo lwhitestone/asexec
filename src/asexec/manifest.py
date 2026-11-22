@@ -76,6 +76,10 @@ def _build(
     evidence=None,
 ) -> dict[str, Any]:
     """Construct + validate a body via the model, return the plain signed dict."""
+    # The fields that may hold objects or arrays, before the model recurses into them.
+    values = [target, declaration, subject, floor, repro_recipe, notes, plan, items, evidence]
+    for value in values:
+        _check_value_depth(value, MAX_NESTING_DEPTH - 1)  # each sits one level into the body
     anchor = Anchor(floor=floor) if floor is not None else None
     body = ManifestBody(
         phase=phase,
@@ -121,20 +125,36 @@ def ref(body_bytes: bytes, payload_type: str = MANIFEST_PAYLOAD_TYPE) -> str:
 def sign(body: dict[str, Any], private_key: bytes, public_key: bytes) -> dict[str, Any]:
     """Serialize ``body`` to its body bytes and sign them: the file, as a dict, with the
     unsigned ``untrusted.asexec_version`` of this release beside them."""
+    # Refuse what verify would reject as too deep (format #2), before encoding recurses into it.
+    _check_value_depth(body, MAX_NESTING_DEPTH)
     _check_signable(body)
     body_bytes = canonical_bytes(body)
-    try:  # a body deeper than this would fail format #2 (and parse_body) when verified
-        _check_nesting(body_bytes.decode("utf-8"))
-    except ManifestError:
-        raise ManifestError(
-            f"the body would be nested more than {MAX_NESTING_DEPTH} deep"
-        ) from None
     sig = keys.sign(private_key, signing_input(body_bytes))
     dsse = Dsse(
         payload=b64encode(body_bytes),
         signatures=[Signature(keyid=keys.keyid_for(public_key), sig=b64encode(sig))],
     )
     return Manifest(dsse=dsse, pubkey=public_key.hex()).model_dump(mode="json")
+
+
+def _check_value_depth(value: Any, max_depth: int) -> None:
+    """Refuse a value to be signed that nests more than ``max_depth`` deep, or holds itself.
+
+    It doesn't recurse: deep enough, the model and the encoder overflow the C stack, which can
+    kill the process rather than raise. It walks level by level, each container once per
+    level, so shared values can't multiply the work.
+    """
+    level = [value]
+    depth = 0
+    while containers := {id(v): v for v in level if isinstance(v, dict | list | tuple)}:
+        depth += 1
+        if depth > max_depth:
+            raise ManifestError(f"the body would be nested more than {MAX_NESTING_DEPTH} deep")
+        level = [
+            child
+            for container in containers.values()
+            for child in (container.values() if isinstance(container, dict) else container)
+        ]
 
 
 def _check_signable(body: dict[str, Any]) -> None:
@@ -152,8 +172,12 @@ def _check_signable(body: dict[str, Any]) -> None:
     _check_entries(body.get("evidence"), "evidence")
     if isinstance(body.get("plan"), dict):
         _check_entries([body["plan"]], "plan")
-    if body["phase"] == "postreg" and "fulfills" not in body:
-        raise ManifestError("postreg manifest missing mandatory 'fulfills'")
+    if body["phase"] == "postreg":
+        fulfills = body.get("fulfills")
+        if not isinstance(fulfills, str) or not fulfills:
+            raise ManifestError(
+                "postreg manifest missing mandatory 'fulfills' (a non-empty string)"
+            )
 
 
 def _check_entries(entries: Any, field: str) -> None:
@@ -231,8 +255,10 @@ def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 # file verify differently.
 MAX_NESTING_DEPTH = 64
 
-# A JSON string (skipped, so brackets inside one don't count) or a bracket.
-_STRING_OR_BRACKET = re.compile(r'"(?:[^"\\]|\\.)*"|[\[\]{}]', re.DOTALL)
+# A JSON string (skipped, so brackets inside one don't count) or a bracket. The quantifiers are
+# possessive and the closing quote optional, so the scan is linear: an unterminated string runs
+# to the end of the text, which json.loads then rejects, and is never rescanned.
+_STRING_OR_BRACKET = re.compile(r'"[^"\\]*+(?:\\.[^"\\]*+)*+"?|[\[\]{}]', re.DOTALL)
 
 
 def _check_nesting(text: str, max_depth: int = MAX_NESTING_DEPTH) -> None:

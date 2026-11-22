@@ -4058,7 +4058,20 @@ Checking them turned up three bugs that no comment names (B1 to B3).
 | D. No change | r4651076027 | `manifest.py:52` | "bedrock" | done in `08ea1ba`; B3 is in the same gate |
 
 **Checklist:**
-- [ ] 1. B1 to B3, each with a regression test that fails first.
+- [x] 1. B1 to B3, each with a regression test that fails first.
+  - B1: 80 KB now takes `verify` 0.16s. A differential fuzz of 1.5M short texts differs from
+    the old pattern only on invalid JSON, which fails as not JSON instead of too deep.
+  - **B2 was worse than triaged, and its first recommendation was wrong.** Catching
+    `RecursionError` can't work: in a thread with a 256 KB stack, encoding 5,000 deep
+    segfaults on 3.12 and 3.13, and `build_prereg` segfaults at 250 deep on 3.12 and 3.14. So
+    `_build` and `sign` now check the depth without recursing, before the model or the encoder
+    sees the value. The builders therefore refuse a too-deep body themselves; before, only
+    `sign` did, and the existing test now covers both.
+  - B3: the gate requires a non-empty string.
+  - `scripts/check.sh` clean, 1330 passed.
+  - Release notes for #40: "A malformed manifest can no longer make the JSON depth check take
+    quadratic time (present in 0.3.20)." and "The builders and `sign` refuse a too-deep or
+    cyclic body without recursing, and `sign` requires `fulfills` to be a non-empty string."
 - [ ] 2. A: the structural changes.
 - [ ] 3. B: the names, with the PR-wide sweep as its own commit.
 - [ ] 4. C: the comments, last, because 2 and 3 move those lines.
