@@ -4102,3 +4102,26 @@ Checking them turned up three bugs that no comment names (B1 to B3).
   - Comments only. `scripts/check.sh` clean, 1330 passed.
 
 Then a final evidence run, the PR description, and a reply on each thread before resolving it.
+
+**Final evidence, in fresh clones at `24cff59`:**
+- pytest: 1330 passed on each of 3.12, 3.13 and 3.14. Ruff lint and format are clean.
+- Release rehearsal against a throwaway bare remote: `0.4.0b1`, `0.4.0b2` and `0.4.0` all
+  release, with 1324 passed and 6 skipped (D6b) for each beta and 1330 passed for `0.4.0`.
+  - **This first failed, and would have blocked b1.** Since `f639dd4`,
+    `test_selfsig__fail__2_sig_is_strict_base64_of_64_bytes` assumed a fixture signature
+    containing `+`. The beta `payloadType` changes that signature, so ten cases failed and
+    `release.sh 0.4.0b1` stopped. It failed the same way at `ba8aa47`. `24cff59` fixes the
+    test, checked under the labels b1 to b100.
+
+**Evidence at `cc1b7f7`, whose `src` is the same:**
+- Differential against `ba8aa47`: 3,000 intact and mutated three-file claims give identical
+  verify reports and codes (clock times aside) for `format`, `selfsig`, `chain`, `content`,
+  `keyconsist` and `complete`. `floor`, `ceiling`, `timely` and `order` rest on the suite.
+- B1: the 80 KB file takes `verify` 0.32s (22.2s before).
+- B2: the crash probes end in a clean refusal, with one limit that is CPython's: on 3.13,
+  freeing a list 5,000 deep in a 256 KB thread segfaults with no asexec involved, so a caller
+  holding such a value can still crash after `sign` has refused it.
+- The wheel builds and passes a CLI smoke test in a clean environment. The adequacy example
+  exits 0.
+
+**Still open:** B1 remains in v0.3.20 and on `main` until this lands or is backported.
