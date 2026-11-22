@@ -500,7 +500,9 @@ explicitly not.
 > a migration path — manifests signed by an older build may stop verifying against a newer
 > one. (0.2.0 rebalanced the schema in a breaking way by design.) From `0.4.0`, manifests stay
 > verifiable: a format change adds a new format version and keeps accepting the old ones.
-> Manifests from `0.3.x` are not supported. The verifier support for this is
+> Manifests from `0.3.x` are not supported. From `0.3.21`, each `0.3.x` reads only the
+> manifests it signed, so pin the exact version from prereg through verify. The verifier
+> support for later formats is
 > [designed](./docs/MULTIVERSION.md) but not built yet.
 
 ## License

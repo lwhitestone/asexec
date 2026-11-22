@@ -71,8 +71,9 @@ FORMATS: dict[str, dict] = {
 ```
 
 Only the entry under development, which no release has shipped yet, is keyed by the name
-`MANIFEST_PAYLOAD_TYPE`. Until `0.4.0` that is the one entry, so each beta's release commit,
-which rewrites that literal to the beta's own type, re-keys it. The `0.4.0` release commit
+`MANIFEST_PAYLOAD_TYPE`. Until `0.4.0` that is the one entry, so the release commit of each
+`0.3.x` or beta, which rewrites that literal to that release's own type, re-keys it. The
+`0.4.0` release commit
 (at the latest, before any later release commit rewrites the literal) makes the entry's key
 the literal `application/vnd.asexec.v1+json`, which never changes after that. Otherwise the
 next release commit would re-key the released `v1` entry, and every `v1` manifest would
@@ -82,8 +83,8 @@ read as an unknown format.
   prefix of `ref` and `keyid`. (A subject entry carries its own `hash_alg`, so no format
   supplies a default.)
 - **Unknown `payloadType`:** `format=FAIL`, with a reason that says what the type is: a
-  format newer than this release (upgrade), a beta's (unsupported), or the format asexec
-  wrote before `0.4.0` (unsupported, re-sign). Never fall back to another entry. `selfsig`
+  format newer than this release (upgrade), a beta's (unsupported), or one asexec wrote
+  before `0.4.0`, a `0.3.x`'s own type included (unsupported, re-sign). Never fall back to another entry. `selfsig`
   does not examine that file, so it still passes for the others: the code tells "upgrade"
   apart from "damaged". A missing or non-string `payloadType` is malformed, which also fails
   `format`.

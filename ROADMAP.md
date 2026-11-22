@@ -50,7 +50,10 @@ format people adopt is the format we can stand behind.
     which its docstring always claimed) is a `PATCH`, called out in the
     release notes.
   - **Until `0.4.0`:** a `MINOR` change may ship as a `0.3.x` `PATCH` instead, with the break
-    called out in the release notes. From `0.4.0`, it needs a `MINOR`.
+    called out in the release notes. From `0.4.0`, it needs a `MINOR`. From `0.3.21`, such a
+    release doesn't release a format: it writes a `payloadType` of its own
+    (`application/vnd.asexec.0.3.21+json`), never `v1`, and reads only that. So it doesn't
+    replace the betas and the dry run that `v1` needs.
 - **Identifiers baked into signed bytes.** The PAE prefix (`DSSEv1`, a `FORMATS` entry's
   `signing_pae_version`; `asexec-PAE/v1` before the DSSE envelope) and
   `MANIFEST_PAYLOAD_TYPE` are in the signing input, and `MANIFEST_PREDICATE_TYPE` is written
@@ -114,7 +117,7 @@ manifest, even if that manifest happens to carry it; there, it stays an unknown 
 
 | Version | Scope | Milestone |
 |---|---|---|
-| 0.3.x | shipped (current 0.3.19; see *History*) | — |
+| 0.3.x | shipped up to 0.3.20 (see *History*); 0.3.21 carries the 0.4.0 core changes early, under its own `payloadType`, unsupported like a beta | — |
 | **0.4.0b*N*** | every core format change (below); the claim record; the run-level test drive | M1 |
 | **0.4.0** | the first supported format, `application/vnd.asexec.v1+json`, fixed; the wire format and frozen manifests become normative | M1 |
 | **0.4.x** | patches (see *0.4.x*); no format changes | — |
@@ -145,7 +148,7 @@ manifest, even if that manifest happens to carry it; there, it stays an unknown 
   `ceiling`, `pubkey` and `untrusted` (see *Wrapper* below). (Done ahead of 0.4.0.)
 - `untrusted`: a section for metadata nothing checks, starting with `asexec_version`. (Done
   ahead of 0.4.0.)
-- `payloadType` is `application/vnd.asexec.v1+json` (betas write their own; see
+- `payloadType` is `application/vnd.asexec.v1+json` (betas and 0.3.x write their own; see
   *Versioning*), and `predicateType` is `https://asexec.org/manifest/v1`, on a domain the
   project controls. A later format N is `vN` in both. (Done ahead of 0.4.0.)
 - Body field `schema_id` (formerly `schema_version`) is removed: `predicateType` already

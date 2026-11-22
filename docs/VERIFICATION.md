@@ -645,7 +645,8 @@ judges: what `dsse.signatures` holds, and `pubkey`, are [`selfsig`](#selfsig)'s.
   `malformed: body: duplicate JSON key 'phase'` or `malformed: body: the body must be a
   JSON object`.
 - #3, by what `dsse.payloadType` names:
-  - `application/vnd.asexec+json`, the format of asexec before 0.4.0: `payloadType names
+  - A format of asexec before 0.4.0, `application/vnd.asexec+json` (up to 0.3.20) or
+    `application/vnd.asexec.0.3.N+json` (a later 0.3.x's own): `payloadType names
     the format of asexec before 0.4.0, which is not supported: re-sign with this release`.
   - A beta's format, `application/vnd.asexec.X.Y.ZbN+json` (for example
     `application/vnd.asexec.0.4.0b1+json`): `payloadType names an asexec beta format, and

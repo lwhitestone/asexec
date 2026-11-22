@@ -160,19 +160,21 @@ PRE_V1_MANIFEST = {
 V1_PAYLOAD_TYPE = "application/vnd.asexec.v1+json"
 
 
-def _is_0_4_0_beta(payload_type):
-    return re.fullmatch(r"application/vnd\.asexec\.0\.4\.0b[0-9]+\+json", payload_type) is not None
+def _is_before_v1(payload_type):
+    pattern = r"application/vnd\.asexec\.(0\.3\.[0-9]+|0\.4\.0b[0-9]+)\+json"
+    return re.fullmatch(pattern, payload_type) is not None
 
 
-# A 0.4.0 beta's release commit sets MANIFEST_PAYLOAD_TYPE to its own beta type, and the build
-# reads that type only, so the frozen v1 vectors read as an unknown format there. Every test
-# that reads them is skipped in that build, and test_current_format_sign_then_verify_roundtrip
-# covers the current entry instead (D6b in docs/040b1-PATH.md). Only a 0.4.0 beta: it is built
-# before any format is released, and every later build, betas included, still reads v1 and
-# runs these tests (test_v1_is_read_by_every_build_but_a_0_4_0_beta).
+# The release commit of a 0.3.x (from 0.3.21) or of a 0.4.0 beta sets MANIFEST_PAYLOAD_TYPE to
+# its own type, and the build reads that type only, so the frozen v1 vectors read as an unknown
+# format there. Every test that reads them is skipped in that build, and
+# test_current_format_sign_then_verify_roundtrip covers the current entry instead (D6b and D6c
+# in docs/040b1-PATH.md). Only those builds: they come before any format is released, and
+# every later build, betas included, still reads v1 and runs these tests
+# (test_v1_is_read_by_every_build_from_0_4_0).
 frozen_v1 = pytest.mark.skipif(
-    _is_0_4_0_beta(constants.MANIFEST_PAYLOAD_TYPE),
-    reason="a 0.4.0 beta build does not read v1, the frozen vectors' format (D6b)",
+    _is_before_v1(constants.MANIFEST_PAYLOAD_TYPE),
+    reason="a 0.3.x or 0.4.0 beta build does not read v1, the frozen vectors' format (D6b, D6c)",
 )
 
 
@@ -255,7 +257,8 @@ def test_signing_pae_version_and_manifest_payload_type():
     # read from dsse.payloadType and the key of the entry signing uses, is what carries the
     # format version. Fallback: a new format entry, selected by payloadType.
     # The 0.4.0 format is v1, and a later format N is vN, matching MANIFEST_PREDICATE_TYPE.
-    # A beta writes application/vnd.asexec.X.Y.ZbN+json. scripts/release.sh rewrites the
+    # A beta writes application/vnd.asexec.X.Y.ZbN+json, and a 0.3.x from 0.3.21
+    # application/vnd.asexec.0.3.N+json. scripts/release.sh rewrites the
     # MANIFEST_PAYLOAD_TYPE literal in the release commit, here and in constants.py, and this
     # is the one line in this file that holds it: the others compare against it.
     assert _get_signing_format()["signing_pae_version"] == b"DSSEv1"
@@ -291,12 +294,12 @@ def test_ref_of_the_frozen_v1_vector_is_the_digest_of_its_stored_body_bytes(tmp_
     )
 
 
-def test_v1_is_read_by_every_build_but_a_0_4_0_beta():
+def test_v1_is_read_by_every_build_from_0_4_0():
     # Never skipped. From 0.4.0 on, v1 is released, and every later build reads it under its
     # own entry, keyed by the literal (scripts/release.sh writes that key in the 0.4.0 release
-    # commit). Only a 0.4.0 beta build, made before any format was released, does not. A
+    # commit). Only a 0.3.x or 0.4.0 beta build, made before any format was released, doesn't. A
     # release commit that re-keyed the released entry fails here.
-    assert _is_0_4_0_beta(constants.MANIFEST_PAYLOAD_TYPE) or (V1_PAYLOAD_TYPE in constants.FORMATS)
+    assert _is_before_v1(constants.MANIFEST_PAYLOAD_TYPE) or (V1_PAYLOAD_TYPE in constants.FORMATS)
 
 
 @pytest.mark.parametrize(
@@ -304,6 +307,11 @@ def test_v1_is_read_by_every_build_but_a_0_4_0_beta():
     [
         ("application/vnd.asexec.0.4.0b1+json", True),
         ("application/vnd.asexec.0.4.0b12+json", True),
+        ("application/vnd.asexec.0.3.21+json", True),
+        ("application/vnd.asexec.0.3.105+json", True),
+        ("application/vnd.asexec+json", False),  # 0.3.20 and earlier
+        ("application/vnd.asexec.0.30.1+json", False),
+        ("application/vnd.asexec.0.3.21b1+json", False),  # no such release
         ("application/vnd.asexec.v1+json", False),
         ("application/vnd.asexec.0.5.0b1+json", False),  # v1 is released by then
         ("application/vnd.asexec.0.4.1b1+json", False),
@@ -312,8 +320,8 @@ def test_v1_is_read_by_every_build_but_a_0_4_0_beta():
         ("application/vnd.asexec.0.4.0b1+json ", False),
     ],
 )
-def test_frozen_v1_vectors_are_skipped_only_in_a_0_4_0_beta(payload_type, skipped):
-    assert _is_0_4_0_beta(payload_type) is skipped
+def test_frozen_v1_vectors_are_skipped_only_before_v1(payload_type, skipped):
+    assert _is_before_v1(payload_type) is skipped
 
 
 def test_current_format_sign_then_verify_roundtrip(tmp_path):

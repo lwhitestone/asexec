@@ -179,6 +179,11 @@ breaks any vector that hardcodes it. The options:
     the pinned checks. After b1, main carries a beta type, so the pinned checks don't run on
     main until the 0.4.0 release commit sets `v1` again. A format change made between
     betas is first checked against pinned vectors in that release commit's `check.sh`.
+- **D6c (0.3.x, decided 2026-11-21):** this branch is first released as `0.3.21`, from main,
+  to not wait through the betas. A `0.3.x` is treated as a beta is: it writes
+  `application/vnd.asexec.0.3.N+json` and never `v1`, main keeps that type (D6a), and the
+  frozen vectors are skipped (D6b). Later releases give such a file the pre-0.4.0 reason.
+  So each `0.3.x` reads only its own manifests, and `v1` can still change during the betas.
 - **Follow-ups:**
   - #30: the skip condition and the roundtrip test.
   - #30: state that main keeps the beta type after a beta release.

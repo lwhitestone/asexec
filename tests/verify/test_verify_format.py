@@ -423,6 +423,9 @@ def test_format__fail__2_body_nested_at_most_64_deep(scenario):
         ("application/vnd.asexec.0.3.0b1+json", BETA),
         ("application/vnd.asexec.1.12.3b20+json", BETA),
         ("application/vnd.asexec+json", PRE_V1),
+        ("application/vnd.asexec.0.3.0+json", PRE_V1),  # never a build's own type
+        ("application/vnd.asexec.0.3.99999+json", PRE_V1),
+        ("application/vnd.asexec.0.30.1+json", NEWER),
     ],
     ids=[
         "v2",
@@ -434,6 +437,9 @@ def test_format__fail__2_body_nested_at_most_64_deep(scenario):
         "beta",
         "beta-wide",
         "before-0.4.0",
+        "0.3.x",
+        "0.3.x-wide",
+        "not-0.3.x",
     ],
 )
 def test_format__fail__3_payload_type_names_a_known_format(scenario, payload_type, reason):

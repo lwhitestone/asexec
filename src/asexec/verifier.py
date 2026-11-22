@@ -259,16 +259,17 @@ REASON_FORMAT_PRE_V1 = (
     " re-sign with this release"
 )
 
-# Recognized only to say why they fail: what asexec 0.2.0 to 0.3.x wrote, and a beta's
-# type (``X.Y.ZbN``). Any other payloadType that is not a FORMATS key reads as newer. Those
-# releases wrote it at the top level, with no dsse: a file laid out that way under that
-# type gets its reason too.
+# Recognized only to say why they fail: what asexec 0.2.0 to 0.3.20 wrote, a later 0.3.x's
+# own type (``0.3.N``), and a beta's type (``X.Y.ZbN``). Any other payloadType that is not a
+# FORMATS key reads as newer. 0.2.0 to 0.3.20 wrote theirs at the top level, with no dsse: a
+# file laid out that way under that type gets its reason too.
 _PRE_V1_PAYLOAD_TYPE = "application/vnd.asexec+json"
+_0_3_X_PAYLOAD_TYPE = re.compile(r"application/vnd\.asexec\.0\.3\.[0-9]+\+json")
 _BETA_PAYLOAD_TYPE = re.compile(r"application/vnd\.asexec\.[0-9]+\.[0-9]+\.[0-9]+b[0-9]+\+json")
 
 
 def _describe_unknown_format(payload_type: str) -> str:
-    if payload_type == _PRE_V1_PAYLOAD_TYPE:
+    if payload_type == _PRE_V1_PAYLOAD_TYPE or _0_3_X_PAYLOAD_TYPE.fullmatch(payload_type):
         return REASON_FORMAT_PRE_V1
     if _BETA_PAYLOAD_TYPE.fullmatch(payload_type):
         return REASON_FORMAT_BETA
@@ -294,7 +295,7 @@ def verify_format(mani: dict[str, Any]) -> dict[str, Any]:
     format's frame, which a newer format may lay out differently. Never raises."""
     dsse = mani.get("dsse")
     payload_type = dsse.get("payloadType") if isinstance(dsse, dict) else None
-    if dsse is None and mani.get("payloadType") == _PRE_V1_PAYLOAD_TYPE:  # 0.3.x's layout
+    if dsse is None and mani.get("payloadType") == _PRE_V1_PAYLOAD_TYPE:  # the layout up to 0.3.20
         return {"ok": False, "errors": [REASON_FORMAT_PRE_V1]}
     if isinstance(payload_type, str) and payload_type not in FORMATS:  # format #3
         return {"ok": False, "errors": [_describe_unknown_format(payload_type)]}

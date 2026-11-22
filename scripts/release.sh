@@ -10,6 +10,7 @@
 # the built file names agree. Ordering against earlier releases is not checked.
 #
 # Examples:
+#   scripts/release.sh 0.3.21
 #   scripts/release.sh 0.4.0b1
 #   scripts/release.sh 0.4.0
 #   scripts/release.sh --no-check 0.4.1
@@ -28,9 +29,10 @@
 # The payloadType (docs/DEVELOPMENT.md, Releasing): the release commit rewrites
 # the MANIFEST_PAYLOAD_TYPE literal in src/asexec/constants.py and its pinned
 # literal in tests/test_constants.py. This script is the sanctioned way to
-# change them. A beta writes application/vnd.asexec.X.Y.ZbN+json, under the
-# FORMATS entry under development, which is keyed by the name
-# MANIFEST_PAYLOAD_TYPE. A full release writes its line's format, from
+# change them. A beta writes application/vnd.asexec.X.Y.ZbN+json, and a 0.3.x
+# application/vnd.asexec.0.3.N+json (never v1, which 0.4.0 releases), both
+# under the FORMATS entry under development, which is keyed by the name
+# MANIFEST_PAYLOAD_TYPE. Any other full release writes its line's format, from
 # RELEASE_PAYLOAD_TYPES below, and a line with none is refused. The first full
 # release of a line (X.Y.0) releases the entry under development: its key
 # becomes the type's literal, which never changes after that. Main keeps the
@@ -217,7 +219,11 @@ major, minor, patch, beta = re.fullmatch(
 ).groups()
 line = f"{major}.{minor}"
 
-if beta:
+# A 0.3.x comes before any format is released, so like a beta it writes a type
+# of its own, under the entry under development (D6c in docs/040b1-PATH.md).
+writes_own_type = bool(beta) or line == "0.3"
+
+if writes_own_type:
     payload_type = f"application/vnd.asexec.{version}+json"
 elif line in RELEASE_PAYLOAD_TYPES:
     payload_type = RELEASE_PAYLOAD_TYPES[line]
@@ -280,11 +286,11 @@ rewrite(
     "pinned MANIFEST_PAYLOAD_TYPE literal",
 )
 
-if beta:
-    # A beta's type names the entry under development, so it must exist.
+if writes_own_type:
+    # Such a type names the entry under development, so it must exist.
     if count_occurrences(constants_name, NAME_KEY) != 1:
         raise SystemExit(
-            f"Error: {constants_name}: a beta writes the FORMATS entry under "
+            f"Error: {constants_name}: {version} writes the FORMATS entry under "
             "development, but there is not exactly one keyed by MANIFEST_PAYLOAD_TYPE"
         )
 elif patch == "0":

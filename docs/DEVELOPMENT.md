@@ -108,7 +108,11 @@ line or the release stops.
   the literal, and the script refuses a beta if there isn't exactly one such entry. A beta is
   of a line's first release (`X.Y.0bN`); `0.4.1b1` is refused. The script does not check that
   a version comes after the last one released.
-- **A full release** writes its release line's format, from `RELEASE_PAYLOAD_TYPES` in the
+- **A `0.3.x`** (from `0.3.21`) comes before any format is released, so like a beta it writes
+  a type of its own, `application/vnd.asexec.0.3.N+json`, under the entry under development,
+  and never `v1`. Each `0.3.x` therefore reads only the manifests it signed, as each beta
+  does. Once `0.4.0` has released `v1` there is no such entry, and a `0.3.x` is refused.
+- **Any other full release** writes its release line's format, from `RELEASE_PAYLOAD_TYPES` in the
   script: `0.4` → `application/vnd.asexec.v1+json`, so `0.4.0` and its patches write `v1`.
   A full release of a line with no entry (`0.5.0`, say) is refused: add the line once its
   format is decided ([`MULTIVERSION.md`](./MULTIVERSION.md)).
@@ -120,28 +124,29 @@ line or the release stops.
   if an entry keyed by the name exists, since it would share the key.
 
 **Main keeps the type the last release commit set**, until the next release commit. There is
-no revert commit. After `0.4.0b1`, main signs with `application/vnd.asexec.0.4.0b1+json`, so
-nothing on main writes the `v1` label before `0.4.0`. Format changes made between betas still
-carry the last beta's label. That is harmless: betas are not supported, and main is not
-published.
+no revert commit. After `0.3.21`, main signs with `application/vnd.asexec.0.3.21+json`, and
+after `0.4.0b1` with `application/vnd.asexec.0.4.0b1+json`, so from the first of these releases
+nothing on main writes the `v1` label before `0.4.0`. Format changes made between releases
+still carry the last one's label. That is harmless: neither a `0.3.x` nor a beta is
+supported, and main is not published.
 
 **The frozen vectors** in `tests/test_constants.py` are `v1` files, signed once and never
-edited. A `0.4.0` beta build reads only its own beta type, so every test that reads them is
-skipped there (the `frozen_v1` mark, reason "a 0.4.0 beta build does not read v1, the frozen
-vectors' format (D6b)"). In its place, `test_current_format_sign_then_verify_roundtrip`,
+edited. A `0.3.x` (from `0.3.21`) or `0.4.0` beta build reads only its own type, so every test
+that reads them is skipped there (the `frozen_v1` mark, reason "a 0.3.x or 0.4.0 beta build
+does not read v1, the frozen vectors' format (D6b, D6c)"). In its place, `test_current_format_sign_then_verify_roundtrip`,
 which runs in every build, signs two files under the current entry (one from the production
 writer, one signed by hand) and checks through `verify_paths` that they pass `format`,
 `selfsig` and `content` (each subject entry read under its own `hash_alg`), and that
-copies changed after signing fail `selfsig`. So on main after `0.4.0b1`, the pinned checks
+copies changed after signing fail `selfsig`. So on main after `0.3.21`, the pinned checks
 don't run until the `0.4.0` release commit sets `v1` again, and that commit's `check.sh` is
-the first to compare format changes made between betas against the frozen vectors.
+the first to compare format changes made since `0.3.21` against the frozen vectors.
 
-The skip covers `0.4.0` betas only, built before any format was released. Any later build,
+The skip covers `0.3.x` and `0.4.0` beta builds only, built before any format was released. Any later build,
 a later line's beta included, must still read `v1`, so the frozen vectors run there. (How
 a later line's betas are released is not designed yet: after `0.4.0`, main signs with `v1`,
 and a new entry keyed by the name would duplicate that key.) Also never skipped,
-`test_v1_is_read_by_every_build_but_a_0_4_0_beta` requires `application/vnd.asexec.v1+json`
-to be a `FORMATS` key whenever `MANIFEST_PAYLOAD_TYPE` is not a `0.4.0` beta type.
+`test_v1_is_read_by_every_build_from_0_4_0` requires `application/vnd.asexec.v1+json`
+to be a `FORMATS` key whenever `MANIFEST_PAYLOAD_TYPE` is not a `0.3.x` or `0.4.0` beta type.
 
 Pushing the tag triggers `.github/workflows/publish.yml`, which publishes with PyPI Trusted
 Publishing (OIDC; no tokens or repository secrets).
