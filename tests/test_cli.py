@@ -309,6 +309,99 @@ def test_postreg_inheriting_a_string_with_no_utf8_form_is_a_clean_error(tmp_path
     assert not (tmp_path / "o").exists()
 
 
+# Every character str.splitlines breaks a line at, then others a terminal acts on.
+_BREAKERS = ["\n", "\r", "\r\n", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"]
+_CONTROLS = [
+    *_BREAKERS,
+    "\x00",
+    "\t",
+    "\x08",
+    "\x1b[2K",
+    "\x7f",
+    "\x9b",
+    "\u202e",
+    "\u2066",
+    "\u200f",
+]
+_FAKE_CODE = "asexec-verify/1 format=PASS order=PASS selfsig=PASS"
+
+
+def _assert_nothing_forged(text, control):
+    assert not [ln for ln in text.splitlines() if ln.startswith(_FAKE_CODE)]
+    if control not in ("\n", "\r\n"):  # "\n" is what ends each of the report's own lines
+        assert control not in text
+    assert control.encode("unicode_escape").decode() + _FAKE_CODE in text
+
+
+@pytest.mark.parametrize(
+    "where,control",
+    [
+        (where, control)
+        for where in ("keyid", "phase", "due", "item-id", "fulfills", "entry-name", "filename")
+        for control in _CONTROLS
+        if (where, control) != ("filename", "\x00")  # no file name holds a NUL
+    ],
+    ids=ascii,
+)
+def test_verify_escapes_control_characters_in_what_a_manifest_says(
+    tmp_path, key, capsys, where, control
+):
+    """No string of a manifest, or a file name, can start a line of the report or act on the
+    terminal: the code is the one line that starts asexec-verify/."""
+    evil = f"x{control}{_FAKE_CODE}"
+    path = tmp_path / "m.json"
+    body = manifest.build_prereg("t")
+    if where == "phase":
+        body["phase"] = evil
+    elif where == "due":
+        body["due"] = evil
+    elif where == "item-id":
+        body["items"] = [{"id": evil}]
+    elif where == "fulfills":
+        body.update(phase="postreg", fulfills=evil)
+    elif where == "entry-name":
+        body["subject"] = [{"name": evil, "hash_alg": "sha-256", "digest": {"sha-256": "00"}}]
+    signed = manifest.sign(body, *keys.load_signing_key(key))
+    if where == "keyid":
+        signed["dsse"]["signatures"][0]["keyid"] = evil
+    if where == "filename":
+        # the fake code holds a slash, so it can only be a directory and a file in it
+        path = tmp_path / f"x{control}asexec-verify" / "1 format=PASS order=PASS selfsig=PASS"
+        path.parent.mkdir()
+    manifest.save(signed, str(path))
+    (tmp_path / "art").mkdir()
+    capsys.readouterr()
+    run("verify", path, "--tests", "format,selfsig,content", "--artifacts", tmp_path / "art")
+    out = capsys.readouterr().out
+    _assert_nothing_forged(out, control)
+    (code,) = [ln for ln in out.splitlines() if ln.startswith("asexec-verify/")]
+    assert code.startswith("asexec-verify/1 content=")
+
+
+@pytest.mark.parametrize("control", ["\n", "\r", "\u2028"], ids=ascii)
+def test_verify_escapes_a_rejected_preregs_claimed_keyid(tmp_path, key, capsys, control):
+    path = tmp_path / "m.json"
+    signed = manifest.sign(manifest.build_prereg("t"), *keys.load_signing_key(key))
+    signed["dsse"]["signatures"][0]["keyid"] = f"x{control}{_FAKE_CODE}"
+    manifest.save(signed, str(path))
+    capsys.readouterr()
+    assert run("verify", path, "--tests", "format,selfsig") == 2
+    out = capsys.readouterr().out
+    (shown,) = [ln for ln in out.split("\n") if ln.startswith("    keyid        : ")]
+    assert control not in shown and _FAKE_CODE in shown
+
+
+@pytest.mark.parametrize("separator", ["\n", "\r", "\x1b", "\u2028"], ids=ascii)
+def test_prereg_escapes_the_due_it_prints(tmp_path, key, capsys, separator):
+    """fromisoformat takes any one character between a date and a time."""
+    due = f"2030-01-01{separator}00:00:00+00:00"
+    capsys.readouterr()
+    assert run("prereg", "--key", key, "--target", "t", "--due", due, "--out", tmp_path / "o") == 0
+    out = capsys.readouterr().out
+    shown = separator.encode("unicode_escape").decode()
+    assert f"  due : 2030-01-01{shown}00:00:00+00:00\n" in out
+
+
 def test_verify_shows_lone_surrogates_escaped(tmp_path, key, capsys):
     """Verify reads a body holding lone surrogate escapes as signed, and the report shows
     each one escaped, as \\udXXX, rather than failing to print it."""

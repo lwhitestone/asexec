@@ -419,11 +419,19 @@ def _attach_ceiling(mani: dict, ref: str, want_ceiling: bool, best_effort: bool)
     )
 
 
+# What a printed line may not hold raw: a control character (C0, DEL, C1), a line or paragraph
+# separator, a bidirectional control, or a lone surrogate (which has no UTF-8 form).
+_UNPRINTABLE = re.compile(
+    r"[\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069\ud800-\udfff]"
+)
+
+
 def _show(text: str) -> None:
-    """Print a report line. A manifest's strings are printed as they are, except that a
-    character with no UTF-8 form (a lone surrogate, which a body may hold as valid JSON) is
-    shown as its escape, ``\\udXXX``, so the report never fails to print."""
-    print(text.encode("utf-8", "backslashreplace").decode("utf-8"))
+    """Print ``text`` as exactly one line. A manifest's strings and file names are printed as
+    they are, except that each ``_UNPRINTABLE`` character is shown as its escape (``\\n``,
+    ``\\x1b``, ``\\u2028``, ``\\udXXX``), so none can start a line (and pass for the code),
+    act on the terminal, or stop the report printing. A blank line is ``_show("")``."""
+    print(_UNPRINTABLE.sub(lambda m: m.group().encode("unicode_escape").decode("ascii"), text))
 
 
 # --------------------------------------------------------------------------- #
@@ -471,7 +479,7 @@ def run_prereg(args) -> int:
     print(f"{OK} pre-registration written: {args.out}")
     print(f"  ref : {ref}")
     if body.get("due"):
-        print(f"  due : {body['due']}")
+        _show(f"  due : {body['due']}")
     return EXIT_OK
 
 
@@ -592,7 +600,8 @@ def _show_report(report: dict) -> None:
     _show_fields(report["manifests"], "untrusted", UNTRUSTED_HEADING)
     _show_fields(report["manifests"], "unknown", UNKNOWN_HEADING)
 
-    _show("\n=== commitments ===")
+    _show("")
+    _show("=== commitments ===")
     if not report["commitments"] and report["rejected_preregs"]:
         _show("  (no commitments: no pre-registration provided is validly signed)")
     elif not report["commitments"]:
@@ -624,7 +633,8 @@ def _show_report(report: dict) -> None:
         for r in c["rejected_postregs"]:
             _show(f"    {NO} postreg {r['ref']} does NOT count toward fulfillment: {r['reason']}")
     if report["rejected_preregs"]:  # pass format, fail selfsig: no commitment, no state
-        _show("\n=== rejected pre-registrations ===")
+        _show("")
+        _show("=== rejected pre-registrations ===")
         for rp in report["rejected_preregs"]:
             _show(f"  {NO} prereg {rp['ref']} is NOT a commitment: {rp['reason']}")
             _show(f"    keyid        : {rp.get('keyid')}")
@@ -633,22 +643,26 @@ def _show_report(report: dict) -> None:
                     f"    {NO} postreg {r['ref']} does NOT count toward fulfillment: {r['reason']}"
                 )
     if report["notarization_only"]:
-        _show("\n=== notarization-only (postregs with no matching pre-registration) ===")
+        _show("")
+        _show("=== notarization-only (postregs with no matching pre-registration) ===")
         for n in report["notarization_only"]:
             _show(f"  {n['ref']}  (fulfills {n.get('fulfills')})")
 
-    _show("\n=== tests ===")
+    _show("")
+    _show("=== tests ===")
     for t in report["tests"]:
         r = report["results"][t]
         s = OK if r["result"] == "PASS" else NO
         _show(f"  {s} {t}={r['result']}  ({r['reason']})")
 
     if report["ceiling_trust"]:
-        _show("\n=== ceiling trust (what you are accepting) ===")
+        _show("")
+        _show("=== ceiling trust (what you are accepting) ===")
         for line in report["ceiling_trust"]:
             _show(f"  - {line}")
 
-    _show(f"\n{report['code']}")
+    _show("")
+    _show(f"{report['code']}")
     _show(f"Checked at {report['checked_at']}")
 
 
@@ -688,7 +702,8 @@ def _show_fields(manifests: list, kind: str, heading: str) -> None:
     shown = [m for m in manifests if m[kind]]
     if not shown:
         return
-    _show(f"\n{heading}")
+    _show("")
+    _show(f"{heading}")
     for m in shown:
         _show(f"  {m['path']}")
         for entry in m[kind]:

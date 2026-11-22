@@ -118,6 +118,12 @@ in the README's [Exit status](../README.md#exit-status).
 happened. Only the code line and the exit status are stable to script against. The
 report's wording may change, except for the reasons this document lists.
 
+In anything the report prints from a file or a file's name, a control character, a line or
+paragraph separator, a bidirectional control and a lone surrogate are each shown escaped
+(`\n`, `\x1b`, `\u2028`, `\ud800`). So no manifest can start a line: the code is the one line
+that starts with `asexec-verify/`. Match it at the start of a line, since a manifest's text
+can still hold those characters further along one.
+
 | Block | Printed | Shows |
 |---|---|---|
 | `=== manifests ===` | always | One line per file: `✓` if it passes `format` and meets `selfsig`'s conditions (else `✗`), the path, `body.phase` and `dsse.signatures[0].keyid` (`None` for a file that fails `format`, whose body is not read). Indented beneath: why a file fails `format` (`format: malformed: …`, or the [reason](#format) for an unknown format), and one line each for a floor, a ceiling and content hashes when the manifest has them. |
