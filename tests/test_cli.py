@@ -392,14 +392,14 @@ def test_verify_escapes_a_rejected_preregs_claimed_keyid(tmp_path, key, capsys, 
 
 
 @pytest.mark.parametrize("separator", ["\n", "\r", "\x1b", "\u2028"], ids=ascii)
-def test_prereg_escapes_the_due_it_prints(tmp_path, key, capsys, separator):
-    """fromisoformat takes any one character between a date and a time."""
+def test_prereg_refuses_a_due_that_would_print_more_than_a_line(tmp_path, key, capsys, separator):
+    """The grammar's separators are T and a space, so prereg's own due line holds nothing else."""
     due = f"2030-01-01{separator}00:00:00+00:00"
     capsys.readouterr()
-    assert run("prereg", "--key", key, "--target", "t", "--due", due, "--out", tmp_path / "o") == 0
-    out = capsys.readouterr().out
-    shown = separator.encode("unicode_escape").decode()
-    assert f"  due : 2030-01-01{shown}00:00:00+00:00\n" in out
+    with pytest.raises(SystemExit) as e:
+        run("prereg", "--key", key, "--target", "t", "--due", due, "--out", tmp_path / "o")
+    assert e.value.code == cli.EXIT_USAGE
+    assert separator not in capsys.readouterr().err.strip().splitlines()[-1]
 
 
 _NOT_UTF8 = "x\udcff"  # a byte that is not UTF-8, as argv decodes it
@@ -1993,6 +1993,29 @@ DUE_READINGS = [
     pytest.param("2023-11-14T22:13:21+24:00", False, "invalid", id="offset-out-of-range"),
     pytest.param("2023-02-30T00:00:00Z", False, "invalid", id="no-such-day"),
     pytest.param("someday", False, "invalid", id="words"),
+    # in the grammar
+    pytest.param("2023-11-15T00:00Z", True, "on-time", id="no-seconds"),
+    pytest.param("2023-11-14 22:13:21Z", True, "on-time", id="space-separator"),
+    pytest.param("2023-11-14T22:13:20.9Z", True, "late", id="one-fraction-digit"),
+    pytest.param("2023-11-14T23:13:21+0100", True, "on-time", id="offset-without-colon"),
+    pytest.param("2023-11-14T22:13:21-00:00", True, "on-time", id="minus-zero-offset"),
+    # outside it, though some or every Python's fromisoformat takes it
+    pytest.param("2023-11-30T24:00:00+00:00", False, "invalid", id="hour-24"),
+    pytest.param("2030-01-01T12:00:00.+00:00", False, "invalid", id="empty-fraction"),
+    pytest.param("2030-01-01T12.5+00:00", False, "invalid", id="fraction-of-an-hour"),
+    pytest.param("2030-01-01T12:00:00.123456789xZ", False, "invalid", id="junk-in-fraction"),
+    pytest.param("2030-01-01T00:00:00+05:75", False, "invalid", id="offset-minutes-75"),
+    pytest.param("2030-01-01x00:00:00Z", False, "invalid", id="any-separator"),
+    pytest.param("2030-01-01\ud80000:00:00Z", False, "invalid", id="surrogate-separator"),
+    pytest.param("2030-01-01\n00:00:00+00:00", False, "invalid", id="newline-separator"),
+    pytest.param("20300101T000000Z", False, "invalid", id="basic-format"),
+    pytest.param("2030-W01-2T00:00:00Z", False, "invalid", id="week-date"),
+    pytest.param("2030-01-01T00:00:00,5Z", False, "invalid", id="comma-fraction"),
+    pytest.param("2030-01-01T12Z", False, "invalid", id="hour-alone"),
+    pytest.param("2030-01-01T00:00:00+01", False, "invalid", id="offset-hour-alone"),
+    pytest.param("2030-01-01T00:00:00Z\n", False, "invalid", id="trailing-newline"),
+    pytest.param("\u0662\u0660\u0663\u0660-01-01T00:00:00Z", False, "invalid", id="other-digits"),
+    pytest.param("2030-06-30T23:59:60Z", False, "invalid", id="leap-second"),
 ]  # fmt: skip
 
 

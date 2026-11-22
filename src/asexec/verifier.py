@@ -196,20 +196,44 @@ _EPOCH = datetime.datetime(1970, 1, 1, tzinfo=datetime.UTC)
 _MICROSECOND = datetime.timedelta(microseconds=1)
 
 
+# The grammar of ``due`` (docs/VERIFICATION.md, Conventions), matched here because
+# ``fromisoformat``'s own differs by Python version. ASCII digits only.
+_DUE = re.compile(
+    r"([0-9]{4})-([0-9]{2})-([0-9]{2})"
+    r"(?:[T ]([0-9]{2}):([0-9]{2})(?::([0-9]{2})(?:\.([0-9]+))?)?"
+    r"(?:Z|([+-])([01][0-9]|2[0-3]):?([0-5][0-9]))?)?"
+)
+
+
 def parse_due(text: str) -> tuple[datetime.datetime, bool]:
     """The instant an ISO-8601 ``due`` names, and whether it has no UTC offset. The one parse
     of ``due``: signing (``cli._check_due_arg``, which refuses a naive one) and verify both use it,
     so what signing takes is what verify reads.
 
-    ``Z`` stands for ``+00:00``. A value with no offset is read as UTC, so the instant never
-    depends on the reader's local timezone. Digits past the microsecond are dropped (Python's
-    ``fromisoformat``). Raises ``ValueError`` if ``text`` is not such a timestamp.
+    Only ``_DUE``'s grammar is such a timestamp, so every Python reads the same instant from
+    it. ``Z`` stands for ``+00:00``. A value with no offset is read as UTC, so the instant
+    never depends on the reader's local timezone. Digits past the microsecond are dropped.
+    Raises ``ValueError`` if ``text`` is not such a timestamp, or no such time exists.
     """
-    dt = datetime.datetime.fromisoformat(text.replace("Z", "+00:00"))
-    naive = dt.tzinfo is None
-    if naive:
-        dt = dt.replace(tzinfo=datetime.UTC)
-    return dt, naive
+    match = _DUE.fullmatch(text)
+    if not match:
+        raise ValueError("not in the grammar of due")
+    year, month, day, hour, minute, second, fraction, sign, off_hours, off_minutes = match.groups()
+    zone = datetime.UTC
+    if sign:
+        offset = datetime.timedelta(hours=int(off_hours), minutes=int(off_minutes))
+        zone = datetime.timezone(-offset if sign == "-" else offset)
+    dt = datetime.datetime(
+        int(year),
+        int(month),
+        int(day),
+        int(hour or 0),
+        int(minute or 0),
+        int(second or 0),
+        int((fraction or "")[:6].ljust(6, "0")),
+        tzinfo=zone,
+    )
+    return dt, not (sign or text.endswith("Z"))
 
 
 def _parse_due(raw: Any) -> tuple[bool, float | None, bool, int | None]:

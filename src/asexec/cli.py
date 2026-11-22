@@ -874,7 +874,9 @@ def _check_due_arg(value: str) -> str:
     try:
         _instant, naive = verifier.parse_due(value)
     except ValueError:
-        raise argparse.ArgumentTypeError(f"not a valid ISO-8601 timestamp: {value!r}") from None
+        raise argparse.ArgumentTypeError(
+            f"not a valid ISO-8601 timestamp, such as 2030-01-31T17:00:00Z: {value!r}"
+        ) from None
     if naive:
         raise argparse.ArgumentTypeError(
             "needs an explicit UTC offset or 'Z' "

@@ -70,6 +70,21 @@ such as `"\ud800"`, is valid JSON: the body bytes are read as stored, so a body 
 It is read as the string it spells, which equals no `ref` or `keyid`, parses as no time
 and names no file, and the report shows it escaped, as `\ud800`.
 
+**Due.** A parseable ISO-8601 `due` is one in this grammar, a profile of ISO-8601 that every
+supported Python reads alike:
+
+```
+due    = date [ ("T" / " ") time [ offset ] ]
+date   = YYYY "-" MM "-" DD
+time   = hh ":" mm [ ":" ss [ "." 1*digit ] ]
+offset = "Z" / ("+" / "-") hh [ ":" ] mm
+```
+
+Digits are ASCII, and nothing comes before or after. The date and time must exist: hours are
+00 to 23, minutes 00 to 59 and seconds 00 to 59 (so no `24:00` and no leap second), in the
+offset too. Digits past the microsecond are dropped. Anything else is not a parseable `due`,
+including other ISO-8601 forms (week dates, the basic format, a comma before the fraction).
+
 **Result.** Each requested test yields exactly one of `PASS` / `FAIL`. There is no third
 value and no error state. Malformed input is never an exception: it is a failure of the
 tests that examine it.
