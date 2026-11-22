@@ -12,7 +12,7 @@ consistency, not who signed or that the pre-registration was complete.
 See the module docstrings and the README for what this does!
 """
 
-__version__ = "0.3.20"
+__version__ = "0.3.21"
 
 from .constants import MANIFEST_PREDICATE_TYPE
 
