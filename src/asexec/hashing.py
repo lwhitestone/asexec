@@ -1,18 +1,18 @@
 """Content hashing and the ``subject`` builder.
 
-SHA-256 is the default and always available (stdlib). The algorithm is named
-in every manifest (`hash_alg`, a mandatory field) so it can be substituted;
-other algorithms (e.g. BLAKE3, if the optional dependency is installed) can be
-selected without a format change.
+SHA-256 is the default and always available (stdlib). Each subject entry names its own
+algorithm (``hash_alg``) beside its digest, so it can be substituted; other algorithms (e.g.
+BLAKE3, if the optional dependency is installed) can be selected without a format change.
 
-Directory hashing (v1): a *sorted manifest of file hashes*. We walk every
-regular file under the directory, take each file's hash, and hash the sorted
-list of ``"<hexhash>  <relpath>\\n"`` lines (bytewise-sorted by relpath).
-Deterministic and auditable with common tools.
-
-Limitation (v1): this captures file *contents* and *relative paths* only -
-not the executable bit, symlink targets, or empty directories. A future
-NAR-style serialization would capture those; see 04-plan.md.
+A subject is an explicit list of files, each hashed exactly as listed. There is no directory
+hash: to commit to a tree, list its files, or pack it (a tar, for example) and list the
+archive. An entry's ``name`` is the file's path as given, relative to the current directory,
+normalized and ``/``-separated (``./a//b.txt`` is ``a/b.txt``), so two files with the same
+basename stay distinct. Signing refuses what ``content`` fails in any manifest: a directory or
+anything else that is not a regular file, an absolute path, a ``..`` component, a backslash,
+and two paths with the same name. A symlink is hashed through to its target, under its own
+name. Signing does not check where a symlink points, so one that resolves outside the
+directory verify is given as ``--artifacts`` is signed, and fails ``content`` (#5) there.
 """
 
 from __future__ import annotations
@@ -22,8 +22,8 @@ import os
 from collections.abc import Callable
 from typing import Any
 
-from .constants import SUBJECT_DEFAULT_HASH_ALG
-from .errors import HashAlgError
+from .errors import HashAlgError, ManifestError
+from .fields import is_normal_name
 
 # name -> zero-arg factory returning a fresh hashlib-like object with
 # .update(bytes) and .hexdigest().
@@ -53,13 +53,7 @@ def _new(alg: str):
         ) from None
 
 
-def hash_bytes(data: bytes, alg: str = SUBJECT_DEFAULT_HASH_ALG) -> str:
-    h = _new(alg)
-    h.update(data)
-    return h.hexdigest()
-
-
-def hash_file(path: str, alg: str = SUBJECT_DEFAULT_HASH_ALG, chunk: int = 1 << 20) -> str:
+def hash_file(path: str, alg: str, chunk: int = 1 << 20) -> str:
     h = _new(alg)
     with open(path, "rb") as f:
         for block in iter(lambda: f.read(chunk), b""):
@@ -67,42 +61,86 @@ def hash_file(path: str, alg: str = SUBJECT_DEFAULT_HASH_ALG, chunk: int = 1 << 
     return h.hexdigest()
 
 
-def _iter_files(root: str):
-    for dirpath, _dirnames, filenames in os.walk(root):
-        for name in filenames:
-            full = os.path.join(dirpath, name)
-            if os.path.islink(full) or not os.path.isfile(full):
-                continue
-            rel = os.path.relpath(full, root)
-            yield rel.replace(os.sep, "/"), full
+def describe_unstorable_name(name: str) -> str | None:
+    """Describe what stops ``name`` being stored in a manifest, or return None if nothing does.
+
+    Two things do: a NUL character, which no path has, and a character with no UTF-8 form,
+    which no body can hold (a lone surrogate, which is also how the OS decodes a path byte
+    that is not UTF-8)."""
+    if "\x00" in name:
+        return "a NUL character"
+    try:
+        name.encode("utf-8")
+    except UnicodeEncodeError:
+        return "a character with no UTF-8 form"
+    return None
 
 
-def hash_dir(path: str, alg: str = SUBJECT_DEFAULT_HASH_ALG) -> str:
-    """Hash a directory tree via a sorted manifest of file hashes."""
-    lines = []
-    for rel, full in _iter_files(path):
-        lines.append(f"{hash_file(full, alg)}  {rel}")
-    manifest = ("\n".join(sorted(lines)) + "\n").encode("utf-8")
-    return hash_bytes(manifest, alg)
+def _check_storable_name(path: str) -> None:
+    why = describe_unstorable_name(path)
+    if why:
+        raise ManifestError(f"{path!r} names no file a manifest can hold: it has {why}")
 
 
-def digest_path(path: str, alg: str = SUBJECT_DEFAULT_HASH_ALG) -> str:
-    """Hash a file or directory, returning a hex digest."""
+def derive_entry_name(path: str) -> str:
+    """The ``name`` of the file at ``path`` (as given, relative to the current directory):
+    normalized and ``/``-separated. Raises ``ManifestError`` for a path that no normalized
+    relative name can stand for: absolute, with a ``..`` component, or (where ``\\`` is not
+    a separator) with a backslash, which another system would read as a separator, or one a
+    manifest cannot hold (``describe_unstorable_name``)."""
+    _check_storable_name(path)
+    if os.path.isabs(path) or os.path.splitdrive(path)[0]:
+        raise ManifestError(
+            f"{path!r} is an absolute path; name a file by its path relative to the current "
+            "directory (verify looks it up under --artifacts)"
+        )
+    text = path.replace(os.sep, "/")
+    if os.altsep:
+        text = text.replace(os.altsep, "/")
+    if "\\" in text:
+        raise ManifestError(f"{path!r} has a backslash, which some systems read as a separator")
+    segments = [seg for seg in text.split("/") if seg not in ("", ".")]
+    if ".." in segments:
+        raise ManifestError(f"{path!r} has a '..' component; name the file without it")
+    name = "/".join(segments)
+    if not is_normal_name(name):  # e.g. "" or "."; a directory, refused by the caller first
+        raise ManifestError(f"{path!r} does not name a file")
+    return name
+
+
+def build_entry(path: str, alg: str) -> dict[str, Any]:
+    """``{"name", "hash_alg", "digest": {alg: hex}}`` for the one file at ``path``.
+
+    Refuses (``ManifestError``) a directory, anything else that exists but is not a regular
+    file, and a path ``derive_entry_name`` refuses. A symlink is hashed through to its target. A
+    missing file raises ``FileNotFoundError``."""
+    _check_storable_name(path)  # before the filesystem is asked, which can't take such a path
     if os.path.isdir(path):
-        return hash_dir(path, alg)
-    return hash_file(path, alg)
+        raise ManifestError(
+            f"{path!r} is a directory; list its files, or pack it (a tar, say) and list that"
+        )
+    if os.path.exists(path) and not os.path.isfile(path):
+        raise ManifestError(f"{path!r} is not a regular file")
+    name = derive_entry_name(path)
+    return {"name": name, "hash_alg": alg, "digest": {alg: hash_file(path, alg)}}
 
 
-def build_subject(paths: list[str], alg: str = SUBJECT_DEFAULT_HASH_ALG) -> list[dict[str, Any]]:
-    """Build the manifest ``subject`` array from a list of paths.
-
-    Each entry: ``{"name": <display>, "digest": {alg: hexhash}}``. Directory
-    names are suffixed with "/".
-    """
-    subject = []
+def build_entries(paths: list[str], alg: str) -> list[dict[str, Any]]:
+    """One entry per path (``build_entry``), refusing two paths with the same name."""
+    entries: list[dict[str, Any]] = []
+    seen: dict[str, str] = {}
     for p in paths:
-        name = os.path.basename(os.path.normpath(p))
-        if os.path.isdir(p):
-            name += "/"
-        subject.append({"name": name, "digest": {alg: digest_path(p, alg)}})
-    return subject
+        entry = build_entry(p, alg)
+        if entry["name"] in seen:
+            raise ManifestError(
+                f"{seen[entry['name']]!r} and {p!r} both name {entry['name']!r}: "
+                "a file is listed twice"
+            )
+        seen[entry["name"]] = p
+        entries.append(entry)
+    return entries
+
+
+def build_subject(paths: list[str], alg: str) -> list[dict[str, Any]]:
+    """Build the manifest ``subject`` array from a list of file paths (``build_entries``)."""
+    return build_entries(paths, alg)

@@ -4,12 +4,16 @@ Each ``verify_paths`` run does the BLS check once per floor-carrying manifest (a
 second), so the scenario carries a floor on the prereg only.
 """
 
+import hashlib
+import json
+
+import manifest_data as d
 import pytest
 
 from asexec import drand
 
-PASS = "asexec-verify/1 BDR=PASS floor=PASS"
-FAIL = "asexec-verify/1 BDR=PASS floor=FAIL"
+PASS = "asexec-verify/1 floor=PASS format=PASS selfsig=PASS"
+FAIL = "asexec-verify/1 floor=FAIL format=PASS selfsig=PASS"
 EMPTY = "requested but no manifest carries an anchor.floor"
 
 
@@ -21,9 +25,9 @@ def sc(scenario):
 
 
 def _edit_floor(sc, **changes):
-    """Change ``payload.anchor.floor`` fields (signed); a value of None deletes one."""
+    """Change ``body.anchor.floor`` fields (signed); a value of None deletes one."""
     for key, value in changes.items():
-        path = f"payload.anchor.floor.{key}"
+        path = f"body.anchor.floor.{key}"
         if value is None:
             sc.unset("prereg", path)
         else:
@@ -36,26 +40,27 @@ def test_floor__pass__all(sc):
     assert report["code"] == PASS
     floor = report["manifests"][0]["floor"]
     assert floor["status"] == "verified"
-    assert floor["created_no_earlier_than"] == drand.time_of_round(1000)
+    assert floor["created_no_earlier_than"] == drand.compute_round_time(1000, drand.QUICKNET_HASH)
 
 
 @pytest.mark.parametrize("absent", ["missing", "null"])
-def test_floor__pass__2_chain_hash_defaults_to_quicknet(sc, absent):
-    """floor #2: an absent (missing or null) chain_hash means the pinned quicknet chain."""
+def test_floor__fail__2_chain_hash_is_required(sc, absent):
+    """floor #2: an absent (missing or null) chain_hash fails: verify never picks a chain
+    for a manifest, so changing the chain signing uses can't change an old verdict."""
     if absent == "missing":
-        sc.unset("prereg", "payload.anchor.floor.chain_hash")
+        sc.unset("prereg", "body.anchor.floor.chain_hash")
     else:
-        sc.set("prereg", "payload.anchor.floor.chain_hash", None)
-    assert sc.code("floor") == PASS
+        sc.set("prereg", "body.anchor.floor.chain_hash", None)
+    assert sc.code("floor") == FAIL
 
 
 @pytest.mark.parametrize("absent", ["missing", "null"])
 def test_floor__pass__4_randomness_may_be_absent(sc, absent):
     """floor #4: randomness is optional (missing or null); the BLS check (#5) still holds."""
     if absent == "missing":
-        sc.unset("prereg", "payload.anchor.floor.randomness")
+        sc.unset("prereg", "body.anchor.floor.randomness")
     else:
-        sc.set("prereg", "payload.anchor.floor.randomness", None)
+        sc.set("prereg", "body.anchor.floor.randomness", None)
     assert sc.code("floor") == PASS
 
 
@@ -73,14 +78,14 @@ def test_floor__pass__3_signature_hex_accepts_either_case_and_whitespace(sc):
 @pytest.mark.parametrize(
     "path,value",
     [
-        pytest.param("payload.anchor.floor", "x", id="floor-string"),
-        pytest.param("payload.anchor.floor", {}, id="floor-empty-object"),
-        pytest.param("payload.anchor.floor", [], id="floor-empty-list"),
-        pytest.param("payload.anchor.floor", "", id="floor-empty-string"),
-        pytest.param("payload.anchor.floor", False, id="floor-false"),
-        pytest.param("payload.anchor.floor", 0, id="floor-zero"),
-        pytest.param("payload.anchor", [], id="anchor-empty-list"),
-        pytest.param("payload.anchor", "x", id="anchor-string"),
+        pytest.param("body.anchor.floor", "x", id="floor-string"),
+        pytest.param("body.anchor.floor", {}, id="floor-empty-object"),
+        pytest.param("body.anchor.floor", [], id="floor-empty-list"),
+        pytest.param("body.anchor.floor", "", id="floor-empty-string"),
+        pytest.param("body.anchor.floor", False, id="floor-false"),
+        pytest.param("body.anchor.floor", 0, id="floor-zero"),
+        pytest.param("body.anchor", [], id="anchor-empty-list"),
+        pytest.param("body.anchor", "x", id="anchor-string"),
     ],
 )
 def test_floor__fail__1_floor_is_an_object(sc, path, value):
@@ -128,6 +133,14 @@ def test_floor__fail__4_randomness_is_sha256_of_signature(sc):
     assert sc.code("floor") == FAIL
 
 
+def test_floor__fail__5_signature_is_its_48_byte_encoding(sc):
+    """floor #5: the signature is its 48-byte encoding. With a prefix it would still pair, and
+    give another randomness."""
+    sig = "01" + d.FLOOR["signature"]
+    _edit_floor(sc, signature=sig, randomness=hashlib.sha256(bytes.fromhex(sig)).hexdigest())
+    assert sc.code("floor") == FAIL
+
+
 def test_floor__fail__5_signature_verifies_for_round(sc):
     """floor #5: the BLS signature verifies for this round (another round's fails)."""
     _edit_floor(sc, round=1001)
@@ -138,7 +151,7 @@ def test_floor__fail__5_signature_verifies_for_round(sc):
 def test_floor__fail__empty_no_manifest_carries_one(scenario, absent):
     """floor (*): no manifest carries an anchor.floor (missing or null), so the test fails."""
     if absent != "missing":
-        path = {"null-floor": "payload.anchor.floor", "null-anchor": "payload.anchor"}[absent]
+        path = {"null-floor": "body.anchor.floor", "null-anchor": "body.anchor"}[absent]
         scenario.set("prereg", path, None)
     report = scenario.verify("floor")
     assert report["code"] == FAIL
@@ -149,9 +162,9 @@ def test_floor__fail__empty_no_manifest_carries_one(scenario, absent):
 def test_floor__fail__empty_malformed_manifest_not_examined(scenario):
     """floor (*): a malformed manifest is not examined, even if it carries an anchor.floor."""
     scenario.add_raw(
-        "bad", '{"payload": {"anchor": {"floor": {"floor_type": "drand"}}}, "signature": {}}'
+        "bad", json.dumps(d.make_malformed({"anchor": {"floor": {"floor_type": "drand"}}}))
     )
     report = scenario.verify("floor")
     assert report["results"]["floor"]["applicable"] == 0
-    assert report["code"] == "asexec-verify/1 BDR=FAIL floor=FAIL"
+    assert report["code"] == "asexec-verify/1 floor=FAIL format=FAIL selfsig=PASS"
     assert report["results"]["floor"]["reason"] == EMPTY

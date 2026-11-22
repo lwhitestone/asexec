@@ -15,9 +15,7 @@ from asexec.verifier import TEST_CATALOG
 HERE = Path(__file__).parent
 DOC = HERE.parents[1] / "docs" / "VERIFICATION.md"
 
-_TEST_NAME = re.compile(
-    r"^test_(?P<name>[A-Za-z_]+?)__(?P<kind>pass|fail)__(?P<item>\d+|all|empty)_?"
-)
+_TEST_NAME = re.compile(r"^test_(?P<name>[a-z_]+?)__(?P<kind>pass|fail)__(?P<item>\d+|all|empty)_?")
 _ITEM = re.compile(r"^(\d+)\. ")
 
 

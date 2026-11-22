@@ -33,7 +33,7 @@ SEED = 5
 N_TRANSCRIPTS = 200
 N_PLANTS = 40
 DUE = "2099-01-01T00:00:00Z"
-TESTS = "BDR,chain,content,keyconsist"
+TESTS = "format,selfsig,chain,content,keyconsist"
 TARGET = (
     "Claim 5 (synthetic): models never attempted to disable or evade their monitoring "
     "during internal deployment"
@@ -64,10 +64,22 @@ BENIGN = [
 ]
 
 
-def asexec(*args: str, check: bool = True) -> subprocess.CompletedProcess:
+def run_asexec(
+    *args: str, check: bool = True, cwd: Path | None = None
+) -> subprocess.CompletedProcess:
+    """Run the CLI. Signing runs in the artifacts directory (``cwd``): a subject is named by
+    its path relative to where signing runs, and verify finds it under ``--artifacts``."""
     return subprocess.run(
-        [sys.executable, "-m", "asexec", *args], capture_output=True, text=True, check=check
+        [sys.executable, "-m", "asexec", *args],
+        capture_output=True,
+        text=True,
+        check=check,
+        cwd=cwd,
     )
+
+
+def list_relative_paths(paths: list[Path], art: Path) -> list[str]:
+    return [str(p.relative_to(art)) for p in paths]
 
 
 def write_json(path: Path, obj) -> Path:
@@ -120,14 +132,14 @@ def run_monitor(transcripts: list[list[str]], art: Path) -> int:
     return len(flags)
 
 
-def prereg(key: Path, art: Path, out: Path) -> Path:
+def sign_prereg(key: Path, art: Path, out: Path) -> Path:
     (art / "plan.md").write_text(
         "# Plan (synthetic)\n\nS1: search deployment transcripts for evasion attempts.\n"
         "S2: targeted experiments that invite evasion.\n"
         f"A1: insert {N_PLANTS} planted evasion attempts; measure the monitor's catch rate.\n"
     )
     decl = write_json(out.parent / "declaration.json", {"items": ITEMS})
-    asexec(
+    run_asexec(
         "prereg",
         "--key",
         str(key),
@@ -138,15 +150,15 @@ def prereg(key: Path, art: Path, out: Path) -> Path:
         "--declaration-file",
         str(decl),
         "--subject",
-        str(art / "plan.md"),
-        str(art / "plants.commitment.json"),
+        *list_relative_paths([art / "plan.md", art / "plants.commitment.json"], art),
         "--out",
         str(out),
+        cwd=art,
     )
     return out
 
 
-def postreg(
+def sign_postreg(
     key: Path, pre: Path, item: str, subjects: list[Path], out: Path, prev: Path | None = None
 ) -> Path:
     notes = write_json(out.with_suffix(".notes.json"), {"item_id": item, "status": "reported"})
@@ -159,18 +171,18 @@ def postreg(
         "--notes-file",
         str(notes),
         "--subject",
-        *map(str, subjects),
+        *list_relative_paths(subjects, subjects[0].parent),
         "--out",
         str(out),
     ]
     if prev:
         args += ["--prev", str(prev)]
-    asexec(*args)
+    run_asexec(*args, cwd=subjects[0].parent)
     return out
 
 
 def verify(manifests: list[Path], art: Path) -> tuple[str, str]:
-    res = asexec(
+    res = run_asexec(
         "verify", *map(str, manifests), "--tests", TESTS, "--artifacts", str(art), check=False
     )
     code = next(ln for ln in res.stdout.splitlines() if ln.startswith("asexec-verify/"))
@@ -184,20 +196,20 @@ def build(work: Path, rng_seed: int = SEED) -> dict:
     art = work / "artifacts"
     art.mkdir(parents=True)
     key = work / "assessor.key"
-    asexec("keygen", "--out", str(key))
+    run_asexec("keygen", "--out", str(key))
 
     plants = make_plants(rng)
     commit_plants(plants, art)
-    pre = prereg(key, art, work / "prereg.json")  # before access and before the monitor runs
+    pre = sign_prereg(key, art, work / "prereg.json")  # before access and before the monitor runs
 
     flagged = run_monitor(make_transcripts(rng, plants), art)
 
     (art / "search.txt").write_text("S1: 0 evasion attempts found in deployment transcripts.\n")
     (art / "experiments.txt").write_text("S2: 0 evasion attempts in targeted experiments.\n")
     write_json(art / "plants.reveal.json", plants)
-    s1 = postreg(key, pre, "S1", [art / "search.txt"], work / "s1.json")
-    s2 = postreg(key, pre, "S2", [art / "experiments.txt"], work / "s2.json", prev=s1)
-    a1 = postreg(
+    s1 = sign_postreg(key, pre, "S1", [art / "search.txt"], work / "s1.json")
+    s2 = sign_postreg(key, pre, "S2", [art / "experiments.txt"], work / "s2.json", prev=s1)
+    a1 = sign_postreg(
         key, pre, "A1", [art / "plants.reveal.json", art / "flags.json"], work / "a1.json", prev=s2
     )
     return {
@@ -254,7 +266,7 @@ def main() -> int:
 
         # Fault 2: item S2 is silently dropped; A1 chains straight to S1.
         f2 = build(root / "drop")
-        a1 = postreg(
+        a1 = sign_postreg(
             f2["key"],
             f2["pre"],
             "A1",
@@ -276,11 +288,11 @@ def main() -> int:
         # time anchor, the manifests are indistinguishable from the baseline's.
         f3 = build(root / "late")
         f3["pre"].unlink()
-        pre_late = prereg(f3["key"], f3["art"], root / "late" / "prereg-late.json")
-        s1 = postreg(
+        pre_late = sign_prereg(f3["key"], f3["art"], root / "late" / "prereg-late.json")
+        s1 = sign_postreg(
             f3["key"], pre_late, "S1", [f3["art"] / "search.txt"], root / "late" / "s1b.json"
         )
-        s2 = postreg(
+        s2 = sign_postreg(
             f3["key"],
             pre_late,
             "S2",
@@ -288,7 +300,7 @@ def main() -> int:
             root / "late" / "s2b.json",
             prev=s1,
         )
-        a1 = postreg(
+        a1 = sign_postreg(
             f3["key"],
             pre_late,
             "A1",

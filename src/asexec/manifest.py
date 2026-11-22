@@ -1,52 +1,59 @@
 """Manifest construction, signing, and referencing.
 
-A manifest is a small envelope::
+A manifest file is an asexec wrapper around a standard DSSE envelope::
 
     {
-      "payloadType": "application/vnd.asexec+json",
-      "payload":  { ...the signed body... },
-      "signature": {"alg":"ed25519","keyid":..., "pubkey":..., "sig":...}
+      "dsse": {
+        "payloadType": "application/vnd.asexec.v1+json",
+        "payload": "<base64 of the body bytes>",
+        "signatures": [{"keyid": "sha-256:...", "sig": "<base64 of the signature>"}]
+      },
+      "pubkey": "<hex>",
+      "untrusted": {"asexec_version": "..."},  (unsigned, read by no test)
+      "ceiling": { ... }                       (optional, unsigned)
     }
 
-Only the ``payload`` (body) is signed, over the PAE construction in
-``canonical.py``. Bespoke JSON, borrowing in-toto field names (`subject`,
-`predicateType`) without the DSSE/in-toto tooling.
+The body is the JSON object the body bytes hold. Only the body bytes are signed, over
+DSSE's PAE (``canonical.py``), and ``ref`` is their digest: both are of the bytes exactly
+as stored, never re-serialized. Signing writes the bytes once, from the body's canonical
+serialization. The body borrows in-toto field names (``subject``, ``predicateType``).
 
-Typed construction/validation lives in ``models.py`` (Pydantic); the crypto
-here stays dict-based so the signed bytes are exactly the canonical bytes of a
-plain dict - see ``canonical.py``.
+Typed construction/validation lives in ``models.py`` (Pydantic); the crypto here stays
+dict-based so the signed bytes are exactly the canonical bytes of a plain dict.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import re
+from collections import Counter
 from typing import Any
 
 from . import keys
-from .canonical import canonical_bytes, signing_input
-from .constants import DIGEST_REF_PREFIX, SUBJECT_DEFAULT_HASH_ALG
+from .canonical import build_signing_input, decode_base64, encode_base64, serialize_canonical
+from .constants import FORMATS, MANIFEST_PAYLOAD_TYPE
 from .errors import ManifestError
-from .models import Anchor, Manifest, ManifestBody, Signature
+from .models import Anchor, Dsse, Manifest, ManifestBody, Signature
+from .parsing import MAX_NESTING_DEPTH, parse_json
 
-# Bedrock = the mandatory minimum whose absence breaks verifiability of the
-# central commitment -> fulfillment / gap claim. Two disjoint reasons a field is
-# bedrock:
+# The signing gate: what signing refuses to go without. It is the writer's rule, not a
+# verify test. format and selfsig check every file's frame and signature, never body
+# fields, and signing meets both by construction. This gate adds what makes a body
+# mean something to the tests that read it:
 #
-#   structural : format-frame invariants - a body without these is not an
-#                asexec manifest at all (they scope every other check).
-#   semantic   : the claim the tool actually adjudicates - what was committed to
-#                (``target``). The deadline (``due``) is *optional*: a commitment
-#                with no deadline simply stays ``open`` forever, so it is not
-#                bedrock.
+#   phase          : how verify matches a manifest (commitments, chain, keyconsist,
+#                    timely, complete, order).
+#   fulfills       : a postreg's link to its prereg's ref; without it, the postreg is
+#                    notarization-only. Required of a postreg only (see _check_signable).
+#   target         : what was committed to. No test reads it; it is the claim itself.
+#   predicateType  : names the body for in-toto consumers. verify selects the format by
+#                    dsse.payloadType and never reads it.
 #
-# Everything else - the drand floor, the Roughtime ceiling witness, subject/hash_alg,
-# declaration, free-text - is individually optional. `subject`/`hash_alg` are
-# *conditionally* required together: a content claim is meaningless without its
-# algorithm, so `hash_alg` is required iff `subject` is present.
-_BEDROCK_STRUCTURAL = ("schema_id", "predicateType", "phase")
-_BEDROCK_SEMANTIC = ("target",)
+# Everything else in the body is optional, due included: a commitment with no due never
+# elapses (no-due until a postreg counts). Each subject, plan and evidence entry carries
+# its own hash_alg: a digest means nothing without its algorithm, and no default
+# supplies one.
+_REQUIRED_TO_SIGN = ("predicateType", "phase", "target")
 
 
 def _build(
@@ -56,20 +63,25 @@ def _build(
     due=None,
     declaration=None,
     subject=None,
-    hash_alg=None,
     fulfills=None,
     prev_hash=None,
     floor=None,
-    identity=None,
     provenance=None,
     repro_recipe=None,
     notes=None,
+    plan=None,
+    items=None,
+    item_id=None,
+    status=None,
+    evidence=None,
 ) -> dict[str, Any]:
     """Construct + validate a body via the model, return the plain signed dict."""
-    if subject:
-        hash_alg = hash_alg or SUBJECT_DEFAULT_HASH_ALG
-    else:
-        hash_alg = None  # never a dangling algorithm without a subject
+    # The fields that may hold objects or arrays, before the model recurses into them.
+    values = [target, declaration, subject, floor, repro_recipe, notes, plan, items, evidence]
+    for value in values:
+        _check_value_within_max_nesting_depth(
+            value, MAX_NESTING_DEPTH - 1
+        )  # each sits one level into the body
     anchor = Anchor(floor=floor) if floor is not None else None
     body = ManifestBody(
         phase=phase,
@@ -77,112 +89,140 @@ def _build(
         due=due,
         declaration=declaration,
         subject=subject,
-        hash_alg=hash_alg,
         fulfills=fulfills,
         prev_hash=prev_hash,
         anchor=anchor,
-        identity=identity,
         provenance=provenance,
         repro_recipe=repro_recipe,
         notes=notes,
+        plan=plan,
+        items=items,
+        item_id=item_id,
+        status=status,
+        evidence=evidence,
     )
-    return body.to_body()
+    return body.dump_body()
 
 
-def build_prereg(
-    target, *, due=None, declaration=None, subject=None, hash_alg=None, **optional
-) -> dict[str, Any]:
-    return _build(
-        "prereg",
-        target,
-        due=due,
-        declaration=declaration,
-        subject=subject,
-        hash_alg=hash_alg,
-        **optional,
-    )
+def build_prereg(target, **fields) -> dict[str, Any]:
+    return _build("prereg", target, **fields)
 
 
-def build_postreg(
-    target,
-    *,
-    fulfills,
-    due=None,
-    declaration=None,
-    subject=None,
-    prev_hash=None,
-    hash_alg=None,
-    **optional,
-) -> dict[str, Any]:
-    return _build(
-        "postreg",
-        target,
-        due=due,
-        declaration=declaration,
-        subject=subject,
-        hash_alg=hash_alg,
-        fulfills=fulfills,
-        prev_hash=prev_hash,
-        **optional,
-    )
+def build_postreg(target, *, fulfills, **fields) -> dict[str, Any]:
+    return _build("postreg", target, fulfills=fulfills, **fields)
 
 
-def ref(body: dict[str, Any]) -> str:
-    """Stable content reference to a manifest body: ``sha-256:<hex>``.
+def derive_ref(body_bytes: bytes, payload_type: str = MANIFEST_PAYLOAD_TYPE) -> str:
+    """Stable content reference to a manifest body: ``sha-256:<hex>`` of its body bytes as
+    stored, with the prefix of format ``payload_type`` (by default the one signing writes).
 
-    Computed over the canonical bytes of the body (signature-independent), so
-    ``fulfills`` and ``prev_hash`` links are stable regardless of who signed.
+    Independent of the signature, so ``fulfills`` and ``prev_hash`` links are stable
+    regardless of who signed. Never re-serialized: two spellings of one JSON value are two
+    bodies.
     """
-    return DIGEST_REF_PREFIX + hashlib.sha256(canonical_bytes(body)).hexdigest()
+    prefix = FORMATS[payload_type]["digest_ref_prefix"]
+    return prefix + hashlib.sha256(body_bytes).hexdigest()
 
 
 def sign(body: dict[str, Any], private_key: bytes, public_key: bytes) -> dict[str, Any]:
-    _check_bedrock(body)
-    sig = keys.sign(private_key, signing_input(body))
-    signature = Signature(
-        keyid=keys.keyid_for(public_key),
-        pubkey=public_key.hex(),
-        sig=sig.hex(),
+    """Serialize ``body`` to its body bytes and sign them: the file, as a dict, with the
+    unsigned ``untrusted.asexec_version`` of this release beside them."""
+    # Refuse what verify would reject as too deep (format #2), before encoding recurses into it.
+    _check_value_within_max_nesting_depth(body, MAX_NESTING_DEPTH)
+    _check_signable(body)
+    body_bytes = serialize_canonical(body)
+    sig = keys.sign(private_key, build_signing_input(body_bytes))
+    dsse = Dsse(
+        payload=encode_base64(body_bytes),
+        signatures=[Signature(keyid=keys.derive_keyid(public_key), sig=encode_base64(sig))],
     )
-    return Manifest(payload=body, signature=signature).model_dump(mode="json")
+    return Manifest(dsse=dsse, pubkey=public_key.hex()).model_dump(mode="json")
 
 
-def _check_bedrock(body: dict[str, Any]) -> None:
-    """Dict-level signing gate.
+def _check_value_within_max_nesting_depth(value: Any, max_depth: int) -> None:
+    """Refuse a value to be signed that nests more than ``max_depth`` deep, or holds itself.
+
+    It doesn't recurse: deep enough, the model and the encoder overflow the C stack, which can
+    kill the process rather than raise. It walks level by level, each container once per
+    level, so shared values can't multiply the work.
+    """
+    level = [value]
+    depth = 0
+    while containers := {id(v): v for v in level if isinstance(v, dict | list | tuple)}:
+        depth += 1
+        if depth > max_depth:
+            raise ManifestError(f"the body would be nested more than {MAX_NESTING_DEPTH} deep")
+        level = [
+            child
+            for container in containers.values()
+            for child in (container.values() if isinstance(container, dict) else container)
+        ]
+
+
+def _check_signable(body: dict[str, Any]) -> None:
+    """The signing gate, checked on the dict.
 
     Kept alongside the model so a body assembled by hand (not via ``build_*``)
-    still cannot be signed if it is missing a bedrock field - the model would
+    still cannot be signed if it is missing a field the gate requires - the model would
     silently re-supply the structural defaults, so presence must be checked on
     the dict as given.
     """
-    missing = [
-        f
-        for f in (_BEDROCK_STRUCTURAL + _BEDROCK_SEMANTIC)
-        if f not in body or body[f] in (None, "", [], {})
-    ]
+    missing = [f for f in _REQUIRED_TO_SIGN if f not in body or body[f] in (None, "", [], {})]
     if missing:
         raise ManifestError(f"manifest body missing mandatory field(s): {', '.join(missing)}")
-    if body.get("subject") and not body.get("hash_alg"):
-        raise ManifestError("manifest body has a 'subject' but no 'hash_alg'")
-    if body["phase"] == "postreg" and "fulfills" not in body:
-        raise ManifestError("postreg manifest missing mandatory 'fulfills'")
+    _check_entries(body.get("subject"), "subject")
+    _check_entries(body.get("evidence"), "evidence")
+    if isinstance(body.get("plan"), dict):
+        _check_entries([body["plan"]], "plan")
+    if body["phase"] == "postreg":
+        fulfills = body.get("fulfills")
+        if not isinstance(fulfills, str) or not fulfills:
+            raise ManifestError(
+                "postreg manifest missing mandatory 'fulfills' (a non-empty string)"
+            )
 
 
-def get_body(manifest: dict[str, Any]) -> dict[str, Any]:
-    if "payload" not in manifest or "signature" not in manifest:
-        raise ManifestError("not an asexec manifest (missing payload/signature)")
-    return manifest["payload"]
+def _check_entries(entries: Any, field: str) -> None:
+    """Each entry of a hand-built ``subject``, ``evidence`` or ``plan`` carries its own
+    ``hash_alg``, and no two of one list share a ``name`` (what ``content`` would fail)."""
+    if not isinstance(entries, list):
+        return
+    names = []
+    for entry in entries:
+        if isinstance(entry, dict) and not entry.get("hash_alg"):
+            raise ManifestError(f"a {field} entry has no 'hash_alg'")
+        names.append(entry.get("name") if isinstance(entry, dict) else None)
+    counts = Counter(n for n in names if isinstance(n, str))
+    repeated = sorted(n for n, k in counts.items() if k > 1)
+    if repeated:
+        raise ManifestError(f"{field} lists {', '.join(map(repr, repeated))} twice")
+
+
+def read_body(manifest: dict[str, Any]) -> tuple[bytes, dict[str, Any]]:
+    """The body bytes a manifest file stores, and the body they hold.
+
+    Raises ``ManifestError`` unless ``dsse.payload`` is strict base64 of bytes that
+    ``parse_body`` accepts (format #2). It checks nothing else of the file.
+    """
+    dsse = manifest.get("dsse")
+    payload = dsse.get("payload") if isinstance(dsse, dict) else None
+    if not isinstance(payload, str):
+        raise ManifestError("not an asexec manifest (no dsse.payload string)")
+    try:
+        body_bytes = decode_base64(payload)
+    except ValueError as e:
+        raise ManifestError(f"dsse.payload is {e}") from None
+    return body_bytes, parse_body(body_bytes)
 
 
 def attach_ceiling(manifest: dict[str, Any], ceiling: dict[str, Any]) -> dict[str, Any]:
-    """Attach a ceiling witness at the ENVELOPE level (beside payload/signature).
+    """Attach a ceiling witness in the wrapper, beside ``dsse`` and ``pubkey``.
 
-    The ceiling cannot live inside the signed ``payload``: its nonce is
-    ``ref(payload)`` (a hash of the body), so embedding it would be circular.
-    It is self-authenticated by the witness signature and binds to this
-    manifest via ``nonce == ref(payload)`` (checked by the verifier). Attaching
-    a ceiling does not perturb ``ref``, so ``fulfills``/``prev_hash`` links stay
-    stable and a ceiling can be attached after signing.
+    The ceiling cannot live inside the signed body: its nonce is the body's ``ref`` (a hash
+    of the body bytes), so embedding it would be circular. It is self-authenticated by the
+    witness signature and binds to this manifest via ``nonce == ref`` (checked by the
+    verifier). Attaching a ceiling does not perturb ``ref``, so ``fulfills``/``prev_hash``
+    links stay stable and a ceiling can be attached after signing.
     """
     manifest["ceiling"] = ceiling
     return manifest
@@ -198,37 +238,13 @@ def save(manifest: dict[str, Any], path: str) -> None:
         f.write("\n")
 
 
-def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    """``object_pairs_hook``: a repeated key is ambiguous (parsers disagree on
-    which wins), so a file that contains one is malformed."""
-    out: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in out:
-            raise ManifestError(f"duplicate JSON key {key!r}")
-        out[key] = value
-    return out
-
-
-# The deepest a manifest file may nest arrays and objects (the outermost object is 1).
-# Manifests nest about 5 deep. A deeper file is rejected before it is parsed, so no
-# parser, model or encoder ever reaches its recursion limit: those limits differ between
-# Python versions and machines, and would make the same file verify differently.
-MAX_NESTING_DEPTH = 64
-
-# A JSON string (skipped, so brackets inside one don't count) or a bracket.
-_STRING_OR_BRACKET = re.compile(r'"(?:[^"\\]|\\.)*"|[\[\]{}]', re.DOTALL)
-
-
-def _check_nesting(text: str) -> None:
-    depth = 0
-    for match in _STRING_OR_BRACKET.finditer(text):
-        token = match.group()
-        if token in ("[", "{"):
-            depth += 1
-            if depth > MAX_NESTING_DEPTH:
-                raise ManifestError(f"nested more than {MAX_NESTING_DEPTH} deep")
-        elif token in ("]", "}"):
-            depth -= 1
+def _parse_object(text: str, what: str) -> dict[str, Any]:
+    """The JSON rules a file and a body are both held to (``parse_json``), and a JSON object.
+    Raises ``ManifestError`` or ``json.JSONDecodeError`` (a ``ValueError``)."""
+    data = parse_json(text, MAX_NESTING_DEPTH)
+    if not isinstance(data, dict):
+        raise ManifestError(f"{what} must be a JSON object")
+    return data
 
 
 def load(path: str) -> dict[str, Any]:
@@ -241,8 +257,22 @@ def load(path: str) -> dict[str, Any]:
     """
     with open(path, encoding="utf-8") as f:
         text = f.read()
-    _check_nesting(text)
-    data = json.loads(text, object_pairs_hook=_reject_duplicate_keys)
-    if not isinstance(data, dict):
-        raise ManifestError("manifest must be a JSON object")
-    return data
+    return _parse_object(text, "manifest")
+
+
+def parse_body(body_bytes: bytes) -> dict[str, Any]:
+    """The body that body bytes hold, held to the file's JSON rules on its own.
+
+    The bytes must be UTF-8 JSON text (RFC 8259; no byte order mark, so not UTF-16 or
+    UTF-32) of an object with unique keys, nested at most ``MAX_NESTING_DEPTH`` deep,
+    counted from the body's own outermost object. Raises ``ManifestError`` otherwise. A
+    lone surrogate escape (``"\\ud800"``) is valid JSON text, and is read as the string it
+    spells.
+    """
+    try:
+        text = body_bytes.decode("utf-8")
+        return _parse_object(text, "the body")
+    except ManifestError:
+        raise
+    except ValueError as e:  # not UTF-8 (UnicodeDecodeError), or not JSON (JSONDecodeError)
+        raise ManifestError(str(e)) from None
