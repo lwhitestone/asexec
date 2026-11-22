@@ -4024,3 +4024,43 @@ trigger, not the 0.5.0 version number itself.
   - `scripts/check.sh` clean, 1320 passed.
   - Release note for #40: "`body.identity` is no longer part of the format: the CLI never
     wrote it, and a body that carries it lists it as an unknown field."
+
+### Review triage of PR #60 (2026-11-21)
+
+Twelve review threads, triaged at `ba8aa47`: ten current, one outdated but open, one resolved.
+Checking them turned up three bugs that no comment names (B1 to B3).
+
+**Bugs found during triage:**
+- **B1. The JSON nesting scanner takes quadratic time on some malformed files.** `verify`,
+  `identity match` and key loading all use it. An 80 KB file took `verify` 22.2s. The scanner
+  is also on `main` and in v0.3.20, the first release to have it. → A linear-time pattern.
+- **B2. `sign` encodes a body before it checks its depth,** so a hand-built body 10,000 deep
+  raises `RecursionError`, though the scanner's comment says no encoder reaches its recursion
+  limit. → The existing `ManifestError`.
+- **B3. The signing gate checks only that a postreg has the key `fulfills`.** A hand-built
+  body with `None`, `""` or `123` there is signed. → Require a non-empty string.
+
+**The threads:**
+
+| Topic | Thread | Where | Comment | Recommendation |
+|---|---|---|---|---|
+| A. Structure | r4656382272 | `keys.py:86` | a hack around a circular import | a shared `parsing` module; the same for the pinned chains that `drand` and `models` share |
+| A. Structure | r4656409892 | `manifest.py:238` | no default for `max_depth`; rename | pass the depth at every call, `parse_json`'s too; `check_within_max_nesting_depth` |
+| B. Naming | r4656345043 | `fields.py:28` | the constant's name and place | `_ED25519_SIGNATURE_LENGTH`, same file, message still hardcoded |
+| B. Naming | r4656366775 | `hashing.py:64` | name and docstring don't make sense | `describe_unstorable_name`, and a new docstring |
+| B. Naming | r4656368553 | `hashing.py:83` | function names start with a verb, PR-wide | `derive_entry_name`, and a sweep of the functions this PR adds |
+| C. Comments | r4656149139 | `canonical.py:1` | "their canonical base64 spelling" | take the wording |
+| C. Comments | r4656390739 | `manifest.py:126` | misplaced | above the code it describes |
+| C. Comments | r4656398615 | `manifest.py:228` | tighten and clarify | drop "about 5 deep"; name the limit |
+| C. Comments | r4656414135 | `models.py:3` | a better place | the layout stays in `manifest.py`; the field-set sentence moves to the sets |
+| C. Comments | r4650618616 | `constants.py:24` | outdated suggestion | port what `ac3b218`'s rewrite lacks |
+| D. No change | r4656387098 | `manifest.py:3` | why two colons | reST for "a literal block follows" |
+| D. No change | r4651076027 | `manifest.py:52` | "bedrock" | done in `08ea1ba`; B3 is in the same gate |
+
+**Checklist:**
+- [ ] 1. B1 to B3, each with a regression test that fails first.
+- [ ] 2. A: the structural changes.
+- [ ] 3. B: the names, with the PR-wide sweep as its own commit.
+- [ ] 4. C: the comments, last, because 2 and 3 move those lines.
+
+Then a final evidence run, the PR description, and a reply on each thread before resolving it.
