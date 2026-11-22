@@ -159,7 +159,7 @@ def _spec_shape(spec, flag: str, declared: tuple[str, ...]) -> dict:
     one."""
     if not isinstance(spec, dict) or not isinstance(spec.get("name"), str):
         raise ValueError(f"{flag} needs a 'name' (a file path) in each entry: {spec!r}")
-    why = hashing.name_problem(spec["name"])
+    why = hashing.describe_unstorable_name(spec["name"])
     if why:  # no path, or no body, can hold it
         raise ValueError(f"{flag}: {spec['name']!r} names no file: it has {why}")
     if "hash_alg" in spec or "digest" in spec:

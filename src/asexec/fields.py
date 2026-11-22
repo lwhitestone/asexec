@@ -25,12 +25,12 @@ def _base64_ok(value: str) -> str:
 
 
 # The length of an ed25519 signature, the one algorithm v1 signs with.
-_SIGNATURE_LENGTH = 64
+_ED25519_SIGNATURE_LENGTH = 64
 
 
 def _signature_ok(value: str) -> str:
-    if len(canonical.b64decode(value)) != _SIGNATURE_LENGTH:  # a ValueError: not base64
-        raise ValueError(f"not {_SIGNATURE_LENGTH} bytes, an ed25519 signature's length")
+    if len(canonical.b64decode(value)) != _ED25519_SIGNATURE_LENGTH:  # a ValueError: not base64
+        raise ValueError(f"not {_ED25519_SIGNATURE_LENGTH} bytes, an ed25519 signature's length")
     return value
 
 
