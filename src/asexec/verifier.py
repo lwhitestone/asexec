@@ -34,7 +34,7 @@ Tests (the catalog - only verifiable claims, no self-declarations)
   - ``complete``   : each item a commitment's prereg lists (unique string ids)
                      has a counted postreg with its item_id and a status of
                      reported, excluded or blocked, and, if the prereg has a due,
-                     one on time (``_on_time``, as for timely). Applies to
+                     one on time (``_judge_on_time``, as for timely). Applies to
                      commitments whose prereg lists items.
   - ``content``    : subject digests recomputed from --artifacts match. Each
                      entry names one regular file by a normalized relative
@@ -122,7 +122,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from . import drand, hashing, keys, manifest
-from .canonical import b64decode, signing_input
+from .canonical import decode_base64, signing_input
 from .constants import FORMATS, VERIFY_CODE_VERSION
 from .errors import ManifestError, VerificationError
 from .fields import is_normal_name
@@ -163,7 +163,7 @@ TEST_CATALOG: tuple[str, ...] = (
 REQUIRED_TESTS: frozenset[str] = frozenset({"format", "selfsig"})
 
 
-def _quoted(names) -> str:
+def _quote_names(names) -> str:
     return ", ".join(f"'{name}'" for name in sorted(names))
 
 
@@ -173,7 +173,7 @@ def parse_tests(spec: str) -> list[str]:
     Raises ``VerificationError`` on an unknown test or if a required test is absent
     (no implicit default; the caller must declare its appetite explicitly).
     """
-    required = " and ".join(_quoted([name]) for name in sorted(REQUIRED_TESTS))
+    required = " and ".join(_quote_names([name]) for name in sorted(REQUIRED_TESTS))
     names = [t.strip() for t in spec.split(",") if t.strip()]
     if not names:
         raise VerificationError(f"no tests requested; --tests must list at least {required}")
@@ -185,7 +185,7 @@ def parse_tests(spec: str) -> list[str]:
     missing = REQUIRED_TESTS - set(names)
     if missing:
         raise VerificationError(
-            f"missing required test(s) {_quoted(missing)}; every run must include {required}"
+            f"missing required test(s) {_quote_names(missing)}; every run must include {required}"
         )
     # preserve catalog order, de-dup.
     return [t for t in TEST_CATALOG if t in names]
@@ -267,7 +267,7 @@ _PRE_V1_PAYLOAD_TYPE = "application/vnd.asexec+json"
 _BETA_PAYLOAD_TYPE = re.compile(r"application/vnd\.asexec\.[0-9]+\.[0-9]+\.[0-9]+b[0-9]+\+json")
 
 
-def _unknown_format_reason(payload_type: str) -> str:
+def _describe_unknown_format(payload_type: str) -> str:
     if payload_type == _PRE_V1_PAYLOAD_TYPE:
         return REASON_FORMAT_PRE_V1
     if _BETA_PAYLOAD_TYPE.fullmatch(payload_type):
@@ -275,7 +275,7 @@ def _unknown_format_reason(payload_type: str) -> str:
     return REASON_FORMAT_NEWER
 
 
-def _claimed_keyid(mani: dict[str, Any]) -> Any:
+def _get_claimed_keyid(mani: dict[str, Any]) -> Any:
     """``dsse.signatures[0].keyid``, the keyid a file claims as its signer, or None. Nothing
     has authenticated it until the file meets the selfsig conditions."""
     signatures = mani["dsse"]["signatures"]
@@ -297,12 +297,12 @@ def verify_format(mani: dict[str, Any]) -> dict[str, Any]:
     if dsse is None and mani.get("payloadType") == _PRE_V1_PAYLOAD_TYPE:  # 0.3.x's layout
         return {"ok": False, "errors": [REASON_FORMAT_PRE_V1]}
     if isinstance(payload_type, str) and payload_type not in FORMATS:  # format #3
-        return {"ok": False, "errors": [_unknown_format_reason(payload_type)]}
+        return {"ok": False, "errors": [_describe_unknown_format(payload_type)]}
     try:
         envelope = EnvelopeInput.model_validate(mani)  # format #1 (frame), #2 (base64)
     except ValidationError as e:
         return {"ok": False, "errors": [f"malformed: {_describe(e)}"]}
-    body_bytes = b64decode(envelope.dsse.payload)  # format #2: the model checked it decodes
+    body_bytes = decode_base64(envelope.dsse.payload)  # format #2: the model checked it decodes
     try:
         body = manifest.parse_body(body_bytes)  # format #2: the body's own JSON rules
     except ManifestError as e:
@@ -312,7 +312,7 @@ def verify_format(mani: dict[str, Any]) -> dict[str, Any]:
         "errors": [],
         "payload_type": payload_type,
         "ref": manifest.ref(body_bytes, payload_type),
-        "keyid": _claimed_keyid(mani),
+        "keyid": _get_claimed_keyid(mani),
         "body_bytes": body_bytes,
         "body": body,
     }
@@ -333,7 +333,7 @@ def verify_selfsig(mani: dict[str, Any], body_bytes: bytes, payload_type: str) -
     except ValidationError:
         return {**_SELFSIG_FAILED}
     pub = bytes.fromhex(key.pubkey)
-    sig = b64decode(entry.sig)
+    sig = decode_base64(entry.sig)
     return {
         "examined": True,
         "signature_ok": keys.verify(pub, signing_input(body_bytes, payload_type), sig),  # #3
@@ -347,7 +347,7 @@ _SELFSIG_NOT_EXAMINED = {"examined": False, "signature_ok": False, "keyid_ok": F
 _SELFSIG_FAILED = {"examined": True, "signature_ok": False, "keyid_ok": False}
 
 
-def _selfsig_ok(record: dict[str, Any]) -> bool:
+def _passes_selfsig(record: dict[str, Any]) -> bool:
     """Whether a manifest meets the ``selfsig`` conditions (it passed ``format`` too)."""
     return bool(record["selfsig"]["signature_ok"] and record["selfsig"]["keyid_ok"])
 
@@ -458,7 +458,7 @@ def _check_entry(item: Any, artifacts_dir: str, repeated: set[str], field: str) 
     return {"name": name, "ok": ok, **({} if ok else {"expected": expected, "actual": actual})}
 
 
-def _repeated_names(entries: list[Any]) -> set[str]:
+def _find_repeated_names(entries: list[Any]) -> set[str]:
     """The names more than one entry of one list has (content #4)."""
     names = (e.get("name") for e in entries if isinstance(e, dict))
     counts = Counter(n for n in names if isinstance(n, str))  # a junk name may be unhashable
@@ -489,7 +489,7 @@ def verify_content(body: dict[str, Any], artifacts_dir: str | None) -> dict[str,
                 {"field": field, "name": name, "ok": False, "reason": f"malformed {field}"}
             )
             continue
-        repeated = _repeated_names(value)
+        repeated = _find_repeated_names(value)
         entries += [_verify_entry(item, artifacts_dir, repeated, field) for item in value]
     if not examined:
         return {"status": "skipped", "reason": "manifest has no subject, plan or evidence"}
@@ -546,15 +546,15 @@ def verify_paths(
         )
         floor = verify_floor(body) if clean else {"status": "absent"}
         if floor.get("status") == "verified":
-            floor["no_earlier_than_us"] = _no_earlier_than(floor)
+            floor["no_earlier_than_us"] = _get_no_earlier_than(floor)
         ceiling = verify_ceiling(mani, fmt["ref"], servers) if clean else {"status": "absent"}
         content = verify_content(body, artifacts_dir) if clean else {"status": "skipped"}
         if ceiling.get("status") == "verified":
-            ceiling["no_later_than_us"] = _no_later_than(ceiling)
+            ceiling["no_later_than_us"] = _get_no_later_than(ceiling)
             ceiling_trust.append(
                 f"{p}: ceiling witnessed by {ceiling.get('witness_id')} at "
                 f"{ceiling.get('midpoint')} (±{ceiling.get('radius')}s), so no later than "
-                f"{_utc_ceil(ceiling['no_later_than_us'])} - you are "
+                f"{_format_utc_ceil(ceiling['no_later_than_us'])} - you are "
                 f"trusting {ceiling.get('witness_id')} to be honest about time "
                 f"(signature-witness trust class, distinct from the floor)."
             )
@@ -571,14 +571,14 @@ def verify_paths(
             # Shown, never read by a test (VERIFICATION.md, Untrusted): the unsigned untrusted
             # section and any key outside the body this format does not define; and any body
             # field it does not define. Only a file that passes format has either.
-            "untrusted": _untrusted(mani) if clean else [],
-            "unknown": _unknown_fields(body, BODY_FIELDS, ["body"]) if clean else [],
+            "untrusted": _get_untrusted(mani) if clean else [],
+            "unknown": _find_unknown_fields(body, BODY_FIELDS, ["body"]) if clean else [],
         }
         manifests_report.append(rec)
         if not clean:
             continue  # fails format: no other test examines it, so it joins no commitment
         links = LinkInput.model_validate({k: body[k] for k in LinkInput.model_fields if k in body})
-        if links.phase == "prereg" and _selfsig_ok(rec):  # copies (one ref, one body) are one
+        if links.phase == "prereg" and _passes_selfsig(rec):  # copies (one ref, one body) are one
             pr = preregs.setdefault(
                 (rec["ref"], rec["keyid"]),
                 {
@@ -598,7 +598,7 @@ def verify_paths(
             pr["_own_ceilings"].append(rec["ceiling"])
         elif links.phase == "prereg":  # copies (same ref, and keyid as JSON) are listed once
             rejected_preregs.setdefault(
-                (rec["ref"], _json_value(rec["keyid"])),
+                (rec["ref"], _serialize_json_value(rec["keyid"])),
                 {
                     "ref": rec["ref"],
                     "keyid": rec["keyid"],
@@ -633,7 +633,7 @@ def verify_paths(
         if candidates or rejected_named:
             entry = {"ref": rec["ref"], "prev_hash": links.prev_hash, "keyid": rec["keyid"]}
             different_key = False
-            if not _selfsig_ok(rec):
+            if not _passes_selfsig(rec):
                 reason = REASON_INVALID_SIGNATURE
             elif (links.fulfills, rec["keyid"]) in preregs:  # a keyid that passed selfsig: a str
                 pr = preregs[(links.fulfills, rec["keyid"])]
@@ -667,7 +667,7 @@ def verify_paths(
         # Each counted postreg against due (timely #2-#4), when there is a due to compare with.
         timeliness = (
             [
-                {"ref": c["ref"], **_on_time(ceilings[c["ref"]], due_us)}
+                {"ref": c["ref"], **_judge_on_time(ceilings[c["ref"]], due_us)}
                 for c in pr["counted_postregs"]
             ]
             if due_ts is not None
@@ -681,9 +681,9 @@ def verify_paths(
                 "due_invalid": due_present and due_ts is None,
                 "due_naive": due_naive,
                 "timeliness": timeliness,
-                "timely": _timely(pr, due_present, due_ts, timeliness),
-                "complete": _complete(pr, items, claims, due_present, due_ts, timeliness),
-                "order": _order(pr, own_ceilings, floors),
+                "timely": _judge_timely(pr, due_present, due_ts, timeliness),
+                "complete": _judge_complete(pr, items, claims, due_present, due_ts, timeliness),
+                "order": _judge_order(pr, own_ceilings, floors),
                 "chain_ok": chain_ok,
                 "chain_note": chain_note,
                 # keyconsist's scope, defined here only: a commitment is key-checked iff it
@@ -713,7 +713,7 @@ def verify_paths(
     }
 
 
-def _unknown_fields(value: Any, fields: dict[str, Any], path: list) -> list[dict[str, Any]]:
+def _find_unknown_fields(value: Any, fields: dict[str, Any], path: list) -> list[dict[str, Any]]:
     """Each ``{path, value}`` under ``value`` that ``fields`` (``models.BODY_FIELDS`` or
     ``WRAPPER_FIELDS``) does not define, in the order it holds them: a key of an object the
     format defines, or of an object in an array of them, that is not one of its fields. A
@@ -730,23 +730,23 @@ def _unknown_fields(value: Any, fields: dict[str, Any], path: list) -> list[dict
             continue
         kind, sub = fields[key] or (None, None)
         if kind == "object":
-            found += _unknown_fields(inner, sub, [*path, key])
+            found += _find_unknown_fields(inner, sub, [*path, key])
         elif kind == "array" and isinstance(inner, list):
             for i, entry in enumerate(inner):
-                found += _unknown_fields(entry, sub, [*path, key, i])
+                found += _find_unknown_fields(entry, sub, [*path, key, i])
     return found
 
 
-def _untrusted(mani: dict[str, Any]) -> list[dict[str, Any]]:
+def _get_untrusted(mani: dict[str, Any]) -> list[dict[str, Any]]:
     """What the report shows under *untrusted* for a file that passes format: its
     ``untrusted`` section, as it is, then each key outside the body this format does not
     define. Unsigned, and read by no test."""
     present, value = _lookup(mani, "untrusted")
     section = [{"path": ["untrusted"], "value": value}] if present else []
-    return section + _unknown_fields(mani, WRAPPER_FIELDS, [])
+    return section + _find_unknown_fields(mani, WRAPPER_FIELDS, [])
 
 
-def _no_later_than(ceiling: dict[str, Any]) -> int:
+def _get_no_later_than(ceiling: dict[str, Any]) -> int:
     """The time a verified ceiling shows its manifest existed by, in microseconds since the
     epoch: the later end of the interval the witness signed, ``MIDP + RADI``, as the signed
     integers (``roughtime.verify_ceiling`` reads both from the verified response, never from
@@ -755,19 +755,19 @@ def _no_later_than(ceiling: dict[str, Any]) -> int:
     return ceiling["midpoint_us"] + ceiling["radius_us"]
 
 
-def _no_earlier_than(floor: dict[str, Any]) -> int:
+def _get_no_earlier_than(floor: dict[str, Any]) -> int:
     """The time a verified floor shows its manifest was made no earlier than, in microseconds
     since the epoch: its drand round's time on the pinned chain, genesis plus (round - 1)
     periods (``drand.time_of_round``, in whole seconds), never a time the file states."""
     return floor["created_no_earlier_than"] * 1_000_000
 
 
-def _ceiling_time(ceilings: list[dict[str, Any]]) -> tuple[str, int | None]:
+def _get_ceiling_time(ceilings: list[dict[str, Any]]) -> tuple[str, int | None]:
     """The time the ceilings of one body (its copies' ceilings) show it existed by: the earliest
     ``no_later_than_us`` of those that meet the ceiling conditions (``verified``). Else
     ``invalid`` if one is present and fails them (anyone can write a ceiling, so it is no time
     at all), else ``absent``. Shared by timely, complete and order."""
-    times = [_no_later_than(c) for c in ceilings if c.get("status") == "verified"]
+    times = [_get_no_later_than(c) for c in ceilings if c.get("status") == "verified"]
     if times:
         return "verified", min(times)
     if any(c.get("status") != "absent" for c in ceilings):
@@ -775,7 +775,7 @@ def _ceiling_time(ceilings: list[dict[str, Any]]) -> tuple[str, int | None]:
     return "absent", None
 
 
-def _on_time(ceilings: list[dict[str, Any]], due_us: int) -> dict[str, Any]:
+def _judge_on_time(ceilings: list[dict[str, Any]], due_us: int) -> dict[str, Any]:
     """One counted postreg against a parseable ``due`` in microseconds (timely #2-#4, and
     complete's deadline part): its ceilings are those of every counted copy of it (one ref).
 
@@ -783,7 +783,7 @@ def _on_time(ceilings: list[dict[str, Any]], due_us: int) -> dict[str, Any]:
     else ``late`` if one does; else ``invalid-ceiling`` if it has a ceiling that fails them;
     else ``no-ceiling``. The earliest verified time, in microseconds, is reported as
     ``no_later_than_us``."""
-    status, time_us = _ceiling_time(ceilings)
+    status, time_us = _get_ceiling_time(ceilings)
     if status == "verified":
         return {"status": "on-time" if time_us <= due_us else "late", "no_later_than_us": time_us}
     kind = "invalid-ceiling" if status == "invalid" else "no-ceiling"
@@ -796,19 +796,19 @@ REASON_ORDER_INVALID_CEILING = "the pre-registration's ceiling does not verify"
 REASON_ORDER_NOT_AFTER = "a counted postreg is not shown after the pre-registration"
 
 
-def _order(
+def _judge_order(
     pr: dict[str, Any], own_ceilings: list[dict[str, Any]], floors: dict[str, dict[str, Any]]
 ) -> dict[str, Any]:
     """order for one commitment: examined iff it has a counted postreg. Passes iff the prereg
     has a ceiling (#1) that meets the ceiling conditions (#2), and each counted postreg has a
     floor (#3) that meets the floor conditions (#4) and whose time is strictly after the
     ceiling's (#5), both in microseconds. The prereg's time is the earliest of its copies'
-    verified ceilings (``_ceiling_time``, as for timely); a postreg's is its floor's round
+    verified ceilings (``_get_ceiling_time``, as for timely); a postreg's is its floor's round
     time. Each counted postreg is ``after``, ``not-after``, ``no-floor``, ``invalid-floor``,
     or ``not-compared`` when its floor verifies but the prereg has no time to compare with."""
     if not pr["counted_postregs"]:
         return {"examined": False, "ok": False, "reason": None, "ceiling": None, "postregs": []}
-    ceiling_status, ceiling_us = _ceiling_time(own_ceilings)
+    ceiling_status, ceiling_us = _get_ceiling_time(own_ceilings)
     postregs = []
     for c in pr["counted_postregs"]:
         floor = floors[c["ref"]]
@@ -844,7 +844,7 @@ REASON_DUE_INVALID = "due is not a parseable ISO-8601 timestamp"
 REASON_NOT_ON_TIME = "a counted postreg is not shown on time"
 
 
-def _timely(
+def _judge_timely(
     pr: dict[str, Any], due_present: bool, due_ts: float | None, timeliness: list
 ) -> dict[str, Any]:
     """timely for one commitment: examined iff its prereg has a due and it has a counted
@@ -869,7 +869,7 @@ REASON_ITEM_NOT_ON_TIME = {
 }
 
 
-def _complete(
+def _judge_complete(
     pr: dict[str, Any],
     items: tuple[bool, Any],
     claims: dict[str, dict[str, Any]],
@@ -880,7 +880,7 @@ def _complete(
     """complete for one commitment: examined iff its prereg has ``body.items`` present and
     not ``[]``. Passes iff the items are objects with string ids (#1), unique (#2), each has a
     counted postreg with its item_id and a known status (#3), and, if the prereg has a due,
-    the due parses (#4) and one such postreg is on time (#5, ``_on_time`` as for timely).
+    the due parses (#4) and one such postreg is on time (#5, ``_judge_on_time`` as for timely).
     Any qualifying postreg accounts for an item; one whose item_id names no item is listed
     as ``unlisted`` and fails nothing."""
     present, value = items
@@ -902,7 +902,7 @@ def _complete(
     results = []
     for item_id in ids:
         named = by_item.get(item_id, [])
-        qualifying = [r for r in named if _known_status(claims[r]["status"])]
+        qualifying = [r for r in named if _is_known_status(claims[r]["status"])]
         result: dict[str, Any] = {"id": item_id, "ok": False, "statuses": []}
         if not named:
             result["reason"] = REASON_ITEM_NOT_NAMED
@@ -911,15 +911,16 @@ def _complete(
         elif due_present and due_ts is not None:  # #5: the timely comparison, per item
             shown = [r for r in qualifying if on_time[r]["status"] == "on-time"]
             if shown:
-                result.update(ok=True, statuses=_statuses(claims, shown))
+                result.update(ok=True, statuses=_list_statuses(claims, shown))
             else:
                 worst = [on_time[r]["status"] for r in qualifying]
                 kind = next(k for k in ("late", "invalid-ceiling", "no-ceiling") if k in worst)
                 result.update(
-                    statuses=_statuses(claims, qualifying), reason=REASON_ITEM_NOT_ON_TIME[kind]
+                    statuses=_list_statuses(claims, qualifying),
+                    reason=REASON_ITEM_NOT_ON_TIME[kind],
                 )
         else:  # no due: a postreg and a status only (D5a); an unparseable due fails #4 below
-            result.update(ok=True, statuses=_statuses(claims, qualifying))
+            result.update(ok=True, statuses=_list_statuses(claims, qualifying))
         results.append(result)
     unlisted = [
         {"ref": r, "item_id": claims[r]["item_id"]}
@@ -940,16 +941,16 @@ def _complete(
             "unlisted": unlisted}  # fmt: skip
 
 
-def _known_status(status: Any) -> bool:
+def _is_known_status(status: Any) -> bool:
     return isinstance(status, str) and status in STATUSES
 
 
-def _statuses(claims: dict[str, dict[str, Any]], refs: list[str]) -> list[str]:
+def _list_statuses(claims: dict[str, dict[str, Any]], refs: list[str]) -> list[str]:
     """The distinct statuses of ``refs``' postregs, in the order the postregs come."""
     return list(dict.fromkeys(claims[r]["status"] for r in refs))
 
 
-def _utc_ceil(epoch_us: int) -> str:
+def _format_utc_ceil(epoch_us: int) -> str:
     """``epoch_us`` (microseconds) as ISO-8601 UTC, rounded up to the second: a "no later
     than" time is never shown earlier than it is. A time with no ISO-8601 form (a witness
     may sign one past year 9999) is shown as epoch seconds."""
@@ -960,7 +961,7 @@ def _utc_ceil(epoch_us: int) -> str:
         return f"{seconds} (epoch seconds)"
 
 
-def _utc_floor(epoch_us: int) -> str:
+def _format_utc_floor(epoch_us: int) -> str:
     """``epoch_us`` (microseconds) as ISO-8601 UTC, rounded down to the second: a "no earlier
     than" time is never shown later than it is. A time with no ISO-8601 form is shown as epoch
     seconds."""
@@ -971,7 +972,7 @@ def _utc_floor(epoch_us: int) -> str:
         return f"{seconds} (epoch seconds)"
 
 
-def _json_value(value: Any) -> str:
+def _serialize_json_value(value: Any) -> str:
     """``value`` as JSON text: two values are the same JSON value iff these are equal (in
     Python, ``1``, ``1.0`` and ``true`` are all equal, and ``NaN`` is not equal to itself)."""
     return json.dumps(value, sort_keys=True)
@@ -1013,7 +1014,7 @@ def _evaluate(tests, manifests, commitments, artifacts_dir) -> dict[str, dict[st
         res["format"] = _tally(units, "no manifests to verify", "manifest(s)")
 
     if "selfsig" in tests:
-        units = [_selfsig_ok(m) for m in manifests if m["selfsig"]["examined"]]
+        units = [_passes_selfsig(m) for m in manifests if m["selfsig"]["examined"]]
         res["selfsig"] = _tally(units, "no manifest passes format", "manifest(s)")
 
     if "floor" in tests:

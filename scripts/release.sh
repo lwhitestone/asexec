@@ -236,14 +236,14 @@ LITERAL_KEY = "(?m)^" + re.escape(literal_key) + "$"
 texts = {}
 
 
-def text_of(filename):
+def read_text(filename):
     if filename not in texts:
         texts[filename] = pathlib.Path(filename).read_text()
     return texts[filename]
 
 
 def rewrite(filename, pattern, replacement, what):
-    updated, count = re.subn(pattern, lambda _: replacement, text_of(filename))
+    updated, count = re.subn(pattern, lambda _: replacement, read_text(filename))
     if count != 1:
         raise SystemExit(
             f"Error: {filename}: expected exactly one {what}, found {count}"
@@ -251,8 +251,8 @@ def rewrite(filename, pattern, replacement, what):
     texts[filename] = updated
 
 
-def occurrences(filename, pattern):
-    return len(re.findall(pattern, text_of(filename)))
+def count_occurrences(filename, pattern):
+    return len(re.findall(pattern, read_text(filename)))
 
 
 rewrite(
@@ -282,7 +282,7 @@ rewrite(
 
 if beta:
     # A beta's type names the entry under development, so it must exist.
-    if occurrences(constants_name, NAME_KEY) != 1:
+    if count_occurrences(constants_name, NAME_KEY) != 1:
         raise SystemExit(
             f"Error: {constants_name}: a beta writes the FORMATS entry under "
             "development, but there is not exactly one keyed by MANIFEST_PAYLOAD_TYPE"
@@ -290,7 +290,7 @@ if beta:
 elif patch == "0":
     # The first full release of a line releases the entry under development,
     # whose literal key must not exist yet.
-    if occurrences(constants_name, LITERAL_KEY) != 0:
+    if count_occurrences(constants_name, LITERAL_KEY) != 0:
         raise SystemExit(
             f"Error: {constants_name}: an entry is already keyed by {payload_type}, "
             "so releasing the entry under development would duplicate that key"
@@ -301,8 +301,8 @@ elif patch == "0":
         literal_key,
         "FORMATS entry keyed by MANIFEST_PAYLOAD_TYPE (the entry to release)",
     )
-elif occurrences(constants_name, NAME_KEY) != 0 or (
-    occurrences(constants_name, LITERAL_KEY) != 1
+elif count_occurrences(constants_name, NAME_KEY) != 0 or (
+    count_occurrences(constants_name, LITERAL_KEY) != 1
 ):
     # A later release of the line writes the format its X.Y.0 released, and no
     # entry under development may share that key.

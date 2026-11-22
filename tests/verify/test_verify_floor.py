@@ -152,7 +152,9 @@ def test_floor__fail__empty_no_manifest_carries_one(scenario, absent):
 
 def test_floor__fail__empty_malformed_manifest_not_examined(scenario):
     """floor (*): a malformed manifest is not examined, even if it carries an anchor.floor."""
-    scenario.add_raw("bad", json.dumps(d.malformed({"anchor": {"floor": {"floor_type": "drand"}}})))
+    scenario.add_raw(
+        "bad", json.dumps(d.make_malformed({"anchor": {"floor": {"floor_type": "drand"}}}))
+    )
     report = scenario.verify("floor")
     assert report["results"]["floor"]["applicable"] == 0
     assert report["code"] == "asexec-verify/1 floor=FAIL format=FAIL selfsig=PASS"

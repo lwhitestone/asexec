@@ -323,7 +323,7 @@ class ManifestBody(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def _required_and_unique(self) -> ManifestBody:
+    def _check_required_and_unique(self) -> ManifestBody:
         # the signing gate's target (due is optional).
         if self.target in (None, "", {}, []):
             raise ValueError("manifest body missing mandatory 'target'")
@@ -401,32 +401,32 @@ class Manifest(EnvelopeInput):
 Fields = dict[str, Any]
 
 
-def _shape(annotation: Any) -> tuple[str, Fields] | None:
+def _derive_shape(annotation: Any) -> tuple[str, Fields] | None:
     origin = get_origin(annotation)
     if origin is Annotated:
-        return _shape(get_args(annotation)[0])
+        return _derive_shape(get_args(annotation)[0])
     if origin in (Union, types.UnionType):
-        return next(filter(None, map(_shape, get_args(annotation))), None)
+        return next(filter(None, map(_derive_shape, get_args(annotation))), None)
     if origin is list:
-        inner = _shape(get_args(annotation)[0])
+        inner = _derive_shape(get_args(annotation)[0])
         return ("array", inner[1]) if inner and inner[0] == "object" else None
     if isinstance(annotation, type) and issubclass(annotation, BaseModel):
-        return ("object", known_fields(annotation))
+        return ("object", derive_known_fields(annotation))
     return None
 
 
-def known_fields(model: type[BaseModel]) -> Fields:
+def derive_known_fields(model: type[BaseModel]) -> Fields:
     """The fields a writer model can write, each with its shape (see ``Fields``)."""
-    return {name: _shape(info.annotation) for name, info in model.model_fields.items()}
+    return {name: _derive_shape(info.annotation) for name, info in model.model_fields.items()}
 
 
 # What a body may hold that this format defines: every field the writer can write. Anything
 # else, at the top of the body or in an object the format defines, is an unknown field.
-BODY_FIELDS: Fields = known_fields(ManifestBody)
+BODY_FIELDS: Fields = derive_known_fields(ManifestBody)
 # The same outside the body, in the file around it: the envelope, the key, the ceiling a
 # witness attaches, and ``untrusted``, which is shown whole (nothing in it is the format's).
 WRAPPER_FIELDS: Fields = {
-    **known_fields(Manifest),
+    **derive_known_fields(Manifest),
     "untrusted": None,
-    "ceiling": ("object", known_fields(Ceiling)),
+    "ceiling": ("object", derive_known_fields(Ceiling)),
 }

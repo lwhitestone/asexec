@@ -37,8 +37,8 @@ def canonical_bytes(payload: Any) -> bytes:
         raise ManifestError(f"the body has a string with no UTF-8 form: {e.reason}") from e
 
 
-def b64encode(data: bytes) -> str:
-    """``data`` in standard, padded base64: the one spelling ``b64decode`` accepts."""
+def encode_base64(data: bytes) -> str:
+    """``data`` in standard, padded base64: the one spelling ``decode_base64`` accepts."""
     return base64.b64encode(data).decode("ascii")
 
 
@@ -48,15 +48,15 @@ NOT_STRICT_BASE64 = (
 )
 
 
-def b64decode(text: str) -> bytes:
+def decode_base64(text: str) -> bytes:
     """The bytes ``text`` is the strict base64 of: the standard alphabet, padding required,
-    no whitespace, and exactly the spelling ``b64encode`` gives them (so no unused bit is
+    no whitespace, and exactly the spelling ``encode_base64`` gives them (so no unused bit is
     set). Anything else raises ``ValueError``, so each byte string has one spelling."""
     try:
         data = base64.b64decode(text, validate=True)
     except (binascii.Error, ValueError):  # ValueError: a str that is not ASCII
         raise ValueError(NOT_STRICT_BASE64) from None
-    if b64encode(data) != text:
+    if encode_base64(data) != text:
         raise ValueError(NOT_STRICT_BASE64)
     return data
 

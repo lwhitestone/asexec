@@ -35,16 +35,16 @@ NOT_BASE64 = (
 _MISSING = object()
 
 
-def _entry(report, name):
+def _get_entry(report, name):
     (entry,) = [m for m in report["manifests"] if m["path"].endswith(f"{os.sep}{name}.json")]
     return entry
 
 
-def _errors(scenario, name="postreg0"):
+def _get_errors(scenario, name="postreg0"):
     report = scenario.verify()
     assert report["code"] == FAIL
     assert report["results"]["selfsig"]["applicable"] == 3  # the malformed file is not examined
-    return _entry(report, name)["format"]["errors"]
+    return _get_entry(report, name)["format"]["errors"]
 
 
 def test_format__pass__all(scenario):
@@ -76,20 +76,20 @@ MALFORMED_FILES = {
 }
 
 
-def _with_unsigned_nesting(raw: str, levels: int) -> str:
+def _add_unsigned_nesting(raw: str, levels: int) -> str:
     """``raw`` (a file, nested 1 deep at its top) plus an unsigned field ``levels`` arrays
     deep, so the file nests ``1 + levels`` deep."""
     return raw.rstrip()[:-1] + ', "junk": ' + "[" * levels + "]" * levels + "}"
 
 
-def _nested_body(levels: int) -> bytes:
+def _make_nested_body(levels: int) -> bytes:
     """Body bytes of an object holding an array ``levels`` deep: nested ``1 + levels``."""
     return b'{"phase":"prereg","junk":' + b"[" * levels + b"]" * levels + b"}"
 
 
 def test_format__pass__1_nesting_at_the_limit(scenario):
     """format #1: a file nested exactly 64 deep is well-formed."""
-    scenario.add_raw("deep", _with_unsigned_nesting(scenario.read("prereg"), 63))
+    scenario.add_raw("deep", _add_unsigned_nesting(scenario.read("prereg"), 63))
     assert scenario.code() == PASS
 
 
@@ -105,7 +105,7 @@ def test_format__pass__2_body_nesting_is_counted_in_the_body_alone(scenario):
     """format #2: the body is held to the file's JSON rules on its own. Its outermost object
     is level 1, whatever depth the file holds it at, so a body nested exactly 64 deep is
     well-formed."""
-    scenario.edit_body_bytes("prereg", lambda raw: _nested_body(63))
+    scenario.edit_body_bytes("prereg", lambda raw: _make_nested_body(63))
     assert scenario.code() == PASS
 
 
@@ -125,7 +125,7 @@ def test_format__pass__2_body_bytes_are_read_as_stored(scenario):
     scenario.edit_body_bytes("prereg", lambda _raw: raw)
     report = scenario.verify()
     assert report["code"] == PASS
-    assert _entry(report, "prereg")["ref"] == "sha-256:" + hashlib.sha256(raw).hexdigest()
+    assert _get_entry(report, "prereg")["ref"] == "sha-256:" + hashlib.sha256(raw).hexdigest()
 
 
 def test_format__pass__2_lone_surrogate_escape_in_the_body_is_valid_json(scenario):
@@ -133,7 +133,7 @@ def test_format__pass__2_lone_surrogate_escape_in_the_body_is_valid_json(scenari
     are stored and checked as they are, so it passes format and its signature verifies."""
     scenario.set("prereg", "body.notes", "LONE")
     scenario.edit_body_bytes("prereg", lambda raw: raw.replace(b'"LONE"', b'"\\ud800"'))
-    assert b"\\ud800" in d.decoded(json.loads(scenario.read("prereg")))
+    assert b"\\ud800" in d.decode_payload(json.loads(scenario.read("prereg")))
     assert scenario.code() == PASS
 
 
@@ -161,7 +161,7 @@ def test_format__fail__1_no_duplicate_keys(scenario):
 
 def test_format__fail__1_nested_at_most_64_deep(scenario):
     """format #1: a file nested 65 deep is malformed, even where the extra level is unsigned."""
-    scenario.add_raw("deep", _with_unsigned_nesting(scenario.read("prereg"), 64))
+    scenario.add_raw("deep", _add_unsigned_nesting(scenario.read("prereg"), 64))
     assert scenario.code() == FAIL
 
 
@@ -179,10 +179,10 @@ def test_format__fail__1_unlistable_directory_is_examined_and_malformed(tmp_path
     """format #1: a directory that cannot be listed is examined itself, as malformed, never
     an exception."""
 
-    def denied(path):
+    def deny_listing(path):
         raise PermissionError(13, "Permission denied", path)
 
-    monkeypatch.setattr(os, "listdir", denied)
+    monkeypatch.setattr(os, "listdir", deny_listing)
     report = verify_paths([str(tmp_path)], REQUIRED, None)
     assert report["code"] == "asexec-verify/1 format=FAIL selfsig=FAIL"
     assert report["results"]["format"]["applicable"] == 1
@@ -207,7 +207,7 @@ def test_format__fail__1_dsse_is_an_object(scenario, value, error):
         scenario.unset("postreg0", "dsse")
     else:
         scenario.set("postreg0", "dsse", value)
-    assert _errors(scenario) == [error]
+    assert _get_errors(scenario) == [error]
 
 
 @pytest.mark.parametrize(
@@ -230,7 +230,7 @@ def test_format__fail__1_payload_type_is_a_string(scenario, value, error):
     else:
         scenario.set("postreg0", "dsse.payloadType", value)
     scenario.set("postreg0", "payloadType", d.MANIFEST_PAYLOAD_TYPE)
-    assert _errors(scenario) == [error]
+    assert _get_errors(scenario) == [error]
 
 
 @pytest.mark.parametrize(
@@ -249,14 +249,14 @@ def test_format__fail__1_signatures_is_an_array(scenario, value, error):
         scenario.unset("postreg0", "dsse.signatures")
     else:
         scenario.set("postreg0", "dsse.signatures", value)
-    assert _errors(scenario) == [error]
+    assert _get_errors(scenario) == [error]
 
 
 # A small body, validly signed: 31 bytes, so its base64 ends "==".
 SMALL = d.sign_bytes(b'{"phase":"prereg","target":"m"}')
 
 
-def _raw_errors(scenario, payload):
+def _get_raw_errors(scenario, payload):
     """The format errors of SMALL with dsse.payload replaced by ``payload`` (removed if
     _MISSING), beside the scenario's four valid files."""
     envelope = json.loads(json.dumps(SMALL))
@@ -268,7 +268,7 @@ def _raw_errors(scenario, payload):
     report = scenario.verify()
     assert report["code"] == FAIL
     assert report["results"]["selfsig"]["applicable"] == 4
-    return _entry(report, "bad")["format"]["errors"]
+    return _get_entry(report, "bad")["format"]["errors"]
 
 
 def test_format__pass__2_small_body_as_signed(scenario):
@@ -323,7 +323,7 @@ def test_format__fail__2_payload_is_strict_base64(scenario, payload, error):
     """format #2: dsse.payload is strict base64: the standard alphabet, padded, with no
     whitespace, and the one spelling base64 encoding gives its bytes (no unused bit set in
     the last character). The signature is left as it was, so only the spelling fails it."""
-    assert _raw_errors(scenario, payload) == [error]
+    assert _get_raw_errors(scenario, payload) == [error]
 
 
 @pytest.mark.parametrize("spelled", ["e31=", "e32=", "e33="])
@@ -339,8 +339,8 @@ def test_format__fail__2_payload_has_one_spelling_per_byte_string(scenario, spel
     scenario.add_raw("respelled", json.dumps(envelope))
     report = scenario.verify()
     assert report["code"] == FAIL
-    assert _entry(report, "canonical")["format"]["errors"] == []
-    assert _entry(report, "respelled")["format"]["errors"] == [NOT_BASE64]
+    assert _get_entry(report, "canonical")["format"]["errors"] == []
+    assert _get_entry(report, "respelled")["format"]["errors"] == [NOT_BASE64]
 
 
 @pytest.mark.parametrize(
@@ -357,7 +357,7 @@ def test_format__fail__2_body_is_utf8(scenario, raw):
     """format #2: the body bytes are UTF-8 JSON text (RFC 8259), with no byte order mark.
     They are validly signed: the encoding alone fails them."""
     scenario.edit_body_bytes("postreg0", lambda _raw: raw)
-    (error,) = _errors(scenario)
+    (error,) = _get_errors(scenario)
     assert error.startswith("malformed: body: ")
 
 
@@ -378,7 +378,7 @@ def test_format__fail__2_body_is_utf8(scenario, raw):
 def test_format__fail__2_body_is_a_json_object(scenario, raw, error):
     """format #2: the body bytes are the JSON text of an object, validly signed or not."""
     scenario.edit_body_bytes("postreg0", lambda _raw: raw)
-    (reason,) = _errors(scenario)
+    (reason,) = _get_errors(scenario)
     assert reason.startswith(error)
 
 
@@ -393,7 +393,7 @@ def test_format__fail__2_body_has_no_duplicate_keys(scenario):
         return dup
 
     scenario.edit_body_bytes("postreg0", duplicate)
-    assert _errors(scenario) == ["malformed: body: duplicate JSON key 'phase'"]
+    assert _get_errors(scenario) == ["malformed: body: duplicate JSON key 'phase'"]
 
 
 def test_format__fail__2_duplicate_key_nested_in_the_body(scenario):
@@ -401,14 +401,14 @@ def test_format__fail__2_duplicate_key_nested_in_the_body(scenario):
     scenario.edit_body_bytes(
         "postreg0", lambda raw: raw.replace(b'"model_id":"m"', b'"model_id":"m","model_id":"x"', 1)
     )
-    assert _errors(scenario) == ["malformed: body: duplicate JSON key 'model_id'"]
+    assert _get_errors(scenario) == ["malformed: body: duplicate JSON key 'model_id'"]
 
 
 def test_format__fail__2_body_nested_at_most_64_deep(scenario):
     """format #2: a body nested 65 deep is malformed, though the file around it nests only 3
     deep: the body's depth is counted in the body alone."""
-    scenario.edit_body_bytes("postreg0", lambda raw: _nested_body(64))
-    assert _errors(scenario) == ["malformed: body: nested more than 64 deep"]
+    scenario.edit_body_bytes("postreg0", lambda raw: _make_nested_body(64))
+    assert _get_errors(scenario) == ["malformed: body: nested more than 64 deep"]
 
 
 @pytest.mark.parametrize(
@@ -447,7 +447,7 @@ def test_format__fail__3_payload_type_names_a_known_format(scenario, payload_typ
     assert report["code"] == FAIL
     assert report["results"]["format"]["reason"] == "1/4 manifest(s) failed"
     assert report["results"]["selfsig"]["applicable"] == 3
-    assert _entry(report, "postreg0")["format"]["errors"] == [reason]
+    assert _get_entry(report, "postreg0")["format"]["errors"] == [reason]
 
 
 def test_format__fail__3_unknown_format_is_not_judged_by_this_formats_frame(scenario):
@@ -462,7 +462,7 @@ def test_format__fail__3_unknown_format_is_not_judged_by_this_formats_frame(scen
     report = scenario.verify()
     assert report["code"] == FAIL
     assert report["results"]["selfsig"]["applicable"] == 4
-    assert _entry(report, "v2")["format"]["errors"] == [NEWER]
+    assert _get_entry(report, "v2")["format"]["errors"] == [NEWER]
 
 
 def test_format__fail__3_never_falls_back_to_this_releases_rules(scenario):
@@ -474,7 +474,7 @@ def test_format__fail__3_never_falls_back_to_this_releases_rules(scenario):
     report = scenario.verify()
     assert report["code"] == FAIL
     assert report["results"]["selfsig"]["applicable"] == 4
-    assert _entry(report, "labelled")["format"]["errors"] == [NEWER]
+    assert _get_entry(report, "labelled")["format"]["errors"] == [NEWER]
 
 
 @pytest.mark.parametrize(
@@ -497,7 +497,7 @@ def test_format__fail__3_file_laid_out_before_0_4_0(scenario, payload_type, erro
     scenario.add_raw("old", json.dumps(old))
     report = scenario.verify()
     assert report["code"] == FAIL
-    assert _entry(report, "old")["format"]["errors"] == errors
+    assert _get_entry(report, "old")["format"]["errors"] == errors
 
 
 def test_format__fail__empty_no_manifests():

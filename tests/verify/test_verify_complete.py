@@ -29,16 +29,16 @@ def sc(scenario):
     return scenario
 
 
-def _complete(report):
+def _get_complete(report):
     (commitment,) = report["commitments"]
     return commitment["complete"]
 
 
-def _items(report):
+def _get_items(report):
     """``{id: reason or the statuses}`` for each item, in the prereg's order."""
     return {
         i["id"]: (", ".join(i["statuses"]) if i["ok"] else i["reason"])
-        for i in _complete(report)["items"]
+        for i in _get_complete(report)["items"]
     }
 
 
@@ -49,7 +49,7 @@ def test_complete__pass__all(sc):
     report = sc.verify("complete")
     assert report["code"] == PASS
     assert report["results"]["complete"]["reason"] == "1/1 commitment(s) ok"
-    assert _items(report) == {"S1": "reported", "S2": "reported", "S3": "reported"}
+    assert _get_items(report) == {"S1": "reported", "S2": "reported", "S3": "reported"}
 
 
 @pytest.mark.parametrize("status", ["excluded", "blocked"])
@@ -58,7 +58,7 @@ def test_complete__pass__3_each_status_accounts_for_an_item(sc, status):
     sc.set("postreg1", "body.status", status)
     report = sc.verify("complete")
     assert report["code"] == PASS
-    assert _items(report)["S2"] == status
+    assert _get_items(report)["S2"] == status
 
 
 @pytest.mark.parametrize(
@@ -71,7 +71,7 @@ def test_complete__fail__1_items_is_an_array_of_objects_with_string_ids(sc, item
     sc.set("prereg", "body.items", items)
     report = sc.verify("complete")
     assert report["code"] == FAIL
-    assert _complete(report)["reason"] == "items is not an array of objects with a string id"
+    assert _get_complete(report)["reason"] == "items is not an array of objects with a string id"
 
 
 def test_complete__pass__1_kind_is_not_read(sc):
@@ -86,7 +86,7 @@ def test_complete__fail__2_item_ids_are_unique(sc):
     sc.set("prereg", "body.items", [*ITEMS, {"id": "S2", "kind": "again"}])
     report = sc.verify("complete")
     assert report["code"] == FAIL
-    assert _complete(report)["reason"] == "item ids repeat: 'S2'"
+    assert _get_complete(report)["reason"] == "item ids repeat: 'S2'"
 
 
 def test_complete__fail__3_a_dropped_item(sc):
@@ -96,7 +96,7 @@ def test_complete__fail__3_a_dropped_item(sc):
     report = sc.verify("chain", "complete")
     assert report["code"] == "asexec-verify/1 chain=PASS complete=FAIL format=PASS selfsig=PASS"
     assert report["commitments"][0]["state"] == "fulfilled"
-    assert _items(report) == {
+    assert _get_items(report) == {
         "S1": "reported",
         "S2": "reported",
         "S3": "no counted postreg names it",
@@ -129,7 +129,7 @@ def test_complete__fail__3_each_item_has_a_counted_postreg_with_its_id_and_a_sta
         if path == "body.item_id"
         else "no counted postreg for it has a status of reported, excluded or blocked"
     )
-    assert _items(report)["S2"] == expected
+    assert _get_items(report)["S2"] == expected
 
 
 def test_complete__fail__3_a_postreg_that_does_not_count_accounts_for_nothing(sc, keypair):
@@ -138,7 +138,7 @@ def test_complete__fail__3_a_postreg_that_does_not_count_accounts_for_nothing(sc
     sc.sign_with("postreg1", keypair)
     report = sc.verify("complete")
     assert report["code"] == FAIL
-    assert _items(report)["S2"] == "no counted postreg names it"
+    assert _get_items(report)["S2"] == "no counted postreg names it"
 
 
 def test_complete__pass__3_any_qualifying_postreg_accounts_for_an_item(sc):
@@ -149,7 +149,7 @@ def test_complete__pass__3_any_qualifying_postreg_accounts_for_an_item(sc):
     sc.set("postreg2", "body.item_id", "S2")
     report = sc.verify("complete")
     assert report["code"] == PASS
-    assert _items(report) == {"S1": "reported", "S2": "reported"}
+    assert _get_items(report) == {"S1": "reported", "S2": "reported"}
 
 
 def test_complete__pass__3_a_postreg_for_an_unlisted_item_is_shown_not_failed(sc):
@@ -160,9 +160,9 @@ def test_complete__pass__3_a_postreg_for_an_unlisted_item_is_shown_not_failed(sc
     sc.add_postreg("summary", prev="extra")
     report = sc.verify("complete")
     assert report["code"] == PASS
-    (unlisted,) = _complete(report)["unlisted"]
+    (unlisted,) = _get_complete(report)["unlisted"]
     assert unlisted["item_id"] == "Z9"
-    assert unlisted["ref"] == d.ref(d.decoded(json.loads(sc.read("extra"))))
+    assert unlisted["ref"] == d.ref(d.decode_payload(json.loads(sc.read("extra"))))
 
 
 @pytest.mark.parametrize("due", ["next tuesday", 12345, ""], ids=["text", "number", "empty"])
@@ -172,7 +172,7 @@ def test_complete__fail__4_due_is_parseable(sc, due):
     sc.set("prereg", "body.due", due)
     report = sc.verify("complete")
     assert report["code"] == FAIL
-    assert _complete(report)["reason"] == "due is not a parseable ISO-8601 timestamp"
+    assert _get_complete(report)["reason"] == "due is not a parseable ISO-8601 timestamp"
 
 
 @pytest.mark.parametrize("case", ["late", "no-ceiling", "invalid-ceiling"])
@@ -193,7 +193,7 @@ def test_complete__fail__5_each_item_is_accounted_for_on_time(sc, case):
         "no-ceiling": "not shown on time: its postreg has no ceiling",
         "invalid-ceiling": "not shown on time: its postreg's ceiling does not verify",
     }[case]
-    assert _items(report)["S2"] == reason
+    assert _get_items(report)["S2"] == reason
     assert report["commitments"][0]["state"] == "fulfilled"
 
 
@@ -224,7 +224,7 @@ def test_complete__fail__3_a_dropped_item_under_a_prereg_without_due(sc):
     sc.drop("postreg2")
     report = sc.verify("complete")
     assert report["code"] == FAIL
-    assert _items(report)["S3"] == "no counted postreg names it"
+    assert _get_items(report)["S3"] == "no counted postreg names it"
 
 
 def test_complete__pass__all_a_prereg_without_items_is_not_examined(sc):

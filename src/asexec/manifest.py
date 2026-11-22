@@ -30,7 +30,7 @@ from collections import Counter
 from typing import Any
 
 from . import keys
-from .canonical import b64decode, b64encode, canonical_bytes, signing_input
+from .canonical import canonical_bytes, decode_base64, encode_base64, signing_input
 from .constants import FORMATS, MANIFEST_PAYLOAD_TYPE
 from .errors import ManifestError
 from .models import Anchor, Dsse, Manifest, ManifestBody, Signature
@@ -133,8 +133,8 @@ def sign(body: dict[str, Any], private_key: bytes, public_key: bytes) -> dict[st
     body_bytes = canonical_bytes(body)
     sig = keys.sign(private_key, signing_input(body_bytes))
     dsse = Dsse(
-        payload=b64encode(body_bytes),
-        signatures=[Signature(keyid=keys.keyid_for(public_key), sig=b64encode(sig))],
+        payload=encode_base64(body_bytes),
+        signatures=[Signature(keyid=keys.keyid_for(public_key), sig=encode_base64(sig))],
     )
     return Manifest(dsse=dsse, pubkey=public_key.hex()).model_dump(mode="json")
 
@@ -209,7 +209,7 @@ def read_body(manifest: dict[str, Any]) -> tuple[bytes, dict[str, Any]]:
     if not isinstance(payload, str):
         raise ManifestError("not an asexec manifest (no dsse.payload string)")
     try:
-        body_bytes = b64decode(payload)
+        body_bytes = decode_base64(payload)
     except ValueError as e:
         raise ManifestError(f"dsse.payload is {e}") from None
     return body_bytes, parse_body(body_bytes)

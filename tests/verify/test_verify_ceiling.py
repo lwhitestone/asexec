@@ -97,7 +97,7 @@ def test_ceiling__fail__2_nonce_equals_ref(sc):
     assert sc.code("ceiling") == FAIL
 
 
-def _spaced(raw: bytes) -> bytes:
+def _respell_spaced(raw: bytes) -> bytes:
     """The same JSON value as ``raw`` (the writer's canonical bytes), spelled with spaces."""
     spaced = json.dumps(json.loads(raw), indent=1).encode()
     assert spaced != raw and json.loads(spaced) == json.loads(raw)
@@ -108,9 +108,9 @@ def test_ceiling__pass__2_nonce_is_ref_of_the_stored_bytes(sc):
     """ceiling #2: the nonce is bound to ref, the sha-256 of the body bytes as stored. A body
     stored with non-canonical spacing, validly signed, whose ceiling was fetched for those
     bytes, passes."""
-    sc.edit_body_bytes("prereg", _spaced)
-    stored = d.decoded(json.loads(sc.read("prereg")))
-    assert stored != d.body_bytes(json.loads(stored))  # not what the writer would store
+    sc.edit_body_bytes("prereg", _respell_spaced)
+    stored = d.decode_payload(json.loads(sc.read("prereg")))
+    assert stored != d.make_body_bytes(json.loads(stored))  # not what the writer would store
     report = sc.verify("ceiling")
     assert report["code"] == PASS
     (prereg,) = [m for m in report["manifests"] if m["phase"] == "prereg"]
@@ -121,8 +121,8 @@ def test_ceiling__pass__2_nonce_is_ref_of_the_stored_bytes(sc):
 def test_ceiling__fail__2_nonce_is_not_ref_of_a_reserialized_body(sc):
     """ceiling #2: a witness for the canonical re-serialization of the same JSON value is
     not a witness for the bytes stored: nothing re-serializes the body, so it fails."""
-    sc.edit_body_bytes("prereg", _spaced)
-    canonical_hex = d.ref(d.body_bytes(sc._body("prereg"))).split(":", 1)[1]
+    sc.edit_body_bytes("prereg", _respell_spaced)
+    canonical_hex = d.ref(d.make_body_bytes(sc._body("prereg"))).split(":", 1)[1]
     sc.ceilings["prereg"] = lambda nonce_hex: _record(sc, canonical_hex)
     report = sc.verify("ceiling")
     assert report["code"] == FAIL
@@ -210,7 +210,7 @@ def test_ceiling__fail__empty_no_manifest_carries_one(scenario, absent):
 def test_ceiling__fail__empty_malformed_manifest_not_examined(scenario):
     """ceiling (*): a malformed manifest is not examined, even if it carries a ceiling."""
     scenario.add_raw(
-        "bad", json.dumps({**d.malformed({}), "ceiling": {"ceiling_type": "roughtime"}})
+        "bad", json.dumps({**d.make_malformed({}), "ceiling": {"ceiling_type": "roughtime"}})
     )
     report = scenario.verify("ceiling")
     assert report["results"]["ceiling"]["applicable"] == 0

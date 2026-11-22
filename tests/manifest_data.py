@@ -70,14 +70,14 @@ def subject_entry(name: str) -> dict[str, Any]:
     return {"name": name, "hash_alg": "sha-256", "digest": {"sha-256": DIGESTS[name]}}
 
 
-def body_bytes(body: dict[str, Any]) -> bytes:
+def make_body_bytes(body: dict[str, Any]) -> bytes:
     """The bytes signing stores for ``body``: its canonical serialization."""
     return canonical_bytes(body)
 
 
 def ref(body: dict[str, Any] | bytes) -> str:
     """``sha-256:`` + the hex sha-256 of the body bytes (``body``'s, if it is a dict)."""
-    raw = body if isinstance(body, bytes) else body_bytes(body)
+    raw = body if isinstance(body, bytes) else make_body_bytes(body)
     return "sha-256:" + hashlib.sha256(raw).hexdigest()
 
 
@@ -118,12 +118,12 @@ CLAIM_POSTREG = {
 }
 
 
-def b64(data: bytes) -> str:
+def encode_b64(data: bytes) -> str:
     return base64.b64encode(data).decode("ascii")
 
 
 # A well-formed signature (strict base64 of 64 bytes) that verifies under no key.
-ZERO_SIG = b64(bytes(64))
+ZERO_SIG = encode_b64(bytes(64))
 
 
 def sign_bytes(raw: bytes, key: tuple[bytes, bytes] = TEST_KEY) -> dict[str, Any]:
@@ -134,7 +134,10 @@ def sign_bytes(raw: bytes, key: tuple[bytes, bytes] = TEST_KEY) -> dict[str, Any
             "payloadType": MANIFEST_PAYLOAD_TYPE,
             "payload": base64.b64encode(raw).decode("ascii"),
             "signatures": [
-                {"keyid": keys.keyid_for(pub), "sig": b64(keys.sign(priv, signing_input(raw)))}
+                {
+                    "keyid": keys.keyid_for(pub),
+                    "sig": encode_b64(keys.sign(priv, signing_input(raw))),
+                }
             ],
         },
         "pubkey": pub.hex(),
@@ -143,7 +146,7 @@ def sign_bytes(raw: bytes, key: tuple[bytes, bytes] = TEST_KEY) -> dict[str, Any
 
 def sign(body: dict[str, Any], key: tuple[bytes, bytes] = TEST_KEY) -> dict[str, Any]:
     """A file around ``body``, signed by ``key`` whatever the body holds."""
-    return sign_bytes(body_bytes(body), key)
+    return sign_bytes(make_body_bytes(body), key)
 
 
 def sign_labelled(
@@ -155,20 +158,20 @@ def sign_labelled(
     priv, _pub = key
     envelope = sign(body, key)
     version = FORMATS[MANIFEST_PAYLOAD_TYPE]["signing_pae_version"]
-    signed = pae(version, payload_type.encode(), body_bytes(body))
+    signed = pae(version, payload_type.encode(), make_body_bytes(body))
     envelope["dsse"]["payloadType"] = payload_type
-    envelope["dsse"]["signatures"][0]["sig"] = b64(keys.sign(priv, signed))
+    envelope["dsse"]["signatures"][0]["sig"] = encode_b64(keys.sign(priv, signed))
     return envelope
 
 
-def decoded(envelope: dict[str, Any]) -> bytes:
+def decode_payload(envelope: dict[str, Any]) -> bytes:
     """The body bytes ``envelope["dsse"]["payload"]`` holds."""
     return base64.b64decode(envelope["dsse"]["payload"], validate=True)
 
 
-def body_of(envelope: dict[str, Any]) -> dict[str, Any]:
+def read_body_of(envelope: dict[str, Any]) -> dict[str, Any]:
     """The body ``envelope`` holds, decoded."""
-    return json.loads(decoded(envelope))
+    return json.loads(decode_payload(envelope))
 
 
 def store(envelope: dict[str, Any], raw: bytes) -> None:
@@ -176,7 +179,7 @@ def store(envelope: dict[str, Any], raw: bytes) -> None:
     envelope["dsse"]["payload"] = base64.b64encode(raw).decode("ascii")
 
 
-def _segments(path: str) -> list[str | int]:
+def _split_path(path: str) -> list[str | int]:
     """``a.b[0].c`` or ``a.b.0.c`` -> ``["a", "b", 0, "c"]``."""
     return [int(k) if k.isdigit() else k for k in re.sub(r"\[(\d+)\]", r".\1", path).split(".")]
 
@@ -184,7 +187,7 @@ def _segments(path: str) -> list[str | int]:
 def set_path(obj: Any, path: str, value: Any) -> None:
     """In place: set the dotted ``path`` (``[N]`` or a numeric segment indexes an array),
     creating missing objects on the way."""
-    *parents, last = _segments(path)
+    *parents, last = _split_path(path)
     for key in parents:
         obj = obj[key] if isinstance(key, int) else obj.setdefault(key, {})
     obj[last] = value
@@ -192,7 +195,7 @@ def set_path(obj: Any, path: str, value: Any) -> None:
 
 def del_path(obj: Any, path: str) -> None:
     """In place: remove the dotted ``path`` if it is there."""
-    *parents, last = _segments(path)
+    *parents, last = _split_path(path)
     for key in parents:
         obj = obj[key]
     if isinstance(last, int):
@@ -213,7 +216,7 @@ def without_field(data: dict[str, Any], path: str) -> dict[str, Any]:
     return out
 
 
-def malformed(body: dict[str, Any]) -> dict[str, Any]:
+def make_malformed(body: dict[str, Any]) -> dict[str, Any]:
     """A file around ``body``, signed, that is malformed all the same: its
     ``dsse.signatures`` is not an array (format #1), so no test reads the body."""
     envelope = sign(body)

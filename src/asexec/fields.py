@@ -19,8 +19,8 @@ def _fromhex_ok(value: str) -> str:
     return value
 
 
-def _base64_ok(value: str) -> str:
-    canonical.b64decode(value)  # a ValueError here becomes a ValidationError
+def _check_base64(value: str) -> str:
+    canonical.decode_base64(value)  # a ValueError here becomes a ValidationError
     return value
 
 
@@ -28,8 +28,8 @@ def _base64_ok(value: str) -> str:
 _ED25519_SIGNATURE_LENGTH = 64
 
 
-def _signature_ok(value: str) -> str:
-    if len(canonical.b64decode(value)) != _ED25519_SIGNATURE_LENGTH:  # a ValueError: not base64
+def _check_signature(value: str) -> str:
+    if len(canonical.decode_base64(value)) != _ED25519_SIGNATURE_LENGTH:  # a ValueError: not base64
         raise ValueError(f"not {_ED25519_SIGNATURE_LENGTH} bytes, an ed25519 signature's length")
     return value
 
@@ -60,7 +60,7 @@ def is_normal_name(name: str) -> bool:
     )
 
 
-def _normal_name(value: str) -> str:
+def _check_normal_name(value: str) -> str:
     if not is_normal_name(value):
         raise ValueError("not a normalized relative path")
     return value
@@ -87,16 +87,16 @@ Hex = Annotated[str, AfterValidator(_fromhex_ok)]
 LowerHex = Annotated[str, AfterValidator(_lower_hex)]
 
 # Strict base64 (format #2): the standard alphabet, padded, no whitespace, and the one
-# spelling of its bytes. Kept as the string as written; ``canonical.b64decode`` gives the bytes.
+# spelling of its bytes. Kept as the string as written; ``canonical.decode_base64`` gives the bytes.
 # The writer models use it too: the only spelling the tool writes is the one verify reads.
-Base64 = Annotated[str, AfterValidator(_base64_ok)]
+Base64 = Annotated[str, AfterValidator(_check_base64)]
 
 # A DSSE ``sig`` (selfsig #2): strict base64, as DSSE has it, of an ed25519 signature's 64
 # bytes. Used by the writer too, so the tool writes only what verify reads.
-SignatureBase64 = Annotated[str, AfterValidator(_signature_ok)]
+SignatureBase64 = Annotated[str, AfterValidator(_check_signature)]
 
 # A subject, plan or evidence ``name`` as this tool writes it (content #3).
-NormalName = Annotated[str, AfterValidator(_normal_name)]
+NormalName = Annotated[str, AfterValidator(_check_normal_name)]
 
 # A drand chain hash the verifier pins (floor #2). ``chains.CHAINS`` is fixed at import.
 PinnedChain = Annotated[str, AfterValidator(_pinned_chain)]

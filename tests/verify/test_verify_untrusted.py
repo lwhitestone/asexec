@@ -35,17 +35,17 @@ def sc(scenario):
     return scenario
 
 
-def _record(report, name):
+def _get_record(report, name):
     (rec,) = [m for m in report["manifests"] if m["path"].endswith(f"/{name}.json")]
     return rec
 
 
-def _verdicts(report):
+def _get_verdicts(report):
     """Everything a verdict rests on: the code, every result, and every commitment."""
     return report["code"], report["results"], report["commitments"], report["rejected_preregs"]
 
 
-def _results(report):
+def _get_results(report):
     """The verdicts of a run whose bodies changed, so whose refs did: the code, every result
     and every commitment's state."""
     return report["code"], report["results"], [c["state"] for c in report["commitments"]]
@@ -66,10 +66,10 @@ def test_untrusted__shown_for_each_file_and_read_by_no_test(sc):
     value = {"asexec_version": "9.9.9", "run": {"host": "x", "argv": ["a", 1, None, True]}}
     _set_untrusted(sc, value)
     after = sc.verify(*ALL_TESTS)
-    assert _verdicts(after) == _verdicts(before)
+    assert _get_verdicts(after) == _get_verdicts(before)
     for name in ("prereg", "postreg0", "postreg1", "postreg2"):
-        assert _record(after, name)["untrusted"] == [{"path": ["untrusted"], "value": value}]
-        assert _record(before, name)["untrusted"] == []
+        assert _get_record(after, name)["untrusted"] == [{"path": ["untrusted"], "value": value}]
+        assert _get_record(before, name)["untrusted"] == []
 
 
 @pytest.mark.parametrize(
@@ -95,15 +95,15 @@ def test_untrusted__any_value_changes_no_verdict(sc, value):
     before = sc.verify(*ALL_TESTS)
     _set_untrusted(sc, value)
     after = sc.verify(*ALL_TESTS)
-    assert _verdicts(after) == _verdicts(before)
-    shown = _record(after, "prereg")["untrusted"]
+    assert _get_verdicts(after) == _get_verdicts(before)
+    shown = _get_record(after, "prereg")["untrusted"]
     assert len(shown) == 1 and shown[0]["path"] == ["untrusted"]
 
 
 def test_untrusted__null_is_absent(sc):
     """An untrusted of null is absent (Run rules), so nothing is shown."""
     _set_untrusted(sc, None)
-    assert _record(sc.verify(), "prereg")["untrusted"] == []
+    assert _get_record(sc.verify(), "prereg")["untrusted"] == []
 
 
 def test_untrusted__is_not_part_of_ref(sc):
@@ -129,7 +129,7 @@ def test_untrusted__is_held_to_the_file_json_rules(sc):
     sc.drop("postreg2")
     sc.add_raw("postreg2-dup", raw)
     report = sc.verify("chain")
-    rec = _record(report, "postreg2-dup")
+    rec = _get_record(report, "postreg2-dup")
     assert rec["format"]["errors"] == ["malformed: duplicate JSON key 'a'"]
     assert rec["untrusted"] == []
     assert report["code"] == "asexec-verify/1 chain=PASS format=FAIL selfsig=PASS"
@@ -139,7 +139,7 @@ def test_untrusted__deeper_than_the_file_limit_makes_the_file_malformed(sc):
     """The same for depth: the file, untrusted included, nests at most 64 deep."""
     sc.set("postreg2", "untrusted", json.loads("[" * 64 + "]" * 64))
     report = sc.verify("chain")
-    rec = _record(report, "postreg2")
+    rec = _get_record(report, "postreg2")
     assert rec["format"]["errors"] == ["malformed: nested more than 64 deep"]
     assert report["code"] == "asexec-verify/1 chain=PASS format=FAIL selfsig=PASS"
 
@@ -151,17 +151,17 @@ def test_untrusted__an_integer_past_the_digit_limit_makes_the_file_malformed(sc)
     sc.drop("postreg2")
     sc.add_raw("postreg2-big", raw)
     report = sc.verify("chain")
-    (error,) = _record(report, "postreg2-big")["format"]["errors"]
+    (error,) = _get_record(report, "postreg2-big")["format"]["errors"]
     assert error.startswith("malformed: Exceeds the limit (4300 digits)")
     assert report["code"] == "asexec-verify/1 chain=PASS format=FAIL selfsig=PASS"
 
 
 def test_untrusted__not_shown_for_a_file_that_fails_format(scenario):
     """A file that fails format is read by nothing past format, untrusted included."""
-    env = d.malformed(d.PREREG)
+    env = d.make_malformed(d.PREREG)
     env["untrusted"] = {"asexec_version": "1"}
     scenario.add_raw("bad", json.dumps(env))
-    rec = _record(scenario.verify(), "bad")
+    rec = _get_record(scenario.verify(), "bad")
     assert rec["untrusted"] == [] and rec["unknown"] == []
 
 
@@ -187,13 +187,13 @@ def test_untrusted__unknown_keys_outside_the_body_are_shown_with_it(sc, path, va
     before = sc.verify(*ALL_TESTS)
     sc.set("prereg", path, value)
     after = sc.verify(*ALL_TESTS)
-    assert _verdicts(after) == _verdicts(before)
-    assert _record(after, "prereg")["untrusted"] == [{"path": shown, "value": value}]
+    assert _get_verdicts(after) == _get_verdicts(before)
+    assert _get_record(after, "prereg")["untrusted"] == [{"path": shown, "value": value}]
 
 
 def test_untrusted__the_section_comes_first_then_the_keys_in_file_order(sc):
     sc.tamper("prereg", lambda env: env.update(zz=1, untrusted={"asexec_version": "x"}, aa=2))
-    shown = _record(sc.verify(), "prereg")["untrusted"]
+    shown = _get_record(sc.verify(), "prereg")["untrusted"]
     assert [s["path"] for s in shown] == [["untrusted"], ["zz"], ["aa"]]
 
 
@@ -238,11 +238,11 @@ def test_unknown__signed_fields_this_format_does_not_define_are_shown(sc, path, 
     name = "postreg0" if "evidence" in path else "prereg"  # the postreg carries the evidence
     sc.set(name, path, value)
     after = sc.verify(*ALL_TESTS)
-    assert _results(after) == _results(before)  # a body edit changes refs, not verdicts
+    assert _get_results(after) == _get_results(before)  # a body edit changes refs, not verdicts
     if path == "body.anchor.floor.time":
-        assert _record(after, "prereg")["floor"]["status"] == "verified"
-    assert _record(after, name)["unknown"] == [{"path": shown, "value": value}]
-    assert _record(after, name)["untrusted"] == []
+        assert _get_record(after, "prereg")["floor"]["status"] == "verified"
+    assert _get_record(after, name)["unknown"] == [{"path": shown, "value": value}]
+    assert _get_record(after, name)["untrusted"] == []
 
 
 def test_unknown__every_field_the_format_defines_is_known(scenario):
@@ -266,7 +266,7 @@ def test_unknown__every_field_the_format_defines_is_known(scenario):
     }
     body["subject"] = [{**body["subject"][0], "digest": {"sha-256": "00", "blake3": "11"}}]
     scenario.mutate("prereg", lambda b: (b.clear(), b.update(copy.deepcopy(body))))
-    rec = _record(scenario.verify(), "prereg")
+    rec = _get_record(scenario.verify(), "prereg")
     assert rec["unknown"] == [] and rec["untrusted"] == []
 
 
@@ -284,20 +284,20 @@ def test_unknown__a_known_field_of_the_wrong_shape_has_no_fields_to_list(sc, pat
     """A field the format defines, holding a value of the wrong shape, is a known field the
     tests judge (content, floor, complete): nothing inside it is listed."""
     sc.set("prereg", path, value)
-    assert _record(sc.verify(), "prereg")["unknown"] == []
+    assert _get_record(sc.verify(), "prereg")["unknown"] == []
 
 
 def test_unknown__a_null_field_is_absent(sc):
     """An unknown field whose value is null is absent (Run rules): nothing is shown."""
     sc.set("prereg", "body.surprise", None)
     sc.set("prereg", "body.subject.0.colour", None)
-    assert _record(sc.verify(), "prereg")["unknown"] == []
+    assert _get_record(sc.verify(), "prereg")["unknown"] == []
 
 
 def test_unknown__fields_are_listed_in_body_order(sc):
     sc.mutate("prereg", lambda body: body.update(zz=1, aa=2))
     sc.set("prereg", "body.subject.0.mid", 3)
-    paths = [u["path"] for u in _record(sc.verify(), "prereg")["unknown"]]
+    paths = [u["path"] for u in _get_record(sc.verify(), "prereg")["unknown"]]
     assert paths == [["body", "aa"], ["body", "subject", 0, "mid"], ["body", "zz"]]
 
 
@@ -307,6 +307,8 @@ def test_unknown__shown_for_postregs_and_rejected_preregs_alike(sc):
     sc.set("postreg1", "body.surprise", 1)
     sc.set("prereg", "body.surprise", 2, after_signing=True)
     report = sc.verify()
-    assert _record(report, "postreg1")["unknown"] == [{"path": ["body", "surprise"], "value": 1}]
-    assert _record(report, "prereg")["unknown"] == [{"path": ["body", "surprise"], "value": 2}]
+    assert _get_record(report, "postreg1")["unknown"] == [
+        {"path": ["body", "surprise"], "value": 1}
+    ]
+    assert _get_record(report, "prereg")["unknown"] == [{"path": ["body", "surprise"], "value": 2}]
     assert len(report["rejected_preregs"]) == 1

@@ -22,13 +22,13 @@ NONE_PASSES = "no manifest passes format"
 _MISSING = object()
 
 
-def _spaced_upper(hex_str: str) -> str:
+def _respell_spaced_upper(hex_str: str) -> str:
     """The same bytes as ``hex_str``, in uppercase with whitespace between byte pairs."""
     pairs = [hex_str[i : i + 2].upper() for i in range(0, len(hex_str), 2)]
     return " ".join(pairs[:4]) + "\n\t" + "".join(pairs[4:])
 
 
-def _fails_selfsig_only(scenario):
+def _assert_fails_selfsig_only(scenario):
     report = scenario.verify()
     assert report["code"] == FAIL
     assert report["results"]["format"]["reason"] == "4/4 manifest(s) ok"
@@ -50,11 +50,11 @@ def test_selfsig__pass__2_pubkey_hex_accepts_either_case_and_whitespace(scenario
     """selfsig #2: pubkey's hex is what bytes.fromhex accepts (Conventions, Hex), case and
     spacing aside. The bytes are unchanged, so the signature still verifies. (sig is base64,
     which has one spelling: see the fail cases below.)"""
-    scenario.tamper("postreg0", lambda env: env.update(pubkey=_spaced_upper(env["pubkey"])))
+    scenario.tamper("postreg0", lambda env: env.update(pubkey=_respell_spaced_upper(env["pubkey"])))
     assert scenario.code() == PASS
 
 
-def _second_signature(envelope, other):
+def _add_second_signature(envelope, other):
     """``envelope`` with a second dsse.signatures entry: a copy of the first, or (``other``)
     another key's valid signature over the same PAE."""
     first = envelope["dsse"]["signatures"][0]
@@ -68,9 +68,9 @@ def _second_signature(envelope, other):
     "edit",
     [
         pytest.param(lambda env: env["dsse"].update(signatures=[]), id="none"),
-        pytest.param(lambda env: _second_signature(env, None), id="two-the-same"),
+        pytest.param(lambda env: _add_second_signature(env, None), id="two-the-same"),
         pytest.param(
-            lambda env: _second_signature(env, {"keyid": "sha-256:00", "sig": d.ZERO_SIG}),
+            lambda env: _add_second_signature(env, {"keyid": "sha-256:00", "sig": d.ZERO_SIG}),
             id="two-the-second-junk",
         ),
         pytest.param(lambda env: env["dsse"]["signatures"].insert(0, {}), id="two-the-first-empty"),
@@ -84,14 +84,14 @@ def test_selfsig__fail__1_exactly_one_signature(scenario, edit):
     copies of the one valid signature) and an entry that is not an object fail; none of
     them is malformed."""
     scenario.tamper("postreg0", edit)
-    _fails_selfsig_only(scenario)
+    _assert_fails_selfsig_only(scenario)
 
 
-def _sig_bytes(scenario, name="postreg0"):
+def _read_sig_bytes(scenario, name="postreg0"):
     return base64.b64decode(json.loads(scenario.read(name))["dsse"]["signatures"][0]["sig"])
 
 
-def _respelled_sig(spelling):
+def _make_sig_respelling(spelling):
     """An edit of postreg0's sig: ``spelling(sig as stored, its bytes)``."""
 
     def apply(envelope):
@@ -137,13 +137,13 @@ def test_selfsig__fail__2_pubkey_is_hex_and_sig_is_present(scenario, path, value
         scenario.unset("postreg0", path)
     else:
         scenario.set("postreg0", path, value)
-    _fails_selfsig_only(scenario)
+    _assert_fails_selfsig_only(scenario)
 
 
 _ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 
 
-def _unused_bits_set(stored: str) -> str:
+def _set_unused_bits(stored: str) -> str:
     """``stored`` (base64 of 64 bytes, so ending ``==``) with an unused bit of its last
     character set: the same bytes, spelled otherwise."""
     last = _ALPHABET.index(stored[-3])
@@ -159,9 +159,9 @@ def _unused_bits_set(stored: str) -> str:
         pytest.param(lambda s, raw: s[:40] + "\n" + s[40:], id="newline-inside"),
         pytest.param(lambda s, raw: s + " ", id="space-after"),
         pytest.param(lambda s, raw: s.replace("+", "-").replace("/", "_"), id="url-safe"),
-        pytest.param(lambda s, raw: _unused_bits_set(s), id="unused-bits-set"),
-        pytest.param(lambda s, raw: d.b64(raw[:63]), id="63-bytes"),
-        pytest.param(lambda s, raw: d.b64(raw + b"\0"), id="65-bytes"),
+        pytest.param(lambda s, raw: _set_unused_bits(s), id="unused-bits-set"),
+        pytest.param(lambda s, raw: d.encode_b64(raw[:63]), id="63-bytes"),
+        pytest.param(lambda s, raw: d.encode_b64(raw + b"\0"), id="65-bytes"),
         pytest.param(lambda s, raw: "", id="empty"),
     ],
 )
@@ -170,26 +170,26 @@ def test_selfsig__fail__2_sig_is_strict_base64_of_64_bytes(scenario, spelling):
     alphabet, padded, no whitespace, one spelling) of 64 bytes, an ed25519 signature's
     length. Hex, as asexec wrote before, another spelling of the same bytes, and a
     signature of another length fail; the file still passes format."""
-    stored = base64.b64encode(_sig_bytes(scenario)).decode()
+    stored = base64.b64encode(_read_sig_bytes(scenario)).decode()
     # postreg0's signature (a fixed key and body) uses both of the characters URL-safe
     # base64 replaces, and leaves its last character's unused bits clear.
     assert "+" in stored and "/" in stored and stored.endswith("==")
-    assert _unused_bits_set(stored) != stored
-    scenario.tamper("postreg0", _respelled_sig(spelling))
-    _fails_selfsig_only(scenario)
+    assert _set_unused_bits(stored) != stored
+    scenario.tamper("postreg0", _make_sig_respelling(spelling))
+    _assert_fails_selfsig_only(scenario)
 
 
 def test_selfsig__fail__3_signature_covers_the_body_bytes(scenario):
     """selfsig #3: sig verifies over the body bytes. A body altered after signing fails."""
     scenario.set("postreg0", "body.target.model_id", "SWAPPED", after_signing=True)
-    _fails_selfsig_only(scenario)
+    _assert_fails_selfsig_only(scenario)
 
 
 def test_selfsig__fail__3_signature_covers_the_bytes_not_the_json(scenario):
     """selfsig #3: the signature covers the bytes as stored. The same JSON value spelled
     with other spacing is other bytes, and fails: nothing re-serializes the body."""
     scenario.edit_body_bytes("postreg0", lambda raw: raw.replace(b",", b", "), after_signing=True)
-    _fails_selfsig_only(scenario)
+    _assert_fails_selfsig_only(scenario)
 
 
 def test_selfsig__fail__3_signature_by_pubkey(scenario):
@@ -201,7 +201,7 @@ def test_selfsig__fail__3_signature_by_pubkey(scenario):
         envelope["dsse"]["signatures"][0]["keyid"] = keys.keyid_for(other_pub)  # keep #4
 
     scenario.tamper("postreg0", swap_key)
-    _fails_selfsig_only(scenario)
+    _assert_fails_selfsig_only(scenario)
 
 
 @pytest.mark.parametrize(
@@ -219,7 +219,7 @@ def test_selfsig__fail__4_keyid_derives_from_pubkey(scenario, value):
         scenario.set("postreg0", path, keys.keyid_for(keys.generate()[1]))
     else:
         scenario.set("postreg0", path, value)
-    _fails_selfsig_only(scenario)
+    _assert_fails_selfsig_only(scenario)
 
 
 def test_selfsig__fail__empty_no_manifest_passes_format(scenario):

@@ -45,13 +45,13 @@ def write_wellknown(doc: dict, path: str) -> None:
         f.write("\n")
 
 
-def _wellknown_url(domain: str) -> str:
+def _build_wellknown_url(domain: str) -> str:
     return f"https://{domain.rstrip('/')}/{IDENTITY_WELL_KNOWN_PATH}"
 
 
 def fetch_wellknown(domain: str, timeout: int) -> dict:
     """HTTPS GET https://<domain>/.well-known/asexec.json (network; identity-check only)."""
-    url = _wellknown_url(domain)
+    url = _build_wellknown_url(domain)
     try:
         with urllib.request.urlopen(url, timeout=timeout) as resp:
             data = resp.read()
@@ -75,7 +75,7 @@ def match_binding(
 ) -> dict:
     """Check whether a key is asserted by a domain. Returns a result dict."""
     doc = fetch_wellknown(domain, timeout=timeout)
-    listed = _listed_keys(doc, _wellknown_url(domain))
+    listed = _get_listed_keys(doc, _build_wellknown_url(domain))
     match = None
     for k in listed:
         if keyid and k.get("keyid") == keyid:
@@ -94,7 +94,7 @@ def match_binding(
     }
 
 
-def _listed_keys(doc, url: str) -> list[dict]:
+def _get_listed_keys(doc, url: str) -> list[dict]:
     """The key entries an identity document lists (none if it has no ``keys``). A document
     that is not an object holding an array of objects raises ``AsexecError``: what a domain
     serves is not trusted to have the shape it should."""

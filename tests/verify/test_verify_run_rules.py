@@ -100,7 +100,7 @@ def test_run__manifest_lacking_the_examined_properties_is_not_examined(scenario)
     assert report["results"]["ceiling"]["applicable"] == 1
 
 
-def _relabelled(envelope: dict, payload_type: str) -> dict:
+def _relabel_copy(envelope: dict, payload_type: str) -> dict:
     return {**envelope, "dsse": {**envelope["dsse"], "payloadType": payload_type}}
 
 
@@ -122,7 +122,9 @@ def test_run__malformed_file_fails_format_and_no_other_test_examines_it(scenario
     scenario.with_ceiling("prereg")
     envelope = json.loads(scenario.read("prereg"))
     if target == "unknown-format":  # a copy of the prereg, ceiling and all, relabelled
-        scenario.add_raw("bad", json.dumps(_relabelled(envelope, "application/vnd.asexec.v2+json")))
+        scenario.add_raw(
+            "bad", json.dumps(_relabel_copy(envelope, "application/vnd.asexec.v2+json"))
+        )
     elif target == "duplicate-key":
         raw = scenario.read("prereg")
         pubkey = envelope["pubkey"]
@@ -130,7 +132,9 @@ def test_run__malformed_file_fails_format_and_no_other_test_examines_it(scenario
             "bad", raw.replace(f'"pubkey": "{pubkey}"', f'"pubkey": "{pubkey}", "pubkey": "00"', 1)
         )
     elif target == "duplicate-key-in-body":  # validly signed, ceiling kept
-        dup = d.decoded(envelope).replace(b'"phase":"prereg"', b'"phase":"prereg","phase":"x"')
+        dup = d.decode_payload(envelope).replace(
+            b'"phase":"prereg"', b'"phase":"prereg","phase":"x"'
+        )
         scenario.add_raw("bad", json.dumps({**d.sign_bytes(dup), "ceiling": envelope["ceiling"]}))
     elif target == "not-base64":
         envelope["dsse"]["payload"] += "="  # excess padding, whatever it had
@@ -162,14 +166,14 @@ def test_run__file_failing_format_is_examined_by_no_other_test(scenario, case):
     floor, ceiling or content."""
     scenario.with_floor("prereg")
     scenario.with_ceiling("prereg")
-    raw = d.body_bytes(_JUNK_BODY)
+    raw = d.make_body_bytes(_JUNK_BODY)
     if case == "duplicate-key-in-body":
         raw = raw.replace(b'"phase":"prereg"', b'"phase":"prereg","phase":"prereg"')
     elif case == "body-not-object":
         raw = b"[" + raw + b"]"
     envelope = d.sign_bytes(raw)
     if case == "unknown-format":
-        envelope = _relabelled(envelope, "application/vnd.asexec.v2+json")
+        envelope = _relabel_copy(envelope, "application/vnd.asexec.v2+json")
     scenario.add_raw("bad", json.dumps({**envelope, "ceiling": {"ceiling_type": "roughtime"}}))
     report = scenario.verify("ceiling", "content", "floor")
     assert report["code"] == (
@@ -265,7 +269,7 @@ def test_run__prereg_failing_format_is_not_a_provided_prereg(scenario, path, val
     assert report["results"]["keyconsist"]["applicable"] == 0
     assert report["commitments"] == []
     (lone,) = report["notarization_only"]
-    assert lone["fulfills"] == d.ref(d.decoded(json.loads(scenario.read("prereg"))))
+    assert lone["fulfills"] == d.ref(d.decode_payload(json.loads(scenario.read("prereg"))))
 
 
 def test_run__verification_is_offline(scenario, monkeypatch):
@@ -479,7 +483,7 @@ def test_never_raises__keyid_not_a_string(scenario, name, keyid):
 LONE = b'"\\ud800"'
 
 
-def _lone(scenario, name, path):
+def _store_lone_surrogate(scenario, name, path):
     scenario.set(name, path, "LONE")
     scenario.edit_body_bytes(name, lambda raw: raw.replace(b'"LONE"', LONE))
 
@@ -503,7 +507,7 @@ def test_never_raises__lone_surrogate_escape_in_the_body(scenario, name, path):
     """A lone surrogate escape in any body string passes format and selfsig (the bytes are as
     signed), and every other test judges it as the string it is, without raising."""
     scenario.with_ceiling("prereg")
-    _lone(scenario, name, path)
+    _store_lone_surrogate(scenario, name, path)
     report = scenario.verify("ceiling", "chain", "content", "keyconsist")
     assert {"format=PASS", "selfsig=PASS", "ceiling=PASS"} <= set(report["code"].split()[1:])
 
@@ -513,7 +517,7 @@ def test_never_raises__subject_named_as_no_path_can_be(scenario, name):
     """content #6: a subject name that no path on this system can have (a lone surrogate,
     or a NUL) names no artifact: it is not found, and verify does not raise."""
     if name == "\ud800":
-        _lone(scenario, "prereg", "body.subject.0.name")
+        _store_lone_surrogate(scenario, "prereg", "body.subject.0.name")
     else:
         scenario.set("prereg", "body.subject.0.name", name)
     report = scenario.verify("content")
@@ -527,8 +531,8 @@ def test_never_raises__subject_named_as_no_path_can_be(scenario, name):
 def test_never_raises__lone_surrogate_escape_as_due_or_link(scenario):
     """A lone surrogate due is not a parseable time (invalid-due); one as fulfills names no
     prereg (notarization-only)."""
-    _lone(scenario, "prereg", "body.due")
-    _lone(scenario, "postreg0", "body.fulfills")
+    _store_lone_surrogate(scenario, "prereg", "body.due")
+    _store_lone_surrogate(scenario, "postreg0", "body.fulfills")
     scenario.drop("postreg1")
     scenario.drop("postreg2")
     report = scenario.verify()

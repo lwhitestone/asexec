@@ -186,9 +186,9 @@ class Scenario:
         else:
 
             def edit_signed_body(envelope: dict) -> None:
-                body = data.body_of(envelope)
+                body = data.read_body_of(envelope)
                 apply({"body": body})
-                data.store(envelope, data.body_bytes(body))
+                data.store(envelope, data.make_body_bytes(body))
 
             self.tamper(name, edit_signed_body)
 
@@ -197,7 +197,9 @@ class Scenario:
     ) -> None:
         """Replace the body bytes with ``fn(bytes)``: signed, unless ``after_signing``."""
         if after_signing:
-            self.tamper(name, lambda envelope: data.store(envelope, fn(data.decoded(envelope))))
+            self.tamper(
+                name, lambda envelope: data.store(envelope, fn(data.decode_payload(envelope)))
+            )
         else:
             self.specs[name].byte_edits.append(fn)
 
@@ -245,7 +247,7 @@ class Scenario:
     def _link(self, target: str | None) -> str | None:
         if target is None or target.startswith("sha-256:"):
             return target
-        return data.ref(self._raw(target))
+        return data.ref(self._build_raw(target))
 
     def _body(self, name: str) -> dict:
         if name not in self._bodies:
@@ -267,9 +269,9 @@ class Scenario:
             fn(body)
         return body
 
-    def _raw(self, name: str) -> bytes:
+    def _build_raw(self, name: str) -> bytes:
         """The body bytes signed for ``name``: its body serialized, then any byte edits."""
-        raw = data.body_bytes(self._body(name))
+        raw = data.make_body_bytes(self._body(name))
         for fn in self.specs[name].byte_edits:
             raw = fn(raw)
         return raw
@@ -278,7 +280,7 @@ class Scenario:
         self._bodies = {}
         paths = []
         for name in self.specs:
-            raw = self._raw(name)
+            raw = self._build_raw(name)
             envelope = data.sign_bytes(raw, self.signers.get(name, self.key))
             record = self.ceilings.get(name)
             if record is not None:

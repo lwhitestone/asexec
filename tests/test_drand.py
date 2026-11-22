@@ -73,13 +73,15 @@ def test_pinned_chains_are_quicknet_with_its_genesis_and_period():
     assert drand.time_of_round(1000, CHAIN) == 1692806364  # 2023-08-23T15:59:24Z
 
 
-# --- verified_floor: a round fetched earlier, verified at signing ----------------- #
+# --- build_verified_floor: a round fetched earlier, verified at signing ----------- #
 def test_verified_floor_of_a_saved_round_is_the_floor_fetch_floor_writes():
     """A round as drand's HTTP API returns it ({round, randomness, signature}), verified
     offline, is the anchor.floor record --floor writes for the same round."""
     saved = {"round": ROUND, "randomness": RAND, "signature": SIG}
-    assert drand.verified_floor(saved, CHAIN) == drand.floor_record({"chain_hash": CHAIN, **saved})
-    assert drand.verified_floor(saved, CHAIN) == {
+    assert drand.build_verified_floor(saved, CHAIN) == drand.floor_record(
+        {"chain_hash": CHAIN, **saved}
+    )
+    assert drand.build_verified_floor(saved, CHAIN) == {
         "floor_type": "drand",
         "chain_hash": drand.QUICKNET_HASH,
         "round": ROUND,
@@ -105,7 +107,9 @@ def test_verified_floor_of_a_saved_round_is_the_floor_fetch_floor_writes():
 def test_verified_floor_refuses_a_round_that_does_not_verify(over):
     """Signing refuses a round that fails the floor conditions: a ValueError, never a floor."""
     with pytest.raises(ValueError):
-        drand.verified_floor({"round": ROUND, "randomness": RAND, "signature": SIG, **over}, CHAIN)
+        drand.build_verified_floor(
+            {"round": ROUND, "randomness": RAND, "signature": SIG, **over}, CHAIN
+        )
 
 
 # --- verify_floor ------------------------------------------------------------ #
@@ -147,11 +151,11 @@ def _payload(round_no=ROUND):
 def test_fetch_latest_round_builds_url_and_maps_fields(monkeypatch):
     seen = []
 
-    def fake(url, timeout):
+    def fake_urlopen(url, timeout):
         seen.append((url, timeout))
         return _payload()
 
-    monkeypatch.setattr(drand.urllib.request, "urlopen", fake)
+    monkeypatch.setattr(drand.urllib.request, "urlopen", fake_urlopen)
     got = drand.fetch_latest_round(CHAIN)
     assert seen == [(f"https://api.drand.sh/{drand.QUICKNET_HASH}/public/latest", 10)]
     assert got == {
@@ -166,23 +170,23 @@ def test_fetch_latest_round_builds_url_and_maps_fields(monkeypatch):
 def test_fetch_latest_round_falls_back_to_next_mirror(monkeypatch):
     urls = []
 
-    def fake(url, timeout):
+    def fake_urlopen(url, timeout):
         urls.append(url)
         if len(urls) == 1:
             raise OSError("down")
         return _payload()
 
-    monkeypatch.setattr(drand.urllib.request, "urlopen", fake)
+    monkeypatch.setattr(drand.urllib.request, "urlopen", fake_urlopen)
     assert drand.fetch_latest_round(CHAIN)["round"] == ROUND
     assert urls[0].startswith("https://api.drand.sh/")
     assert urls[1].startswith("https://api2.drand.sh/")
 
 
 def test_fetch_latest_round_all_mirrors_fail_raises_network_error(monkeypatch):
-    def fake(url, timeout):
+    def fake_urlopen(url, timeout):
         raise OSError("down")
 
-    monkeypatch.setattr(drand.urllib.request, "urlopen", fake)
+    monkeypatch.setattr(drand.urllib.request, "urlopen", fake_urlopen)
     with pytest.raises(NetworkError, match="any mirror"):
         drand.fetch_latest_round(CHAIN)
 

@@ -50,7 +50,7 @@ _FILE_DEPTH = parsing.MAX_NESTING_DEPTH
 _IN_BODY_DEPTH = parsing.MAX_NESTING_DEPTH - 1
 
 
-def _rule_broken(e: ManifestError, max_depth: int) -> str:
+def _describe_broken_rule(e: ManifestError, max_depth: int) -> str:
     """A JSON rule's message (``parsing.parse_json``), saying why a value inside the body is
     held one level shallower."""
     if max_depth < _FILE_DEPTH and str(e).startswith("nested more than"):
@@ -74,12 +74,12 @@ def _read_json(path: str, max_depth: int):
     try:
         return parsing.parse_json(text, max_depth)
     except ManifestError as e:  # a duplicate key, or nested too deep
-        raise ManifestError(f"{path!r}: {_rule_broken(e, max_depth)}") from None
+        raise ManifestError(f"{path!r}: {_describe_broken_rule(e, max_depth)}") from None
     except ValueError as e:  # not JSON, or an integer of more digits than Python reads
         raise ManifestError(f"{path!r} must contain valid JSON: {e}") from None
 
 
-def _free_form_file(flag: str) -> Callable[[str], str | dict]:
+def _make_free_form_loader(flag: str) -> Callable[[str], str | dict]:
     """A loader for ``--target-file``, ``--declaration-file`` or ``--notes-file``: what the
     field is, a JSON object or a string, and not an empty one."""
 
@@ -87,7 +87,7 @@ def _free_form_file(flag: str) -> Callable[[str], str | dict]:
         value = _read_json(path, _IN_BODY_DEPTH)
         if not (isinstance(value, str | dict) and value):
             raise ManifestError(
-                f"{flag} {path!r} must hold a non-empty JSON object or string: {_short(value)}"
+                f"{flag} {path!r} must hold a non-empty JSON object or string: {_shorten(value)}"
             )
         return value
 
@@ -120,19 +120,19 @@ def _get_arg_or_file[T](
 
 def _get_target(args) -> str | dict | None:
     """Retrieve the target value (from arg xor file), if any."""
-    return _get_arg_or_file(args, "target", "target_file", _free_form_file("--target-file"))
+    return _get_arg_or_file(args, "target", "target_file", _make_free_form_loader("--target-file"))
 
 
 def _get_declaration(args) -> str | dict | None:
     """Retrieve the declaration value (from arg xor file), if any."""
     return _get_arg_or_file(
-        args, "declaration", "declaration_file", _free_form_file("--declaration-file")
+        args, "declaration", "declaration_file", _make_free_form_loader("--declaration-file")
     )
 
 
 def _get_notes(args) -> str | dict | None:
     """Retrieve the notes value (from arg xor file), if any."""
-    return _get_arg_or_file(args, "notes", "notes_file", _free_form_file("--notes-file"))
+    return _get_arg_or_file(args, "notes", "notes_file", _make_free_form_loader("--notes-file"))
 
 
 # What a --plan / --evidence entry may say besides ``name``: the declared fields, text or
@@ -142,19 +142,19 @@ _PLAN_DECLARED = ("media_type", "label")
 _EVIDENCE_DECLARED = ("media_type", "uri")
 
 
-def _strict_json(text: str, max_depth: int):
+def _parse_strict_json(text: str, max_depth: int):
     """A JSON value held to a manifest file's JSON rules (``parsing.parse_json``: no
     duplicate key, since parsers disagree on which value wins, and at most ``max_depth``
     deep); ``ValueError`` otherwise."""
     try:
         return parsing.parse_json(text, max_depth)
     except ManifestError as e:  # a duplicate key, or nested too deep
-        raise ValueError(_rule_broken(e, max_depth)) from None
+        raise ValueError(_describe_broken_rule(e, max_depth)) from None
     except ValueError as e:  # not JSON, or an integer of more digits than Python reads
         raise ValueError(f"not valid JSON: {e}") from None
 
 
-def _spec_shape(spec, flag: str, declared: tuple[str, ...]) -> dict:
+def _check_spec_shape(spec, flag: str, declared: tuple[str, ...]) -> dict:
     """A file described as ``{"name": <path>, <declared>...}``; ``ValueError`` if it is not
     one."""
     if not isinstance(spec, dict) or not isinstance(spec.get("name"), str):
@@ -180,13 +180,13 @@ def _spec_shape(spec, flag: str, declared: tuple[str, ...]) -> dict:
     return spec
 
 
-def _plan_shape(value) -> dict:
+def _check_plan_shape(value) -> dict:
     if not isinstance(value, dict):
         raise ValueError(f'--plan must be a JSON object, like {{"name": "plan.md"}}: {value!r}')
-    return _spec_shape(value, "--plan", _PLAN_DECLARED)
+    return _check_spec_shape(value, "--plan", _PLAN_DECLARED)
 
 
-def _items_shape(value) -> list:
+def _check_items_shape(value) -> list:
     """``--items``: an array of ``{"id": <string>, "kind": <string>}``, ids unique."""
     if not isinstance(value, list):
         raise ValueError(f'--items must be a JSON array, like [{{"id": "S1"}}]: {value!r}')
@@ -208,17 +208,17 @@ def _items_shape(value) -> list:
     return value
 
 
-def _evidence_shape(value) -> list:
+def _check_evidence_shape(value) -> list:
     if not isinstance(value, list):
         raise ValueError(
             f'--evidence must be a JSON array, like [{{"name": "out.json"}}]: {value!r}'
         )
     if not value:
         raise ValueError("--evidence must list at least one file")
-    return [_spec_shape(spec, "--evidence", _EVIDENCE_DECLARED) for spec in value]
+    return [_check_spec_shape(spec, "--evidence", _EVIDENCE_DECLARED) for spec in value]
 
 
-def _shaped_arg_or_file(args, name: str, shape: Callable):
+def _get_shaped_arg_or_file(args, name: str, shape: Callable):
     """``--<name>`` (inline JSON) or ``--<name>-file``, held to ``shape``. An inline value that
     fails it is a usage error (64); a file's content that fails it exits 1."""
 
@@ -232,21 +232,21 @@ def _shaped_arg_or_file(args, name: str, shape: Callable):
     return _get_arg_or_file(args, name, f"{name}_file", load_file)
 
 
-def _repro_recipe_shape(value) -> dict:
+def _check_repro_recipe_shape(value) -> dict:
     if not isinstance(value, dict):
         raise ValueError(
-            f'--repro-recipe must be a JSON object, like {{"seed": 0}}: {_short(value)}'
+            f'--repro-recipe must be a JSON object, like {{"seed": 0}}: {_shorten(value)}'
         )
     return value
 
 
-def _short(value) -> str:
+def _shorten(value) -> str:
     """``value`` for an error message: its repr, cut to a line's length."""
     text = repr(value)
     return text if len(text) <= 80 else text[:77] + "..."
 
 
-def _described_entries(specs: list, alg: str) -> list[dict]:
+def _build_described_entries(specs: list, alg: str) -> list[dict]:
     """Entries for files described as ``{"name": <path>, ...}`` (already shaped): each file
     hashed as a subject file is (``hashing.build_entries``), with its declared fields kept."""
     entries = hashing.build_entries([spec["name"] for spec in specs], alg)
@@ -258,23 +258,23 @@ def _described_entries(specs: list, alg: str) -> list[dict]:
 
 def _get_plan(args) -> dict | None:
     """``body.plan`` from --plan / --plan-file: one described file."""
-    spec = _shaped_arg_or_file(args, "plan", _plan_shape)
-    return None if spec is None else _described_entries([spec], args.hash_alg)[0]
+    spec = _get_shaped_arg_or_file(args, "plan", _check_plan_shape)
+    return None if spec is None else _build_described_entries([spec], args.hash_alg)[0]
 
 
 def _get_items(args) -> list | None:
     """``body.items`` from --items / --items-file: a list of ``{"id", "kind"}``, as given."""
-    return _shaped_arg_or_file(args, "items", _items_shape)
+    return _get_shaped_arg_or_file(args, "items", _check_items_shape)
 
 
 def _get_evidence(args) -> list | None:
     """``body.evidence`` from --evidence / --evidence-file: a non-empty list of described
     files."""
-    specs = _shaped_arg_or_file(args, "evidence", _evidence_shape)
-    return None if specs is None else _described_entries(specs, args.hash_alg)
+    specs = _get_shaped_arg_or_file(args, "evidence", _check_evidence_shape)
+    return None if specs is None else _build_described_entries(specs, args.hash_alg)
 
 
-def _built(build: Callable[..., dict], *args, **kwargs) -> dict:
+def _build_body(build: Callable[..., dict], *args, **kwargs) -> dict:
     """A body from ``manifest.build_*``; what its writer model refuses is a clean error."""
     try:
         return build(*args, **kwargs)
@@ -289,9 +289,9 @@ def _built(build: Callable[..., dict], *args, **kwargs) -> dict:
 _ROUND_FIELDS = ("round", "randomness", "signature")
 
 
-def _round_shape(value) -> dict:
+def _check_round_shape(value) -> dict:
     """``--floor-round``: a round of the chain ``--floor`` fetches from, as drand's HTTP API
-    returns it, that meets every floor condition (``drand.verified_floor``: the pinned chain,
+    returns it, that meets every floor condition (``drand.build_verified_floor``: the pinned chain,
     BLS, randomness). The ``anchor.floor`` record to sign; ``ValueError`` if it is not one."""
     if not isinstance(value, dict):
         raise ValueError(
@@ -317,7 +317,7 @@ def _round_shape(value) -> dict:
                 f"{value[field]!r}"
             )
     try:
-        return drand.verified_floor(value, drand.SIGNING_CHAIN)
+        return drand.build_verified_floor(value, drand.SIGNING_CHAIN)
     except ValueError as e:
         raise ValueError(f"--floor-round: {e}") from None
 
@@ -330,7 +330,7 @@ def _get_floor(args) -> dict | None:
     (--floor-round / --floor-round-file, verified here, offline), the latest round fetched now
     (--floor, network), or None."""
     if args.floor_round is not None or args.floor_round_file is not None:
-        return _shaped_arg_or_file(args, "floor_round", _round_shape)
+        return _get_shaped_arg_or_file(args, "floor_round", _check_round_shape)
     if not args.floor:
         return None
     try:
@@ -453,7 +453,7 @@ def cmd_prereg(args) -> int:
     priv, pub = keys.load_signing_key(args.key)
     subject = _build_subject(args.subject, args.hash_alg)
     plan, items = _get_plan(args), _get_items(args)
-    body = _built(
+    body = _build_body(
         manifest.build_prereg,
         target,
         due=args.due,
@@ -504,7 +504,7 @@ def cmd_postreg(args) -> int:
     declaration = _get_declaration(args) or (prereg_body or {}).get("declaration")
     subject = _build_subject(args.subject, args.hash_alg)
     evidence = _get_evidence(args)
-    body = _built(
+    body = _build_body(
         manifest.build_postreg,
         target,
         fulfills=fulfills,
@@ -661,13 +661,13 @@ UNKNOWN_HEADING = (
 _PLAIN_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
-def _json_text(value) -> str:
+def _format_json(value) -> str:
     """``value`` as one line of ASCII JSON: a newline, a control character or any non-ASCII
     character in it is escaped, so it cannot forge a line of the report."""
     return json.dumps(value, ensure_ascii=True)
 
 
-def _path_text(path: list) -> str:
+def _format_path(path: list) -> str:
     """A path of keys and indexes as the doc writes it (``body.subject[0].name``), each key that
     is not plain shown as JSON (``body["a\\nb"]``)."""
     text = ""
@@ -677,14 +677,14 @@ def _path_text(path: list) -> str:
         elif _PLAIN_KEY.fullmatch(part):
             text += f".{part}" if text else part
         else:
-            text += f"[{_json_text(part)}]"
+            text += f"[{_format_json(part)}]"
     return text
 
 
 def _show_fields(manifests: list, kind: str, heading: str) -> None:
     """Under ``heading``, if any file has them: each file's ``untrusted`` or ``unknown``
-    entries (``verifier._untrusted``, ``_unknown_fields``), each path and value as JSON. These
-    are the file's least checked text, so none is printed raw."""
+    entries (``verifier._get_untrusted``, ``_find_unknown_fields``), each path and value as
+    JSON. These are the file's least checked text, so none is printed raw."""
     shown = [m for m in manifests if m[kind]]
     if not shown:
         return
@@ -692,7 +692,7 @@ def _show_fields(manifests: list, kind: str, heading: str) -> None:
     for m in shown:
         _show(f"  {m['path']}")
         for entry in m[kind]:
-            _show(f"    {_path_text(entry['path'])} = {_json_text(entry['value'])}")
+            _show(f"    {_format_path(entry['path'])} = {_format_json(entry['value'])}")
 
 
 def _show_items(cp: dict) -> None:
@@ -719,10 +719,10 @@ def _show_items(cp: dict) -> None:
         )
 
 
-# Why a counted postreg is not shown on time (verifier._on_time), as the report says it.
+# Why a counted postreg is not shown on time (verifier._judge_on_time), as the report says it.
 _NOT_ON_TIME: dict[str, Callable[[dict], str]] = {
     "late": lambda t: (
-        f"is late: its ceiling (no later than {verifier._utc_ceil(t['no_later_than_us'])}) "
+        f"is late: its ceiling (no later than {verifier._format_utc_ceil(t['no_later_than_us'])}) "
         "is after due"
     ),
     "no-ceiling": lambda t: "is not shown on time: it has no ceiling",
@@ -747,12 +747,14 @@ _PREREG_NOT_BEFORE = {
     verifier.REASON_ORDER_NO_CEILING: "it has no ceiling",
     verifier.REASON_ORDER_INVALID_CEILING: "its ceiling does not verify",
 }
-# Why a counted postreg is not shown after its prereg (verifier._order), as the report says it.
+# Why a counted postreg is not shown after its prereg (verifier._judge_order), as the report
+# says it.
 _NOT_AFTER: dict[str, Callable[[dict, dict], str]] = {
     "not-after": lambda p, od: (
         "is not shown after the pre-registration: its floor (no earlier than "
-        f"{verifier._utc_floor(p['no_earlier_than_us'])}) is not after the pre-registration's "
-        f"ceiling (no later than {verifier._utc_ceil(od['ceiling']['no_later_than_us'])})"
+        f"{verifier._format_utc_floor(p['no_earlier_than_us'])}) is not after the "
+        "pre-registration's "
+        f"ceiling (no later than {verifier._format_utc_ceil(od['ceiling']['no_later_than_us'])})"
     ),
     "no-floor": lambda p, od: "is not shown after the pre-registration: it has no floor",
     "invalid-floor": lambda p, od: (
@@ -804,7 +806,7 @@ def _add_anchor_flags(p):
     )
     floor.add_argument(
         "--floor-round",
-        type=_json_arg(_round_shape, _FILE_DEPTH),
+        type=_json_arg(_check_round_shape, _FILE_DEPTH),
         help="attach as the floor a drand round fetched earlier, for example when a run "
         'started, as drand\'s HTTP API returns it: JSON {"round": ..., "randomness": ..., '
         '"signature": ...} of the chain --floor fetches from. Verified at signing (offline); '
@@ -872,7 +874,7 @@ def _nonempty_arg(value: str) -> str:
     return value
 
 
-def _domain_arg(value: str) -> str:
+def _check_domain_arg(value: str) -> str:
     """``--domain``: a name with no whitespace or control character (it goes into a URL)."""
     _nonempty_arg(value)
     if any(c.isspace() or not c.isprintable() for c in value):
@@ -884,13 +886,13 @@ def _domain_arg(value: str) -> str:
 
 def _json_arg(shape: Callable, max_depth: int):
     """An argparse ``type`` for an inline JSON value: not empty, JSON under a manifest file's
-    rules (``_strict_json``, at most ``max_depth`` deep), and held to ``shape``. A value that
+    rules (``_parse_strict_json``, at most ``max_depth`` deep), and held to ``shape``. A value that
     fails is a usage error."""
 
     def parse(value: str):
         _nonempty_arg(value)
         try:
-            return shape(_strict_json(value, max_depth))
+            return shape(_parse_strict_json(value, max_depth))
         except ValueError as e:
             raise argparse.ArgumentTypeError(str(e)) from None
 
@@ -981,7 +983,7 @@ def build_parser() -> argparse.ArgumentParser:
         help='the plan the claim is tested against, as JSON: {"name": <file path>, '
         '"media_type": ..., "label": ...}; asexec hashes the file (--hash-alg)',
         file_help="the --plan JSON, from a file",
-        type=_json_arg(_plan_shape, _FILE_DEPTH),
+        type=_json_arg(_check_plan_shape, _FILE_DEPTH),
     )
     _add_arg_or_file(
         pr,
@@ -989,7 +991,7 @@ def build_parser() -> argparse.ArgumentParser:
         help='what the claim commits to deliver, as a JSON array: [{"id": "S1", "kind": '
         '"run"}, ...]; ids must be unique, and each is accounted for by a postreg\'s --item-id',
         file_help="the --items JSON array, from a file",
-        type=_json_arg(_items_shape, _FILE_DEPTH),
+        type=_json_arg(_check_items_shape, _FILE_DEPTH),
     )
     _add_anchor_flags(pr)
     pr.add_argument("--out", type=_nonempty_arg, default="preregistration.json")
@@ -1033,7 +1035,7 @@ def build_parser() -> argparse.ArgumentParser:
     po.add_argument("--provenance", choices=["asserted", "reproducible"], default="asserted")
     po.add_argument(
         "--repro-recipe",
-        type=_json_arg(_repro_recipe_shape, _IN_BODY_DEPTH),
+        type=_json_arg(_check_repro_recipe_shape, _IN_BODY_DEPTH),
         help="JSON: {seed, decode, runtime} if provenance=reproducible",
     )
     _add_arg_or_file(po, "notes")
@@ -1053,7 +1055,7 @@ def build_parser() -> argparse.ArgumentParser:
         help='files that back this postreg, as a JSON array: [{"name": <file path>, '
         '"media_type": ..., "uri": ...}, ...]; asexec hashes each file (--hash-alg)',
         file_help="the --evidence JSON array, from a file",
-        type=_json_arg(_evidence_shape, _FILE_DEPTH),
+        type=_json_arg(_check_evidence_shape, _FILE_DEPTH),
     )
     _add_anchor_flags(po)
     po.add_argument("--out", type=_nonempty_arg, default="postregistration.json")
@@ -1084,13 +1086,13 @@ def build_parser() -> argparse.ArgumentParser:
     isub = idp.add_subparsers(dest="identity_cmd", required=True)
     ie = isub.add_parser("emit", help="write a .well-known/asexec.json for your key")
     ie.add_argument("--key", required=True, type=_nonempty_arg)
-    ie.add_argument("--domain", type=_domain_arg)
+    ie.add_argument("--domain", type=_check_domain_arg)
     ie.add_argument("--out", type=_nonempty_arg, default="asexec.json")
     ie.set_defaults(func=cmd_identity)
     iv = isub.add_parser(
         "match", help="check a key matches that which is asserted by a domain (network)"
     )
-    iv.add_argument("--domain", required=True, type=_domain_arg)
+    iv.add_argument("--domain", required=True, type=_check_domain_arg)
     which = iv.add_mutually_exclusive_group(required=True)  # exactly one key to look for
     which.add_argument("--keyid", type=_nonempty_arg)
     which.add_argument("--pubkey", type=_nonempty_arg)

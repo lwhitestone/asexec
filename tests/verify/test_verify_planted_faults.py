@@ -54,13 +54,13 @@ def test_fault__hash_alg_only_at_the_body_level(tmp_path):
     hash_alg in its entries, fails content: an entry's own hash_alg is the only one read,
     and there is no default."""
 
-    def old_layout(body):
+    def use_old_layout(body):
         body = d.with_field(body, "hash_alg", "sha-256")
         for i in range(len(body["subject"])):
             body = d.without_field(body, f"subject.{i}.hash_alg")
         return body
 
-    pre, post = (d.sign(old_layout(b)) for b in (d.PREREG, d.POSTREG))
+    pre, post = (d.sign(use_old_layout(b)) for b in (d.PREREG, d.POSTREG))
     report = _run(tmp_path, pre, post, tests=(*REQUIRED, "content"))
     assert report["code"] == PREFIX + "content=FAIL format=PASS selfsig=PASS"
     assert set(_content_reasons(report)) == {"malformed subject entry"}
@@ -167,10 +167,10 @@ SIG = SIGNED["dsse"]["signatures"][0]
     "changes",
     [
         {"keyid": None},
-        {"sig": d.b64(d.decoded({"dsse": {"payload": SIG["sig"]}})[:63])},
-        {"sig": d.b64(d.decoded({"dsse": {"payload": SIG["sig"]}}) + b"\0")},
+        {"sig": d.encode_b64(d.decode_payload({"dsse": {"payload": SIG["sig"]}})[:63])},
+        {"sig": d.encode_b64(d.decode_payload({"dsse": {"payload": SIG["sig"]}}) + b"\0")},
         {"sig": ""},
-        {"sig": d.decoded({"dsse": {"payload": SIG["sig"]}}).hex()},
+        {"sig": d.decode_payload({"dsse": {"payload": SIG["sig"]}}).hex()},
         {"pubkey": "00" * 31, "keyid": keys.keyid_for(bytes(31))},
         {"pubkey": "00" * 33},
     ],
@@ -228,7 +228,7 @@ def test_fault__postreg_with_a_duplicate_key_in_the_body_joins_no_commitment(tmp
     """Run rules: a postreg whose body repeats a key is malformed, validly signed or not, so
     it is neither counted nor rejected, nor notarization-only."""
     post = d.with_field(d.POSTREG, "fulfills", d.ref(d.PREREG))
-    raw = d.body_bytes(post).replace(b'"notes":"postreg0"', b'"notes":"a","notes":"postreg0"')
+    raw = d.make_body_bytes(post).replace(b'"notes":"postreg0"', b'"notes":"a","notes":"postreg0"')
     report = _run(tmp_path, d.sign(d.PREREG), d.sign_bytes(raw), tests=TESTS_LINKED)
     assert report["code"] == PREFIX + "chain=FAIL format=FAIL keyconsist=FAIL selfsig=PASS"
     (commitment,) = report["commitments"]

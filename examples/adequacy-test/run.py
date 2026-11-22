@@ -76,7 +76,7 @@ def asexec(*args: str, check: bool = True, cwd: Path | None = None) -> subproces
     )
 
 
-def rel(paths: list[Path], art: Path) -> list[str]:
+def list_relative_paths(paths: list[Path], art: Path) -> list[str]:
     return [str(p.relative_to(art)) for p in paths]
 
 
@@ -148,7 +148,7 @@ def prereg(key: Path, art: Path, out: Path) -> Path:
         "--declaration-file",
         str(decl),
         "--subject",
-        *rel([art / "plan.md", art / "plants.commitment.json"], art),
+        *list_relative_paths([art / "plan.md", art / "plants.commitment.json"], art),
         "--out",
         str(out),
         cwd=art,
@@ -169,7 +169,7 @@ def postreg(
         "--notes-file",
         str(notes),
         "--subject",
-        *rel(subjects, subjects[0].parent),
+        *list_relative_paths(subjects, subjects[0].parent),
         "--out",
         str(out),
     ]

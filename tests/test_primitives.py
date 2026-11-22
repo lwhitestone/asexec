@@ -7,7 +7,7 @@ import os
 import pytest
 
 from asexec import hashing, keys
-from asexec.canonical import b64decode, b64encode, canonical_bytes, pae, signing_input
+from asexec.canonical import canonical_bytes, decode_base64, encode_base64, pae, signing_input
 from asexec.errors import HashAlgError, ManifestError
 
 
@@ -34,7 +34,7 @@ def test_signing_input_changes_with_the_body_bytes():
 
 @pytest.mark.parametrize("data", [b"", b"A", b"AB", b"ABC", bytes(range(256))])
 def test_strict_base64_round_trips(data):
-    assert b64decode(b64encode(data)) == data
+    assert decode_base64(encode_base64(data)) == data
 
 
 @pytest.mark.parametrize(
@@ -43,7 +43,7 @@ def test_strict_base64_round_trips(data):
 )
 def test_strict_base64_has_one_spelling_per_byte_string(text):
     with pytest.raises(ValueError):
-        b64decode(text)
+        decode_base64(text)
 
 
 def test_hash_file(tmp_path):
@@ -52,13 +52,13 @@ def test_hash_file(tmp_path):
     assert hashing.hash_file(str(path), "sha-256") == hashlib.sha256(b"hello").hexdigest()
 
 
-def _files(root, *names):
+def _write_files(root, *names):
     for name in names:
         (root / name).parent.mkdir(parents=True, exist_ok=True)
         (root / name).write_text(name)
 
 
-def _sha(text):
+def _hash_text(text):
     return hashlib.sha256(text.encode()).hexdigest()
 
 
@@ -72,18 +72,18 @@ def test_build_subject_names_each_file_by_its_normalized_relative_path(tmp_path,
     # The name is the path as given, relative to the current directory, normalized and
     # "/"-separated: two files with the same basename stay distinct.
     monkeypatch.chdir(tmp_path)
-    _files(tmp_path, "a/run.py", "b/run.py", "c.txt")
+    _write_files(tmp_path, "a/run.py", "b/run.py", "c.txt")
     subject = hashing.build_subject(["a/run.py", "./b//run.py", "c.txt"], "sha-256")
     assert subject == [
-        {"name": "a/run.py", "hash_alg": "sha-256", "digest": {"sha-256": _sha("a/run.py")}},
-        {"name": "b/run.py", "hash_alg": "sha-256", "digest": {"sha-256": _sha("b/run.py")}},
-        {"name": "c.txt", "hash_alg": "sha-256", "digest": {"sha-256": _sha("c.txt")}},
+        {"name": "a/run.py", "hash_alg": "sha-256", "digest": {"sha-256": _hash_text("a/run.py")}},
+        {"name": "b/run.py", "hash_alg": "sha-256", "digest": {"sha-256": _hash_text("b/run.py")}},
+        {"name": "c.txt", "hash_alg": "sha-256", "digest": {"sha-256": _hash_text("c.txt")}},
     ]
 
 
 def test_build_subject_hashes_a_symlink_through_to_its_target(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    _files(tmp_path, "real.txt")
+    _write_files(tmp_path, "real.txt")
     try:
         (tmp_path / "link.txt").symlink_to(tmp_path / "real.txt")
     except (OSError, NotImplementedError):
@@ -92,7 +92,7 @@ def test_build_subject_hashes_a_symlink_through_to_its_target(tmp_path, monkeypa
     assert entry == {
         "name": "link.txt",
         "hash_alg": "sha-256",
-        "digest": {"sha-256": _sha("real.txt")},
+        "digest": {"sha-256": _hash_text("real.txt")},
     }
 
 
@@ -121,7 +121,7 @@ def test_build_subject_hashes_a_symlink_through_to_its_target(tmp_path, monkeypa
 )
 def test_build_subject_refuses_what_content_would_fail(tmp_path, monkeypatch, paths, message):
     monkeypatch.chdir(tmp_path)
-    _files(tmp_path, "c.txt", "d/x.txt")
+    _write_files(tmp_path, "c.txt", "d/x.txt")
     paths = [p.format(abs=tmp_path / "c.txt") for p in paths]
     with pytest.raises(ManifestError, match=message):
         hashing.build_subject(paths, "sha-256")
@@ -131,7 +131,7 @@ def test_build_subject_refuses_what_content_would_fail(tmp_path, monkeypatch, pa
 def test_build_subject_refuses_a_backslash_in_a_name(tmp_path, monkeypatch):
     # A legal filename character here, a separator on Windows: one name, two files.
     monkeypatch.chdir(tmp_path)
-    _files(tmp_path, "a\\b.txt")
+    _write_files(tmp_path, "a\\b.txt")
     with pytest.raises(ManifestError, match="backslash"):
         hashing.build_subject(["a\\b.txt"], "sha-256")
 

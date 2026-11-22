@@ -26,7 +26,7 @@ MIDP_US, RADI_US = FLOOR_US - 10_000_000, 1_000_000
 CEILING_US = MIDP_US + RADI_US  # the prereg's ceiling time T: nine seconds before the floor
 
 
-def _witness_at(sc, make_server, midpoint_us, radius_us=RADI_US):
+def _pin_witness_at(sc, make_server, midpoint_us, radius_us=RADI_US):
     """Re-pin the scenario's witness to one that signs ``midpoint_us`` and ``radius_us``."""
     sc.server_pub, sc.sign_response = make_server(midpoint_us=midpoint_us, radius_us=radius_us)
     sc.pin_server(sc.server_pub)
@@ -36,7 +36,7 @@ def _witness_at(sc, make_server, midpoint_us, radius_us=RADI_US):
 def sc(scenario, make_server):
     """A prereg with a ceiling nine seconds before round 1000, and one counted postreg whose
     floor is round 1000."""
-    _witness_at(scenario, make_server, MIDP_US)
+    _pin_witness_at(scenario, make_server, MIDP_US)
     scenario.with_ceiling("prereg")
     scenario.with_floor("postreg0")
     scenario.drop("postreg1")
@@ -44,13 +44,13 @@ def sc(scenario, make_server):
     return scenario
 
 
-def _order(report):
+def _get_order(report):
     (commitment,) = report["commitments"]
     return commitment["order"]
 
 
-def _statuses(report):
-    return [p["status"] for p in _order(report)["postregs"]]
+def _get_statuses(report):
+    return [p["status"] for p in _get_order(report)["postregs"]]
 
 
 def test_order__pass__all(sc):
@@ -61,7 +61,7 @@ def test_order__pass__all(sc):
     assert report["code"] == PASS
     assert report["results"]["order"]["reason"] == "1/1 commitment(s) ok"
     (post,) = [m for m in report["manifests"] if m["path"].endswith("/postreg0.json")]
-    assert _order(report) == {
+    assert _get_order(report) == {
         "examined": True,
         "ok": True,
         "reason": None,
@@ -72,13 +72,13 @@ def test_order__pass__all(sc):
 
 def test_order__pass__all_each_counted_postreg_of_a_chain(scenario, make_server):
     """order: every counted postreg is examined, each against the prereg's ceiling."""
-    _witness_at(scenario, make_server, MIDP_US)
+    _pin_witness_at(scenario, make_server, MIDP_US)
     scenario.with_ceiling("prereg")
     for name in ("postreg0", "postreg1", "postreg2"):
         scenario.with_floor(name)
     report = scenario.verify("chain", "order")
     assert report["code"] == "asexec-verify/1 chain=PASS format=PASS order=PASS selfsig=PASS"
-    assert _statuses(report) == ["after"] * 3
+    assert _get_statuses(report) == ["after"] * 3
 
 
 def test_order__fail__1_prereg_has_a_ceiling(sc):
@@ -88,13 +88,13 @@ def test_order__fail__1_prereg_has_a_ceiling(sc):
     sc.with_ceiling("postreg0")
     report = sc.verify("order")
     assert report["code"] == FAIL
-    order = _order(report)
+    order = _get_order(report)
     assert order["reason"] == "the pre-registration has no ceiling"
     assert order["ceiling"] == {"status": "absent", "no_later_than_us": None}
-    assert _statuses(report) == ["not-compared"]
+    assert _get_statuses(report) == ["not-compared"]
 
 
-def _ceiling_of(sc, name):
+def _get_ceiling_of(sc, name):
     sc.write()
     return json.loads((sc.manifest_dir / f"{name}.json").read_text())["ceiling"]
 
@@ -117,7 +117,7 @@ def test_order__fail__2_prereg_ceiling_meets_the_ceiling_conditions(sc, case):
         sc.set("prereg", "ceiling.witness_id", "nobody")
     elif case == "nonce-of-another-manifest":
         sc.with_ceiling("postreg0")
-        other = _ceiling_of(sc, "postreg0")  # genuine, and as early, but for the postreg
+        other = _get_ceiling_of(sc, "postreg0")  # genuine, and as early, but for the postreg
         sc.tamper("prereg", lambda env: env.update(ceiling=other))
     elif case == "response-for-another-nonce":
         sc.set("prereg", "ceiling.response", sc.sign_response(bytes(32)).hex())
@@ -129,7 +129,7 @@ def test_order__fail__2_prereg_ceiling_meets_the_ceiling_conditions(sc, case):
         sc.set("prereg", "ceiling", "a ceiling")
     report = sc.verify("order")
     assert report["code"] == FAIL
-    order = _order(report)
+    order = _get_order(report)
     assert order["reason"] == "the pre-registration's ceiling does not verify"
     assert order["ceiling"] == {"status": "invalid", "no_later_than_us": None}
 
@@ -149,11 +149,11 @@ def test_order__pass__2_any_copy_of_the_prereg_with_a_verified_ceiling_shows_it(
     sc.add_raw("prereg-bare-copy", json.dumps({k: v for k, v in early.items() if k != "ceiling"}))
     report = sc.verify("ceiling", "order")
     assert report["code"] == "asexec-verify/1 ceiling=PASS format=PASS order=PASS selfsig=PASS"
-    assert _order(report)["ceiling"] == {"status": "verified", "no_later_than_us": CEILING_US}
+    assert _get_order(report)["ceiling"] == {"status": "verified", "no_later_than_us": CEILING_US}
     assert len(report["commitments"]) == 1
 
 
-def _late_ceiling_for_the_commitment(sc, make_server, ceiling_for):
+def _make_late_ceiling_for_the_commitment(sc, make_server, ceiling_for):
     """The prereg as first written (its ceiling nine seconds before the floor), and from then
     on the commitment's own ceiling from a second pinned witness, a minute after the floor."""
     sc.write()
@@ -169,24 +169,24 @@ def test_order__fail__2_a_rejected_copy_s_ceiling_is_not_the_prereg_s(sc, make_s
     that fails selfsig (another key's keyid claimed) is a rejected pre-registration: its
     ceiling, though genuine, early and for the same body, is not read, so the commitment's
     own late ceiling decides."""
-    early = _late_ceiling_for_the_commitment(sc, make_server, ceiling_for)
+    early = _make_late_ceiling_for_the_commitment(sc, make_server, ceiling_for)
     early["dsse"]["signatures"][0]["keyid"] = keys.keyid_for(keys.generate()[1])
     sc.add_raw("prereg-forged-copy", json.dumps(early))
     report = sc.verify("ceiling", "order")
     assert report["code"] == "asexec-verify/1 ceiling=PASS format=PASS order=FAIL selfsig=FAIL"
     assert len(report["rejected_preregs"]) == 1
-    order = _order(report)
+    order = _get_order(report)
     assert order["ceiling"] == {"status": "verified", "no_later_than_us": FLOOR_US + 61_000_000}
-    assert _statuses(report) == ["not-after"]
+    assert _get_statuses(report) == ["not-after"]
 
 
 def test_order__fail__2_another_signer_s_ceiling_is_not_the_prereg_s(sc, make_server, ceiling_for):
     """order #1-#2: the same body signed by a second key is a second commitment, judged on its
     own: its early ceiling orders its own counted postreg, and is not the first commitment's
     time, whose own late ceiling decides."""
-    _late_ceiling_for_the_commitment(sc, make_server, ceiling_for)
+    _make_late_ceiling_for_the_commitment(sc, make_server, ceiling_for)
     other = keys.generate()
-    raw = d.decoded(json.loads(sc.read("prereg")))
+    raw = d.decode_payload(json.loads(sc.read("prereg")))
     copy = d.sign_bytes(raw, other)
     nonce = d.ref(raw).split(":", 1)[-1]
     copy["ceiling"] = ceiling_for(nonce, "synthetic", sc.server_pub, sc.sign_response)
@@ -212,9 +212,11 @@ def test_order__fail__3_counted_postreg_has_a_floor(sc):
     sc.specs["postreg0"].floor = False
     report = sc.verify("order")
     assert report["code"] == FAIL
-    assert _order(report)["reason"] == "a counted postreg is not shown after the pre-registration"
-    assert _order(report)["postregs"][0] == {
-        "ref": _order(report)["postregs"][0]["ref"],
+    assert (
+        _get_order(report)["reason"] == "a counted postreg is not shown after the pre-registration"
+    )
+    assert _get_order(report)["postregs"][0] == {
+        "ref": _get_order(report)["postregs"][0]["ref"],
         "status": "no-floor",
         "no_earlier_than_us": None,
     }
@@ -240,18 +242,18 @@ def test_order__fail__4_floor_meets_the_floor_conditions(sc, path, value):
     sc.set("postreg0", f"body.anchor.floor.{path}", value)
     report = sc.verify("order")
     assert report["code"] == FAIL
-    assert _statuses(report) == ["invalid-floor"]
-    assert _order(report)["postregs"][0]["no_earlier_than_us"] is None
+    assert _get_statuses(report) == ["invalid-floor"]
+    assert _get_order(report)["postregs"][0]["no_earlier_than_us"] is None
 
 
 def test_order__fail__5_a_floor_before_the_prereg_ceiling(sc, make_server):
     """order #5: the run's floor precedes the prereg's ceiling (the witness signed the prereg
     in November, after the August round the postreg carries): the postreg is not shown after
     the prereg. Its commitment is still fulfilled."""
-    _witness_at(sc, make_server, 1_700_000_000_000_000)  # the default witness: 2023-11-14
+    _pin_witness_at(sc, make_server, 1_700_000_000_000_000)  # the default witness: 2023-11-14
     report = sc.verify("order")
     assert report["code"] == FAIL
-    order = _order(report)
+    order = _get_order(report)
     assert order["reason"] == "a counted postreg is not shown after the pre-registration"
     assert order["ceiling"]["no_later_than_us"] == 1_700_000_001_000_000
     assert order["postregs"][0]["status"] == "not-after"
@@ -261,23 +263,23 @@ def test_order__fail__5_a_floor_before_the_prereg_ceiling(sc, make_server):
 
 def test_order__fail__5_precedes_is_strict(sc, make_server):
     """order #5: a ceiling time equal to the floor's, to the microsecond, does not precede it."""
-    _witness_at(sc, make_server, FLOOR_US - RADI_US)
+    _pin_witness_at(sc, make_server, FLOOR_US - RADI_US)
     report = sc.verify("order")
     assert report["code"] == FAIL
-    assert _order(report)["ceiling"]["no_later_than_us"] == FLOOR_US
-    assert _statuses(report) == ["not-after"]
+    assert _get_order(report)["ceiling"]["no_later_than_us"] == FLOOR_US
+    assert _get_statuses(report) == ["not-after"]
 
 
 def test_order__pass__5_one_microsecond_before_the_floor(sc, make_server):
     """order #5: compared exactly, in whole microseconds: one microsecond before passes."""
-    _witness_at(sc, make_server, FLOOR_US - RADI_US - 1)
+    _pin_witness_at(sc, make_server, FLOOR_US - RADI_US - 1)
     assert sc.code("order") == PASS
 
 
 def test_order__fail__5_the_unsigned_midpoint_and_radius_are_not_read(sc, make_server):
     """order #5: the ceiling's time comes from the verified response, never from the file's
     own ceiling.midpoint and ceiling.radius, which nothing signs."""
-    _witness_at(sc, make_server, 1_700_000_000_000_000)
+    _pin_witness_at(sc, make_server, 1_700_000_000_000_000)
     sc.set("prereg", "ceiling.midpoint", 0.0)
     sc.set("prereg", "ceiling.radius", 0.0)
     assert sc.code("order") == FAIL
@@ -291,7 +293,7 @@ def test_order__pass__all_a_postreg_that_does_not_count_is_not_examined(sc):
     report = sc.verify("order")
     assert report["code"] == PASS
     (commitment,) = report["commitments"]
-    assert len(commitment["rejected_postregs"]) == 1 and len(_order(report)["postregs"]) == 1
+    assert len(commitment["rejected_postregs"]) == 1 and len(_get_order(report)["postregs"]) == 1
 
 
 def test_order__pass__all_a_commitment_without_counted_postregs_is_not_examined(sc):
@@ -324,6 +326,8 @@ def test_order__fail__empty_a_rejected_preregistration_is_not_examined(sc):
 def test_order__fail__empty_a_malformed_postreg_is_not_examined(sc):
     """order (*): a postreg that fails format is not counted, whatever floor it carries."""
     sc.drop("postreg0")
-    sc.add_raw("bad", json.dumps(d.malformed(d.with_field(d.POSTREG, "anchor.floor", d.FLOOR))))
+    sc.add_raw(
+        "bad", json.dumps(d.make_malformed(d.with_field(d.POSTREG, "anchor.floor", d.FLOOR)))
+    )
     report = sc.verify("order")
     assert report["results"]["order"]["applicable"] == 0

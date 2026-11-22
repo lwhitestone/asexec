@@ -78,7 +78,7 @@ def floor_record(round_data: dict) -> dict:
     ).model_dump(mode="json", exclude_none=True)
 
 
-def verified_floor(round_data: dict, chain_hash: str) -> dict:
+def build_verified_floor(round_data: dict, chain_hash: str) -> dict:
     """An ``anchor.floor`` record for a round fetched earlier, verified offline at signing.
 
     ``round_data`` is a round as drand's HTTP API returns it (``round``, ``randomness``,

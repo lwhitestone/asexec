@@ -35,12 +35,12 @@ def run(*argv):
     return cli.main([str(arg) for arg in argv])
 
 
-def _body(path):
+def _read_body(path):
     """The decoded body of the manifest file at ``path``."""
     return manifest.read_body(manifest.load(str(path)))[1]
 
 
-def _ref(path):
+def _read_ref(path):
     """The ref of the manifest file at ``path``: the digest of its stored body bytes."""
     return manifest.ref(manifest.read_body(manifest.load(str(path)))[0])
 
@@ -132,7 +132,7 @@ def test_prereg_rejects_garbage_due(tmp_path, key):
 def test_prereg_accepts_explicit_offset_due(tmp_path, key, due):
     out = tmp_path / "p.json"
     assert run("prereg", "--key", key, "--target", "t", "--due", due, "--out", out) == 0
-    assert _body(out)["due"] == due  # stored verbatim
+    assert _read_body(out)["due"] == due  # stored verbatim
 
 
 def test_postreg_rejects_timezone_less_due_override(tmp_path, key, prereg):
@@ -173,7 +173,7 @@ def test_best_effort_floor_warns_and_signs(tmp_path, key, monkeypatch, capsys):
     code = run("prereg", "--key", key, "--target", "t", "--floor", "--best-effort", "--out", out)
     assert code == 0
     assert "warning" in capsys.readouterr().err
-    assert "anchor" not in _body(out)
+    assert "anchor" not in _read_body(out)
 
 
 def test_best_effort_ceiling_warns_and_signs(tmp_path, key, monkeypatch, capsys):
@@ -209,13 +209,13 @@ def test_fulfills_malformed_ref_is_an_error(tmp_path, key, bad):
 def test_fulfills_well_formed_literal_ref_accepted(tmp_path, key):
     out = tmp_path / "po.json"
     assert run("postreg", "--key", key, "--target", "t", "--fulfills", REF, "--out", out) == 0
-    assert _body(out)["fulfills"] == REF
+    assert _read_body(out)["fulfills"] == REF
 
 
 def test_fulfills_existing_file_resolves_to_its_ref(tmp_path, key, prereg):
     out = tmp_path / "po.json"
     assert run("postreg", "--key", key, "--fulfills", prereg, "--out", out) == 0
-    assert _body(out)["fulfills"] == _ref(prereg)
+    assert _read_body(out)["fulfills"] == _read_ref(prereg)
 
 
 def test_prev_typo_is_an_error(tmp_path, key, prereg):
@@ -256,13 +256,13 @@ def test_postreg_inherits_target_due_and_declaration_from_the_prereg_body(tmp_pa
     assert run("prereg", "--key", key, "--target", "t", "--due", "2099-01-01T00:00:00Z",
                "--declaration", "all of it", "--out", pre) == 0  # fmt: skip
     assert run("postreg", "--key", key, "--fulfills", pre, "--out", post) == 0
-    body = _body(post)
+    body = _read_body(post)
     assert (body["target"], body["due"], body["declaration"]) == (
         "t",
         "2099-01-01T00:00:00Z",
         "all of it",
     )
-    assert body["fulfills"] == _ref(pre)
+    assert body["fulfills"] == _read_ref(pre)
 
 
 def test_fulfills_is_the_digest_of_the_prereg_bytes_as_stored(tmp_path, key, capsys):
@@ -272,7 +272,7 @@ def test_fulfills_is_the_digest_of_the_prereg_bytes_as_stored(tmp_path, key, cap
     raw = b'{ "target": {"model": "m"},  "phase": "prereg",\n "due": "2099-01-01T00:00:00Z" }'
     _sign_stored_bytes(pre, key, raw)
     assert run("postreg", "--key", key, "--fulfills", pre, "--out", post) == 0
-    body = _body(post)
+    body = _read_body(post)
     assert body["fulfills"] == "sha-256:" + hashlib.sha256(raw).hexdigest()
     assert (body["target"], body["due"]) == ({"model": "m"}, "2099-01-01T00:00:00Z")
     capsys.readouterr()
@@ -413,7 +413,7 @@ def test_verify_version_skew_reads_as_format_not_signature(
 def test_verify_renders_rejected_postreg_and_invalid_due(tmp_path, key, capsys):
     out = tmp_path / "pre.json"
     run("prereg", "--key", key, "--target", "t", "--out", out)
-    body = _body(out)
+    body = _read_body(out)
     body["due"] = "someday"
     priv, pub = keys.load_signing_key(key)
     manifest.save(manifest.sign(body, priv, pub), str(out))
@@ -426,7 +426,7 @@ def test_verify_shows_a_present_due_as_it_is(tmp_path, key, capsys, due, shown):
     """A due that is present but holds no timestamp is shown, not "(none declared)"."""
     out = tmp_path / "pre.json"
     run("prereg", "--key", key, "--target", "t", "--out", out)
-    body = _body(out)
+    body = _read_body(out)
     body["due"] = due
     priv, pub = keys.load_signing_key(key)
     manifest.save(manifest.sign(body, priv, pub), str(out))
@@ -719,7 +719,7 @@ def test_identity_match_failed_fetch_exits_EXIT_ERROR(monkeypatch, capsys):
     assert capsys.readouterr().err == "error: offline\n"
 
 
-def _error_line(capsys, *argv) -> str:
+def _get_error_line(capsys, *argv) -> str:
     """Run ``argv``, which must exit 1 with exactly one line on stderr, ``error: ...`` (from
     ``main``, or a ``SystemExit`` message, which Python prints the same way), and return it."""
     try:
@@ -749,7 +749,7 @@ _JSON_FILE_FLAGS = [
 ]
 
 
-def _with_file(cmd, flag, key, path, out):
+def _build_args_with_file(cmd, flag, key, path, out):
     """``cmd`` signing with ``flag path``, every other argument valid."""
     target = [] if flag == "--target-file" else ["--target", "t"]
     link = [] if cmd == "prereg" else ["--fulfills", REF]
@@ -782,7 +782,7 @@ def test_a_json_file_that_breaks_the_json_rules_is_one_error_line(
     and --target-file, --declaration-file and --notes-file took a repeated key."""
     path, out = tmp_path / "value.json", tmp_path / "out.json"
     path.write_bytes(content)
-    line = _error_line(capsys, *_with_file(cmd, flag, key, path, out))
+    line = _get_error_line(capsys, *_build_args_with_file(cmd, flag, key, path, out))
     assert line.startswith(f"error: {str(path)!r}") and message in line
     assert not out.exists()
 
@@ -791,7 +791,7 @@ def test_a_json_file_that_breaks_the_json_rules_is_one_error_line(
 def test_a_json_file_that_is_a_directory_is_one_error_line(tmp_path, key, cmd, flag, capsys):
     path, out = tmp_path / "value", tmp_path / "out.json"
     path.mkdir()
-    line = _error_line(capsys, *_with_file(cmd, flag, key, path, out))
+    line = _get_error_line(capsys, *_build_args_with_file(cmd, flag, key, path, out))
     assert line == f"error: {flag} is a directory: {str(path)!r}"
     assert not out.exists()
 
@@ -813,7 +813,7 @@ def test_a_json_file_may_be_a_pipe(tmp_path, monkeypatch, key, cmd, flag):
     writer = threading.Thread(target=lambda: path.write_text(json.dumps(value)), daemon=True)
     writer.start()
     try:
-        assert run(*_with_file(cmd, flag, key, path, out)) == 0
+        assert run(*_build_args_with_file(cmd, flag, key, path, out)) == 0
     finally:
         writer.join(timeout=10)
     assert out.exists()
@@ -824,7 +824,9 @@ def test_a_json_file_may_be_a_character_device(tmp_path, key, capsys):
     if not os.path.exists(os.devnull):
         pytest.skip("no null device")
     out = tmp_path / "out.json"
-    line = _error_line(capsys, *_with_file("prereg", "--notes-file", key, os.devnull, out))
+    line = _get_error_line(
+        capsys, *_build_args_with_file("prereg", "--notes-file", key, os.devnull, out)
+    )
     assert line == (
         f"error: {os.devnull!r} must contain valid JSON: Expecting value: line 1 column 1 (char 0)"
     )
@@ -845,7 +847,7 @@ def test_a_free_form_file_holds_a_non_empty_object_or_string(
     or inherited)."""
     path, out = tmp_path / "value.json", tmp_path / "out.json"
     path.write_text(content)
-    line = _error_line(capsys, *_with_file(cmd, flag, key, path, out))
+    line = _get_error_line(capsys, *_build_args_with_file(cmd, flag, key, path, out))
     assert line.startswith(
         f"error: {flag} {str(path)!r} must hold a non-empty JSON object or string"
     )
@@ -856,11 +858,11 @@ def test_a_free_form_file_holds_a_non_empty_object_or_string(
 def test_a_free_form_file_holding_a_string_or_object_is_signed_as_it_is(tmp_path, key, content):
     path, out = tmp_path / "value.json", tmp_path / "out.json"
     path.write_text(content)
-    assert run(*_with_file("prereg", "--notes-file", key, path, out)) == 0
-    assert _body(out)["notes"] == json.loads(content)
+    assert run(*_build_args_with_file("prereg", "--notes-file", key, path, out)) == 0
+    assert _read_body(out)["notes"] == json.loads(content)
 
 
-def _nested(depth):
+def _make_nested(depth):
     """A JSON object ``depth`` deep (the outermost object is 1)."""
     value = {}
     for _ in range(depth - 1):
@@ -877,15 +879,15 @@ def test_a_free_form_file_is_at_most_63_deep_so_its_body_is_at_most_64(
     file is read to 63, and a 64-deep one is the file's content, exit 1, one line. At 63 the
     body is signed and passes format."""
     path, out = tmp_path / "value.json", tmp_path / "out.json"
-    path.write_text(json.dumps(_nested(64)))
-    line = _error_line(capsys, *_with_file(cmd, flag, key, path, out))
+    path.write_text(json.dumps(_make_nested(64)))
+    line = _get_error_line(capsys, *_build_args_with_file(cmd, flag, key, path, out))
     assert line == (
         f"error: {str(path)!r}: nested more than 63 deep (its value sits one level down in a "
         "body, which is at most 64)"
     )
     assert not out.exists()
-    path.write_text(json.dumps(_nested(63)))
-    assert run(*_with_file(cmd, flag, key, path, out)) == 0
+    path.write_text(json.dumps(_make_nested(63)))
+    assert run(*_build_args_with_file(cmd, flag, key, path, out)) == 0
     capsys.readouterr()
     assert run("verify", out, "--tests", "format,selfsig") == 0
 
@@ -896,11 +898,11 @@ def test_an_inline_repro_recipe_is_at_most_63_deep(tmp_path, key, capsys):
     out = tmp_path / "out.json"
     argv = ("postreg", "--key", key, "--fulfills", REF, "--target", "t", "--out", out)
     with pytest.raises(SystemExit) as e:
-        run(*argv, "--repro-recipe", json.dumps(_nested(64)))
+        run(*argv, "--repro-recipe", json.dumps(_make_nested(64)))
     assert e.value.code == cli.EXIT_USAGE
     err = capsys.readouterr().err
     assert err.startswith("usage: ") and "argument --repro-recipe: nested more than 63 deep" in err
-    assert run(*argv, "--repro-recipe", json.dumps(_nested(63))) == 0
+    assert run(*argv, "--repro-recipe", json.dumps(_make_nested(63))) == 0
 
 
 @pytest.mark.parametrize(
@@ -916,7 +918,7 @@ def test_a_key_file_that_breaks_the_json_rules_is_one_error_line(tmp_path, conte
     Python version (3.12 and 3.13 hit their recursion limit on deep nesting; 3.14 does not)."""
     path = tmp_path / "bad.key"
     path.write_text(content)
-    line = _error_line(capsys, "prereg", "--key", path, "--target", "t",
+    line = _get_error_line(capsys, "prereg", "--key", path, "--target", "t",
                        "--out", tmp_path / "out.json")  # fmt: skip
     assert line == f"error: key file {str(path)!r} is not valid JSON: {why}"
 
@@ -954,7 +956,7 @@ def test_postreg_refuses_to_fulfil_a_prereg_it_cannot_read(
     edit(mani)
     open(prereg, "w").write(json.dumps(mani))
     out = tmp_path / "out.json"
-    line = _error_line(capsys, "postreg", "--key", key, "--fulfills", prereg, "--out", out)
+    line = _get_error_line(capsys, "postreg", "--key", key, "--fulfills", prereg, "--out", out)
     assert line.startswith(f"error: --fulfills {prereg!r} {message}")
     assert not out.exists()
 
@@ -976,7 +978,7 @@ def test_postreg_fulfils_a_prereg_that_fails_selfsig_as_before(tmp_path, key, pr
     open(prereg, "w").write(json.dumps(mani))
     out = tmp_path / "out.json"
     assert run("postreg", "--key", key, "--fulfills", prereg, "--out", out) == 0
-    assert _body(out)["fulfills"] == _ref(prereg) and _body(out)["target"] == "t"
+    assert _read_body(out)["fulfills"] == _read_ref(prereg) and _read_body(out)["target"] == "t"
 
 
 @pytest.mark.parametrize(
@@ -992,7 +994,7 @@ def test_postreg_inheriting_no_usable_target_is_one_error_line(tmp_path, key, ta
     if target is not None:
         body["target"] = target
     _sign_stored_bytes(pre, key, json.dumps(body).encode())
-    line = _error_line(capsys, "postreg", "--key", key, "--fulfills", pre, "--out", out)
+    line = _get_error_line(capsys, "postreg", "--key", key, "--fulfills", pre, "--out", out)
     assert line == (
         f"error: --fulfills {str(pre)!r} has no target to inherit (a non-empty string or JSON "
         "object); give --target or --target-file"
@@ -1033,7 +1035,7 @@ def test_a_name_no_file_can_have_is_refused(tmp_path, key, cmd, flag, value, how
     else:
         path = tmp_path / "value.json"
         path.write_text(text)
-        line = _error_line(capsys, cmd, "--key", key, *link, f"{flag}-file", path, "--out", out)
+        line = _get_error_line(capsys, cmd, "--key", key, *link, f"{flag}-file", path, "--out", out)
         assert "names no file: it has a" in line
     assert not out.exists()
 
@@ -1051,7 +1053,7 @@ def test_a_subject_no_manifest_can_name_is_refused(tmp_path, key, monkeypatch, n
     monkeypatch.chdir(tmp_path)
     if name == "\udcff":
         (tmp_path / os.fsdecode(b"\xff")).write_text("x")  # the file exists
-    line = _error_line(capsys, "prereg", "--key", key, "--target", "t", "--subject", name,
+    line = _get_error_line(capsys, "prereg", "--key", key, "--target", "t", "--subject", name,
                        "--out", tmp_path / "out.json")  # fmt: skip
     assert line == f"error: {name!r} names no file a manifest can hold: it has {why}"
 
@@ -1078,7 +1080,7 @@ def test_a_path_with_a_newline_stays_on_one_error_line(tmp_path, key, case, caps
     elif case == "key-file":
         path.write_text("{nope")
         argv = ("prereg", "--key", path, "--target", "t", "--out", out)
-    line = _error_line(capsys, *argv)
+    line = _get_error_line(capsys, *argv)
     assert repr(str(path)) in line
 
 
@@ -1096,7 +1098,7 @@ def test_identity_match_reads_the_document_under_the_json_rules(monkeypatch, bod
     """The fetched document is held to a manifest file's JSON rules, so it reads the same on
     every Python version (a deep one passed on 3.14 and failed on 3.12): exit 1, one line."""
     monkeypatch.setattr(identity.urllib.request, "urlopen", lambda url, timeout: _Resp(body))
-    line = _error_line(capsys, "identity", "match", "--domain", "lab.example", "--keyid", "kid")
+    line = _get_error_line(capsys, "identity", "match", "--domain", "lab.example", "--keyid", "kid")
     assert line.startswith(
         "error: https://lab.example/.well-known/asexec.json is not an asexec identity document: "
     )
@@ -1148,7 +1150,7 @@ def test_identity_match_on_a_document_that_is_not_an_identity_document(
     """A domain's .well-known/asexec.json that is not an object holding an array of key
     objects: exit 1, one line (before: AttributeError or TypeError tracebacks)."""
     monkeypatch.setattr(identity, "fetch_wellknown", lambda domain, timeout=10: doc)
-    line = _error_line(capsys, "identity", "match", "--domain", "lab.example", "--keyid", "kid")
+    line = _get_error_line(capsys, "identity", "match", "--domain", "lab.example", "--keyid", "kid")
     assert line == (
         "error: https://lab.example/.well-known/asexec.json is not an asexec identity "
         f"document: {why}"
@@ -1169,7 +1171,7 @@ FLOOR = {
 
 
 def _resign(path, key, mutate):
-    body = _body(path)
+    body = _read_body(path)
     mutate(body)
     priv, pub = keys.load_signing_key(key)
     manifest.save(manifest.sign(body, priv, pub), path)
@@ -1196,7 +1198,7 @@ def test_verify_prints_ceiling_and_trust_section(
     tmp_path, key, prereg, capsys, monkeypatch, make_server, ceiling_for
 ):
     mani = manifest.load(prereg)
-    nonce_hex = _ref(prereg).split(":", 1)[-1]
+    nonce_hex = _read_ref(prereg).split(":", 1)[-1]
     lt_pub, sign_response = make_server()
     monkeypatch.setitem(roughtime.SERVERS, "synthetic", {"pubkey": lt_pub})
     manifest.attach_ceiling(mani, ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response))
@@ -1262,11 +1264,11 @@ def test_subjects_are_files_named_by_their_relative_paths(tmp_path, key, monkeyp
     assert run("postreg", "--key", key, "--fulfills", pre, "--subject", "a/run.py",
                "b//run.py", "--out", post) == 0  # fmt: skip
     sha = {n: hashlib.sha256(n.encode()).hexdigest() for n in ("a/run.py", "b/run.py")}
-    assert _body(pre)["subject"] == [
+    assert _read_body(pre)["subject"] == [
         {"name": "a/run.py", "hash_alg": "sha-256", "digest": {"sha-256": sha["a/run.py"]}}
     ]
-    assert [e["name"] for e in _body(post)["subject"]] == ["a/run.py", "b/run.py"]
-    assert "hash_alg" not in _body(pre) and "hash_alg" not in _body(post)
+    assert [e["name"] for e in _read_body(post)["subject"]] == ["a/run.py", "b/run.py"]
+    assert "hash_alg" not in _read_body(pre) and "hash_alg" not in _read_body(post)
     tests = "format,selfsig,content"
     assert run("verify", pre, post, "--tests", tests, "--artifacts", art) == 0
 
@@ -1306,7 +1308,7 @@ def test_verify_lists_rejected_preregistrations(tmp_path, key, prereg, capsys):
     capsys.readouterr()
     assert run("verify", prereg, post, "--tests", "format,selfsig,chain,keyconsist") == 2
     out = capsys.readouterr().out
-    pre_ref, post_ref = _ref(prereg), _ref(post)
+    pre_ref, post_ref = _read_ref(prereg), _read_ref(post)
     commitments = out.split("=== commitments ===\n")[1].split("\n\n")[0]
     assert commitments == "  (no commitments: no pre-registration provided is validly signed)"
     block = out.split("=== rejected pre-registrations ===\n")[1].split("\n\n")[0]
@@ -1379,7 +1381,7 @@ def test_identity_without_subcommand_is_usage_error():
 
 
 # --- a closed stdout ---------------------------------------------------------- #
-def _with_stdout_closed(cwd, *argv):
+def _run_with_stdout_closed(cwd, *argv):
     """Run ``asexec argv`` with stdout a pipe whose reader has already gone, as ``asexec … |
     head -1`` has once head exits: every write to it fails (EPIPE)."""
     read, write = os.pipe()
@@ -1406,7 +1408,7 @@ def test_verify_keeps_its_verdict_when_stdout_closes(tmp_path, key, prereg, copi
         (files / f"pre-{i}.json").write_text(open(prereg).read())
     if tampered:
         _edit_body_after_signing(files / "pre-0.json", lambda body: body.update(target="u"))
-    assert _with_stdout_closed(tmp_path, "verify", files, "--tests", "format,selfsig") == (
+    assert _run_with_stdout_closed(tmp_path, "verify", files, "--tests", "format,selfsig") == (
         code,
         "",
     )
@@ -1416,11 +1418,13 @@ def test_signing_succeeds_when_stdout_closes(tmp_path, key):
     """prereg writes its file and then prints: a closed stdout leaves exit 0, the file
     written, and nothing on stderr."""
     out = tmp_path / "pre.json"
-    assert _with_stdout_closed(tmp_path, "prereg", "--key", key, "--target", "t", "--out", out) == (
+    assert _run_with_stdout_closed(
+        tmp_path, "prereg", "--key", key, "--target", "t", "--out", out
+    ) == (
         0,
         "",
     )
-    assert _body(out)["target"] == "t"
+    assert _read_body(out)["target"] == "t"
 
 
 @pytest.mark.parametrize(
@@ -1436,12 +1440,12 @@ def test_signing_succeeds_when_stdout_closes(tmp_path, key):
 def test_what_argparse_prints_keeps_its_status_when_stdout_closes(tmp_path, argv, code, err):
     """``asexec --version | true``: argparse printed and exits; a reader that has gone does not
     change its status, as for a command that finished (before: exit 1, "stdout was closed")."""
-    status, stderr = _with_stdout_closed(tmp_path, *argv)
+    status, stderr = _run_with_stdout_closed(tmp_path, *argv)
     assert status == code and stderr.startswith(err)
     assert "stdout was closed" not in stderr and "Traceback" not in stderr
 
 
-def _with_stdout(cwd, how, *argv, env=None):
+def _run_with_stdout(cwd, how, *argv, env=None):
     """Run ``asexec argv`` with stdout closed (``>&-``: Python then has no ``sys.stdout``) or on
     a full device (``>/dev/full``: every flush fails with ENOSPC)."""
     cmd = [sys.executable, "-m", "asexec", *map(str, argv)]
@@ -1465,7 +1469,7 @@ def test_verify_with_stdout_closed_keeps_its_verdict(tmp_path, key, prereg, tamp
     """``verify … >&-``: nothing can be printed, and the verdict stands (as on the base)."""
     if tampered:
         _edit_body_after_signing(prereg, lambda body: body.update(target="u"))
-    assert _with_stdout(tmp_path, "closed", "verify", prereg, "--tests", "format,selfsig") == (
+    assert _run_with_stdout(tmp_path, "closed", "verify", prereg, "--tests", "format,selfsig") == (
         code,
         "",
     )
@@ -1483,7 +1487,7 @@ def test_verify_with_stdout_closed_keeps_its_verdict(tmp_path, key, prereg, tamp
 )
 def test_other_commands_with_stdout_closed(tmp_path, key, prereg, argv, code, err):
     argv = [a.format(tmp=tmp_path, key=key, prereg=prereg) for a in argv]
-    status, stderr = _with_stdout(tmp_path, "closed", *argv)
+    status, stderr = _run_with_stdout(tmp_path, "closed", *argv)
     assert status == code and stderr.startswith(err) and "Traceback" not in stderr
 
 
@@ -1499,14 +1503,14 @@ def test_a_full_stdout_is_one_error_line(tmp_path, key, prereg, argv):
     """``>/dev/full``: the output can't be written, which is an error (exit 1, one line),
     not a traceback and not Python's exit status 120."""
     argv = [a.format(tmp=tmp_path, key=key, prereg=prereg) for a in argv]
-    assert _with_stdout(tmp_path, "full", *argv) == (
+    assert _run_with_stdout(tmp_path, "full", *argv) == (
         1,
         "error: could not write the output: [Errno 28] No space left on device\n",
     )
 
 
 def test_a_usage_error_with_a_full_stdout_is_still_a_usage_error(tmp_path, prereg):
-    status, stderr = _with_stdout(tmp_path, "full", "verify", prereg, "--tests", "chain")
+    status, stderr = _run_with_stdout(tmp_path, "full", "verify", prereg, "--tests", "chain")
     assert status == cli.EXIT_USAGE and stderr.startswith("usage: ")
 
 
@@ -1525,11 +1529,11 @@ def test_a_broken_pipe_writing_a_file_is_not_reported_as_stdout(tmp_path, key, m
     """A BrokenPipeError from writing --out (a FIFO whose reader left) is that file's error, not
     a closed stdout."""
 
-    def broken(*_a, **_k):
+    def raise_broken_pipe(*_a, **_k):
         raise BrokenPipeError(32, "Broken pipe")
 
-    monkeypatch.setattr(manifest, "save", broken)
-    line = _error_line(capsys, "prereg", "--key", key, "--target", "t", "--out", tmp_path / "o")
+    monkeypatch.setattr(manifest, "save", raise_broken_pipe)
+    line = _get_error_line(capsys, "prereg", "--key", key, "--target", "t", "--out", tmp_path / "o")
     assert line == "error: [Errno 32] Broken pipe"
 
 
@@ -1561,7 +1565,7 @@ def claim_dir(tmp_path, monkeypatch):
     return art
 
 
-def _sha(path):
+def _hash_file(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
@@ -1573,11 +1577,11 @@ def test_prereg_writes_plan_and_items(tmp_path, key, claim_dir):
     items = '[{"id": "S1", "kind": "run"}, {"id": "S2", "kind": "ablation"}]'
     assert run("prereg", "--key", key, "--target", "t", "--plan", plan, "--items", items,
                "--out", pre) == 0  # fmt: skip
-    body = _body(pre)
+    body = _read_body(pre)
     assert body["plan"] == {
         "name": "plan.md",
         "hash_alg": "sha-256",
-        "digest": {"sha-256": _sha(claim_dir / "plan.md")},
+        "digest": {"sha-256": _hash_file(claim_dir / "plan.md")},
         "media_type": "text/markdown",
         "label": "the plan",
     }
@@ -1593,8 +1597,10 @@ def test_plan_items_and_evidence_from_files(tmp_path, key, claim_dir):
                "--items-file", tmp_path / "items.json", "--out", pre) == 0  # fmt: skip
     assert run("postreg", "--key", key, "--fulfills", pre, "--evidence-file",
                tmp_path / "evidence.json", "--out", post) == 0  # fmt: skip
-    assert _body(pre)["plan"]["name"] == "plan.md" and _body(pre)["items"] == [{"id": "S1"}]
-    assert [e["name"] for e in _body(post)["evidence"]] == ["results/s1.json"]
+    assert _read_body(pre)["plan"]["name"] == "plan.md" and _read_body(pre)["items"] == [
+        {"id": "S1"}
+    ]
+    assert [e["name"] for e in _read_body(post)["evidence"]] == ["results/s1.json"]
 
 
 def test_postreg_writes_item_id_status_and_evidence(tmp_path, key, claim_dir, capsys):
@@ -1605,13 +1611,13 @@ def test_postreg_writes_item_id_status_and_evidence(tmp_path, key, claim_dir, ca
     assert run("postreg", "--key", key, "--fulfills", pre, "--item-id", "S1", "--status",
                "excluded", "--evidence", evidence, "--hash-alg", "sha-256",
                "--out", post) == 0  # fmt: skip
-    body = _body(post)
+    body = _read_body(post)
     assert (body["item_id"], body["status"]) == ("S1", "excluded")
     assert body["evidence"] == [
         {
             "name": "results/s1.json",
             "hash_alg": "sha-256",
-            "digest": {"sha-256": _sha(claim_dir / "results" / "s1.json")},
+            "digest": {"sha-256": _hash_file(claim_dir / "results" / "s1.json")},
             "media_type": "application/json",
             "uri": "https://e",
         }
@@ -1752,14 +1758,14 @@ def witness(monkeypatch, make_server, ceiling_for):
 
     def attach(path):
         mani = manifest.load(str(path))
-        nonce_hex = _ref(path).split(":", 1)[-1]
+        nonce_hex = _read_ref(path).split(":", 1)[-1]
         manifest.attach_ceiling(mani, ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response))
         manifest.save(mani, str(path))
 
     return attach
 
 
-def _timely_run(tmp_path, key, due, *, ceiling, witness):
+def _make_timely_run(tmp_path, key, due, *, ceiling, witness):
     pre, post = tmp_path / "pre.json", tmp_path / "post.json"
     assert run("prereg", "--key", key, "--target", "t", "--due", due, "--out", pre) == 0
     assert run("postreg", "--key", key, "--fulfills", pre, "--out", post) == 0
@@ -1787,7 +1793,7 @@ def test_verify_marks_each_counted_postreg_not_shown_on_time(
 ):
     """With timely requested, the commitments block marks each counted postreg that is not
     shown on time, and why; a late one still counts, and the commitment is fulfilled."""
-    pre, post = _timely_run(tmp_path, key, due, ceiling=ceiling, witness=witness)
+    pre, post = _make_timely_run(tmp_path, key, due, ceiling=ceiling, witness=witness)
     capsys.readouterr()
     assert run("verify", pre, post, "--tests", "format,selfsig,timely") == code
     out = capsys.readouterr().out
@@ -1796,7 +1802,7 @@ def test_verify_marks_each_counted_postreg_not_shown_on_time(
     if line is None:
         assert marks == [] and "timely=PASS" in out
     else:
-        assert marks == [f"    {cli.NO} postreg {_ref(post)} {line}"]
+        assert marks == [f"    {cli.NO} postreg {_read_ref(post)} {line}"]
         assert "timely=FAIL" in out
     # not requested: no marks
     capsys.readouterr()
@@ -1805,7 +1811,9 @@ def test_verify_marks_each_counted_postreg_not_shown_on_time(
 
 
 def test_verify_ceiling_trust_names_the_time_timely_compares(tmp_path, key, capsys, witness):
-    pre, post = _timely_run(tmp_path, key, "2099-01-01T00:00:00Z", ceiling=True, witness=witness)
+    pre, post = _make_timely_run(
+        tmp_path, key, "2099-01-01T00:00:00Z", ceiling=True, witness=witness
+    )
     capsys.readouterr()
     run("verify", pre, post, "--tests", "format,selfsig,ceiling,timely")
     out = capsys.readouterr().out
@@ -1865,7 +1873,7 @@ def test_due_is_parsed_once_for_signing_and_verify(
         out = tmp_path / "signed.json"
         if signs:
             assert run("prereg", "--key", key, "--target", "t", "--due", due, "--out", out) == 0
-            assert _body(out)["due"] == due  # written verbatim
+            assert _read_body(out)["due"] == due  # written verbatim
         else:
             with pytest.raises(SystemExit) as e:
                 run("prereg", "--key", key, "--target", "t", "--due", due, "--out", out)
@@ -1875,7 +1883,7 @@ def test_due_is_parsed_once_for_signing_and_verify(
         pre, post = tmp_path / "pre.json", tmp_path / "post.json"
         _sign_stored_bytes(pre, key, json.dumps({"phase": "prereg", "target": "t", "due": due,
                                                  "predicateType": "x"}).encode())  # fmt: skip
-        body = {"phase": "postreg", "target": "t", "fulfills": _ref(pre), "predicateType": "x"}
+        body = {"phase": "postreg", "target": "t", "fulfills": _read_ref(pre), "predicateType": "x"}
         _sign_stored_bytes(post, key, json.dumps(body).encode())
         witness(post)
         capsys.readouterr()
@@ -1897,7 +1905,7 @@ def test_due_is_parsed_once_for_signing_and_verify(
 
 
 # --- complete ---------------------------------------------------------------------- #
-def _claim(tmp_path, key, due, witness, *, items=("R1", "R2"), posts=("R1", "R2")):
+def _make_claim(tmp_path, key, due, witness, *, items=("R1", "R2"), posts=("R1", "R2")):
     """A prereg listing ``items``, and one chained, witnessed postreg per id in ``posts``."""
     pre = tmp_path / "pre.json"
     listed = json.dumps([{"id": i, "kind": "run"} for i in items])
@@ -1933,7 +1941,7 @@ _LATE = "reported, but not shown on time: its postreg is late"
 def test_verify_shows_each_items_status(tmp_path, key, capsys, witness, due, posts, code, lines):
     """The commitments block lists each item with its status, or why it is not accounted
     for; complete passes only when every item is."""
-    pre, out = _claim(tmp_path, key, due, witness, posts=posts)
+    pre, out = _make_claim(tmp_path, key, due, witness, posts=posts)
     capsys.readouterr()
     assert run("verify", pre, *out, "--tests", "format,selfsig,complete") == code
     text = capsys.readouterr().out
@@ -1943,13 +1951,14 @@ def test_verify_shows_each_items_status(tmp_path, key, capsys, witness, due, pos
 
 
 def test_verify_shows_a_postreg_for_an_unlisted_item(tmp_path, key, capsys, witness):
-    pre, out = _claim(
+    pre, out = _make_claim(
         tmp_path, key, "2099-01-01T00:00:00Z", witness, items=("R1",), posts=("R1", "Z9")
     )
     capsys.readouterr()
     assert run("verify", pre, *out, "--tests", "format,selfsig,complete") == 0
     text = capsys.readouterr().out
-    line = f"    {cli.NO} postreg {_ref(out[1])} names item 'Z9', which the prereg does not list\n"
+    ref = _read_ref(out[1])
+    line = f"    {cli.NO} postreg {ref} names item 'Z9', which the prereg does not list\n"
     assert line in text
 
 
@@ -1965,7 +1974,7 @@ def test_verify_shows_a_witness_time_past_year_9999_as_epoch_seconds(
                "--out", pre) == 0  # fmt: skip
     assert run("postreg", "--key", key, "--fulfills", pre, "--out", post) == 0
     mani = manifest.load(str(post))
-    nonce_hex = _ref(post).split(":", 1)[-1]
+    nonce_hex = _read_ref(post).split(":", 1)[-1]
     manifest.attach_ceiling(mani, ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response))
     manifest.save(mani, str(post))
     capsys.readouterr()
@@ -2009,7 +2018,7 @@ UNKNOWN_HEADING = (
 )
 
 
-def _block(out, heading):
+def _get_block(out, heading):
     """The lines of the report block under ``heading``, up to the blank line after it."""
     return out.split(heading + "\n")[1].split("\n\n")[0].splitlines()
 
@@ -2024,7 +2033,7 @@ def test_signing_writes_untrusted_asexec_version(tmp_path, key, prereg, cmd):
     mani = manifest.load(str(out))
     assert list(mani) == ["dsse", "pubkey", "untrusted"]
     assert mani["untrusted"] == {"asexec_version": asexec.__version__}
-    assert "untrusted" not in _body(out) and "asexec_version" not in _body(out)
+    assert "untrusted" not in _read_body(out) and "asexec_version" not in _read_body(out)
 
 
 def test_verify_shows_untrusted_and_unknown_fields_under_their_own_headings(
@@ -2043,12 +2052,12 @@ def test_verify_shows_untrusted_and_unknown_fields_under_their_own_headings(
     capsys.readouterr()
     assert run("verify", prereg, "--tests", "format,selfsig") == 0
     out = capsys.readouterr().out
-    assert _block(out, UNTRUSTED_HEADING) == [
+    assert _get_block(out, UNTRUSTED_HEADING) == [
         f"  {prereg}",
         f'    untrusted = {{"asexec_version": "{asexec.__version__}", "host": "ci-7"}}',
         "    surprise = [1, null]",
     ]
-    assert _block(out, UNKNOWN_HEADING) == [f"  {prereg}", '    body.colour = "red"']
+    assert _get_block(out, UNKNOWN_HEADING) == [f"  {prereg}", '    body.colour = "red"']
     assert out.index(UNTRUSTED_HEADING) < out.index(UNKNOWN_HEADING)
     assert out.index("=== manifests ===") < out.index(UNTRUSTED_HEADING)
     assert out.index(UNKNOWN_HEADING) < out.index("=== commitments ===")
@@ -2071,12 +2080,12 @@ def test_verify_prints_untrusted_and_unknown_values_json_escaped(tmp_path, key, 
     assert forged not in out.splitlines()
     assert all(line.isascii() or "✓" in line or "✗" in line for line in out.splitlines())
     escaped = json.dumps(forged)[1:-1]
-    assert _block(out, UNTRUSTED_HEADING) == [
+    assert _get_block(out, UNTRUSTED_HEADING) == [
         f"  {prereg}",
         f'    untrusted = {{"note": "a\\n{escaped}\\n\\u001b[2J\\u00e9\\u202e"}}',
         f'    ["k\\n{escaped}"] = "\\r{escaped}"',
     ]
-    assert _block(out, UNKNOWN_HEADING) == [
+    assert _get_block(out, UNKNOWN_HEADING) == [
         f"  {prereg}",
         f'    body["x\\n{escaped}"] = "v\\n{escaped}"',
     ]
@@ -2097,7 +2106,7 @@ def test_verify_prints_no_untrusted_or_unknown_block_when_none(tmp_path, key, pr
 SAVED_ROUND = {"round": 1000, "randomness": FLOOR["randomness"], "signature": FLOOR["signature"]}
 
 
-def _round_text(**over):
+def _make_round_text(**over):
     return json.dumps({**SAVED_ROUND, **over})
 
 
@@ -2118,7 +2127,7 @@ def test_floor_round_signs_with_a_round_fetched_earlier(
     link = ["--target", "t"] if cmd == "prereg" else ["--fulfills", prereg]
     out = tmp_path / "out.json"
     assert run(cmd, "--key", key, *link, *given, "--out", out) == 0
-    assert _body(out)["anchor"] == {"floor": FLOOR}
+    assert _read_body(out)["anchor"] == {"floor": FLOOR}
     if (cmd, how) == ("postreg", "file"):  # the floor written is the one verify reads (BLS: ~1 s)
         capsys.readouterr()
         assert run("verify", out, "--tests", "format,selfsig,floor") == 0
@@ -2133,19 +2142,19 @@ FLOOR_ROUND_USAGE_ERRORS = [
     pytest.param("[]", "--floor-round must be a JSON object", id="a-list"),
     pytest.param(json.dumps({"round": 1000, "signature": FLOOR["signature"]}),
                  "missing 'randomness'", id="no-randomness"),
-    pytest.param(_round_text(previous_signature="00"), "'previous_signature'",
+    pytest.param(_make_round_text(previous_signature="00"), "'previous_signature'",
                  id="unknown-field"),
-    pytest.param(_round_text(chain_hash=drand.QUICKNET_HASH), "'chain_hash'",
+    pytest.param(_make_round_text(chain_hash=drand.QUICKNET_HASH), "'chain_hash'",
                  id="chain-hash-given"),
-    pytest.param(_round_text(round="1000"), "'round' must be an integer", id="round-a-string"),
-    pytest.param(_round_text(round=1000.0), "'round' must be an integer", id="round-a-float"),
-    pytest.param(_round_text(round=True), "'round' must be an integer", id="round-a-bool"),
-    pytest.param(_round_text(signature=FLOOR["signature"].upper()),
+    pytest.param(_make_round_text(round="1000"), "'round' must be an integer", id="round-a-string"),
+    pytest.param(_make_round_text(round=1000.0), "'round' must be an integer", id="round-a-float"),
+    pytest.param(_make_round_text(round=True), "'round' must be an integer", id="round-a-bool"),
+    pytest.param(_make_round_text(signature=FLOOR["signature"].upper()),
                  "'signature' must be lowercase hex", id="signature-uppercase"),
-    pytest.param(_round_text(randomness=5), "'randomness' must be lowercase hex",
+    pytest.param(_make_round_text(randomness=5), "'randomness' must be lowercase hex",
                  id="randomness-a-number"),
-    pytest.param(_round_text(round=1001), "does not verify", id="another-rounds-signature"),
-    pytest.param(_round_text(randomness="00" * 32), "does not verify", id="randomness-wrong"),
+    pytest.param(_make_round_text(round=1001), "does not verify", id="another-rounds-signature"),
+    pytest.param(_make_round_text(randomness="00" * 32), "does not verify", id="randomness-wrong"),
 ]  # fmt: skip
 
 
@@ -2212,20 +2221,20 @@ def witness_at(monkeypatch, make_server, ceiling_for):
     """``witness_at(midpoint_us)(path)``: attach a ceiling from a pinned synthetic witness that
     signs ``midpoint_us`` (RADI 1 s) to the manifest file at ``path``."""
 
-    def at(midpoint_us):
+    def make_attacher(midpoint_us):
         lt_pub, sign_response = make_server(midpoint_us=midpoint_us)
         monkeypatch.setitem(roughtime.SERVERS, "synthetic", {"pubkey": lt_pub})
 
         def attach(path):
             mani = manifest.load(str(path))
-            nonce_hex = _ref(path).split(":", 1)[-1]
+            nonce_hex = _read_ref(path).split(":", 1)[-1]
             record = ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response)
             manifest.attach_ceiling(mani, record)
             manifest.save(mani, str(path))
 
         return attach
 
-    return at
+    return make_attacher
 
 
 _ROUND_1000_US = 1_692_806_364_000_000  # 2023-08-23T15:59:24Z
@@ -2270,7 +2279,7 @@ def test_verify_marks_each_counted_postreg_not_shown_after_its_prereg(
             f"    {cli.NO} the pre-registration is not shown before its postregs: it has no ceiling"
         ]
     else:
-        assert marks == ([f"    {cli.NO} postreg {_ref(post)} {line}"] if line else [])
+        assert marks == ([f"    {cli.NO} postreg {_read_ref(post)} {line}"] if line else [])
     assert f"order={'PASS' if code == 0 else 'FAIL'}" in out
     if line and floor:  # without order requested, no mark (BLS: ~1 s a run)
         capsys.readouterr()

@@ -4082,7 +4082,19 @@ Checking them turned up three bugs that no comment names (B1 to B3).
     limit. This supersedes "kept" for those defaults in the note above.
   - The scanner's check stays private: since step 1, `parse_json` is its one caller.
   - No behaviour change. `scripts/check.sh` clean, 1330 passed.
-- [ ] 3. B: the names, with the PR-wide sweep as its own commit.
+- [x] 3. B: the names, with the PR-wide sweep as its own commit.
+  - `a1eb76e` has the names the threads called out. The sweep renames 121 more functions this
+    PR adds: 46 in `src`, 72 in the tests, two in `scripts/release.sh`, one in the example.
+    The triage counted 46 in `src` including the two in `hashing`; it had missed
+    `b64encode` and `b64decode`, now `encode_base64` and `decode_base64`. So 48 in all there.
+  - The rule's exceptions: `is_` and `passes_` predicates, `test_` functions, pytest fixtures
+    (named for the value they provide) and protocol methods.
+  - Not renamed: functions that predate this PR (`manifest.ref`, `canonical.pae`,
+    `fields._lower_hex` and the like), some of which are released API.
+  - The sweep renamed by binding, not by text. With the names mapped back, the syntax tree
+    of each changed Python file is unchanged, apart from docstrings, import order and one
+    wrapped test line. The checkpoint notes above keep the names of their time.
+  - `scripts/check.sh` clean, 1330 passed; the adequacy example exits 0.
 - [ ] 4. C: the comments, last, because 2 and 3 move those lines.
 
 Then a final evidence run, the PR description, and a reply on each thread before resolving it.
