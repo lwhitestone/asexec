@@ -1,10 +1,6 @@
 """Pydantic models for asexec manifest bodies and the files around them, in two families.
 
-A file is a wrapper around a DSSE envelope: ``{"dsse": {"payloadType", "payload",
-"signatures": [{"keyid", "sig"}]}, "pubkey", "ceiling", "untrusted"}``, where ``dsse.payload``
-is the base64 of the body bytes, and the body is the JSON object they hold. ``untrusted`` is
-metadata nothing checks; ``BODY_FIELDS`` and ``WRAPPER_FIELDS`` say what the format defines,
-so the report can show what it does not.
+The layout of a file is in ``manifest.py``.
 
 **Writer models** (``ManifestBody``, ``Floor``, ``Ceiling``, ``Manifest``, ...) gate what
 this tool writes: ``strict`` (no coercion) and ``extra="forbid"`` (a stray field is a caller
@@ -421,7 +417,8 @@ def derive_known_fields(model: type[BaseModel]) -> Fields:
 
 
 # What a body may hold that this format defines: every field the writer can write. Anything
-# else, at the top of the body or in an object the format defines, is an unknown field.
+# else, at the top of the body or in an object the format defines, is an unknown field. These
+# two sets say what the format defines, so the report can show what it does not.
 BODY_FIELDS: Fields = derive_known_fields(ManifestBody)
 # The same outside the body, in the file around it: the envelope, the key, the ceiling a
 # witness attaches, and ``untrusted``, which is shown whole (nothing in it is the format's).

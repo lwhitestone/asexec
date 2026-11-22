@@ -1,4 +1,4 @@
-"""The body bytes signing writes, their one base64 spelling, and the PAE signing input.
+"""The body bytes signing writes, their canonical base64 spelling, and the PAE signing input.
 
 A manifest stores its body as bytes: ``dsse.payload`` is their base64, and signer and
 verifier both sign and check those bytes exactly as stored, through DSSE's PAE. Nothing is

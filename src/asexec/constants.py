@@ -18,10 +18,12 @@ IDENTITY_DOCUMENT_VERSION = 1
 IDENTITY_WELL_KNOWN_PATH = ".well-known/asexec.json"
 
 # Appears in: manifest file (dsse.payloadType). Written by signing, read by format #3 to select
-# the format. Also in the PAE, so the signature covers it. Format N is vN, and goes with
-# MANIFEST_PREDICATE_TYPE /vN. scripts/release.sh rewrites this literal in each release commit
-# (a beta writes its own type); the FORMATS entry under development is keyed by this name, so
-# its key moves with it.
+# the format. Also in the PAE, so the signature covers it. A released format N is vN, and goes
+# with MANIFEST_PREDICATE_TYPE /vN. scripts/release.sh rewrites this literal in each release
+# commit (a beta writes its own type, a full release its line's vN), and main keeps that value
+# until the next release commit. A format not yet released is keyed in FORMATS by this name, so
+# its key moves with the literal. While main writes a released type, a new format can't be
+# keyed by this name too: the two keys would collide (#59).
 MANIFEST_PAYLOAD_TYPE = "application/vnd.asexec.v1+json"
 
 # The rules of each format verify reads, keyed by ``payloadType``. A file is read only under

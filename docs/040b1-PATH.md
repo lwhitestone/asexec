@@ -4095,6 +4095,10 @@ Checking them turned up three bugs that no comment names (B1 to B3).
     of each changed Python file is unchanged, apart from docstrings, import order and one
     wrapped test line. The checkpoint notes above keep the names of their time.
   - `scripts/check.sh` clean, 1330 passed; the adequacy example exits 0.
-- [ ] 4. C: the comments, last, because 2 and 3 move those lines.
+- [x] 4. C: the comments, last, because 2 and 3 move those lines.
+  - All five are addressed. The `manifest.py:126` comment moved in step 1 with the code it
+    describes, and the nesting comment is now in `parsing.py`.
+  - The `constants.py` suggestion is ported in the *Appears in* style, not applied as written.
+  - Comments only. `scripts/check.sh` clean, 1330 passed.
 
 Then a final evidence run, the PR description, and a reply on each thread before resolving it.

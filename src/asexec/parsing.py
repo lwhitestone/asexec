@@ -24,12 +24,10 @@ def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return out
 
 
-# The deepest a manifest file, or the body it holds, may nest arrays and objects (the
-# outermost object is 1). Each is counted on its own: the file holds the body as a string, so
-# a body's depth is the same in any file. Manifests nest about 5 deep. A deeper one is
-# rejected before it is parsed, so no parser, model or encoder ever reaches its recursion
-# limit: those limits differ between Python versions and machines, and would make the same
-# file verify differently.
+# The most levels of arrays and objects a manifest file, or its body, may nest (the outermost
+# is 1). The two are counted separately. Text nested deeper than this is rejected before it
+# is parsed, so a verdict never depends on a recursion limit, which differs between Python
+# versions and machines.
 MAX_NESTING_DEPTH = 64
 
 # A JSON string (skipped, so brackets inside one don't count) or a bracket. The quantifiers are
