@@ -22,7 +22,7 @@ import pytest
 
 import asexec
 from asexec import cli, drand, identity, keys, manifest, roughtime
-from asexec.canonical import canonical_bytes, signing_input
+from asexec.canonical import build_signing_input, serialize_canonical
 from asexec.constants import MANIFEST_PAYLOAD_TYPE
 from asexec.errors import NetworkError
 
@@ -42,7 +42,7 @@ def _read_body(path):
 
 def _read_ref(path):
     """The ref of the manifest file at ``path``: the digest of its stored body bytes."""
-    return manifest.ref(manifest.read_body(manifest.load(str(path)))[0])
+    return manifest.derive_ref(manifest.read_body(manifest.load(str(path)))[0])
 
 
 def _edit_body_after_signing(path, edit):
@@ -50,7 +50,7 @@ def _edit_body_after_signing(path, edit):
     mani = manifest.load(str(path))
     body = manifest.read_body(mani)[1]
     edit(body)
-    mani["dsse"]["payload"] = base64.b64encode(canonical_bytes(body)).decode()
+    mani["dsse"]["payload"] = base64.b64encode(serialize_canonical(body)).decode()
     manifest.save(mani, str(path))
 
 
@@ -241,8 +241,8 @@ def _sign_stored_bytes(path, key, raw):
             "payload": base64.b64encode(raw).decode(),
             "signatures": [
                 {
-                    "keyid": keys.keyid_for(pub),
-                    "sig": base64.b64encode(keys.sign(priv, signing_input(raw))).decode(),
+                    "keyid": keys.derive_keyid(pub),
+                    "sig": base64.b64encode(keys.sign(priv, build_signing_input(raw))).decode(),
                 }
             ],
         },
@@ -352,7 +352,7 @@ def test_verify_marks_each_file_by_format_and_selfsig(tmp_path, key, prereg, cap
     _edit_body_after_signing(tampered, lambda body: body.update(target="something else"))
     other_keyid = tmp_path / "other-keyid.json"  # valid signature, another key's keyid
     mani = json.loads(open(prereg).read())
-    mani["dsse"]["signatures"][0]["keyid"] = keys.keyid_for(keys.generate()[1])
+    mani["dsse"]["signatures"][0]["keyid"] = keys.derive_keyid(keys.generate()[1])
     other_keyid.write_text(json.dumps(mani))
     truncated = tmp_path / "truncated.json"
     truncated.write_text(open(prereg).read()[:120])
@@ -1283,7 +1283,7 @@ def test_verify_ends_with_code_then_time(prereg, capsys):
 def test_verify_prints_each_commitments_signer(key, prereg, capsys):
     _, pub = keys.load_signing_key(key)
     run("verify", prereg, "--tests", "format,selfsig")
-    assert f"    signer       : {keys.keyid_for(pub)}\n" in capsys.readouterr().out
+    assert f"    signer       : {keys.derive_keyid(pub)}\n" in capsys.readouterr().out
 
 
 def test_verify_prints_notarization_only(tmp_path, key, prereg, capsys):

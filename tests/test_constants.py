@@ -59,7 +59,7 @@ from asexec import (
     manifest,
     roughtime,
 )
-from asexec.canonical import canonical_bytes, signing_input
+from asexec.canonical import build_signing_input, serialize_canonical
 from asexec.verifier import verify_paths
 
 BREAKS_USERS = "BREAKS_USERS"
@@ -185,13 +185,13 @@ def _get_report(tmp_path, manis, tests, artifacts_dir=None):
     return verify_paths(paths, tests, artifacts_dir=artifacts_dir)
 
 
-def _result_tokens(tmp_path, mani, tests, artifacts_dir=None):
+def _get_result_tokens(tmp_path, mani, tests, artifacts_dir=None):
     # Only the result tokens, so a VERIFY_CODE_VERSION bump does not count as a broken manifest.
     return _get_report(tmp_path, [mani], tests, artifacts_dir)["code"].split()[1:]
 
 
 def _get_required_tokens(tmp_path, mani):
-    return _result_tokens(tmp_path, mani, ["format", "selfsig"])
+    return _get_result_tokens(tmp_path, mani, ["format", "selfsig"])
 
 
 def _passes_required(tmp_path, mani):
@@ -225,7 +225,7 @@ def test_frozen_manifests_still_verify(tmp_path):
     artifacts.mkdir()
     (artifacts / "a.txt").write_bytes(b"x")
     assert json.loads(_decode_payload(FROZEN_SUBJECT_MANIFEST)) == FROZEN_SUBJECT_BODY
-    assert _result_tokens(
+    assert _get_result_tokens(
         tmp_path, FROZEN_SUBJECT_MANIFEST, ["content", "format", "selfsig"], str(artifacts)
     ) == ["content=PASS", "format=PASS", "selfsig=PASS"]
 
@@ -260,8 +260,8 @@ def test_signing_pae_version_and_manifest_payload_type():
     # is the one line in this file that holds it: the others compare against it.
     assert _get_signing_format()["signing_pae_version"] == b"DSSEv1"
     assert constants.MANIFEST_PAYLOAD_TYPE == "application/vnd.asexec.v1+json"
-    assert signing_input(FROZEN_BODY_BYTES, constants.MANIFEST_PAYLOAD_TYPE) == (
-        signing_input(FROZEN_BODY_BYTES)
+    assert build_signing_input(FROZEN_BODY_BYTES, constants.MANIFEST_PAYLOAD_TYPE) == (
+        build_signing_input(FROZEN_BODY_BYTES)
     )
     assert _signed_prereg()["dsse"]["payloadType"] == constants.MANIFEST_PAYLOAD_TYPE
 
@@ -273,7 +273,7 @@ def test_signing_input_of_the_frozen_v1_vector():
     # DSSE's PAE: "DSSEv1" SP len(type) SP type SP len(body) SP body, over the body bytes as
     # stored (FROZEN_MANIFEST's dsse.payload decodes to them), never re-serialized.
     assert _decode_payload(FROZEN_MANIFEST) == FROZEN_BODY_BYTES
-    assert signing_input(FROZEN_BODY_BYTES, V1_PAYLOAD_TYPE) == (
+    assert build_signing_input(FROZEN_BODY_BYTES, V1_PAYLOAD_TYPE) == (
         b'DSSEv1 30 application/vnd.asexec.v1+json 31 {"phase":"prereg","target":"m"}'
     )
 
@@ -284,7 +284,7 @@ def test_ref_of_the_frozen_v1_vector_is_the_digest_of_its_stored_body_bytes(tmp_
     # published fulfills and prev_hash link, and every ceiling nonce.
     ref = "sha-256:" + hashlib.sha256(FROZEN_BODY_BYTES).hexdigest()
     assert ref == ("sha-256:2e2ecfe58f9e44cc6ac359b15857029bf231a027d1276c1715f970c25248e53e")
-    assert manifest.ref(FROZEN_BODY_BYTES) == ref
+    assert manifest.derive_ref(FROZEN_BODY_BYTES) == ref
     assert (
         _get_report(tmp_path, [FROZEN_MANIFEST], ["format", "selfsig"])["manifests"][0]["ref"]
         == ref
@@ -347,13 +347,15 @@ def test_current_format_sign_then_verify_roundtrip(tmp_path):
     for mani, shown in zip(manis, report["manifests"], strict=True):
         assert mani["dsse"]["signatures"][0]["keyid"].startswith(entry["digest_ref_prefix"])
         assert shown["ref"].startswith(entry["digest_ref_prefix"])
-        assert shown["ref"] == manifest.ref(_decode_payload(mani))  # the stored bytes' digest
+        assert shown["ref"] == manifest.derive_ref(
+            _decode_payload(mani)
+        )  # the stored bytes' digest
 
     # selfsig checked the signatures: the same files changed after signing fail it.
     tampered = copy.deepcopy(manis)
     for mani in tampered:
         changed = {**json.loads(_decode_payload(mani)), "target": "n"}
-        mani["dsse"]["payload"] = base64.b64encode(canonical_bytes(changed)).decode()
+        mani["dsse"]["payload"] = base64.b64encode(serialize_canonical(changed)).decode()
     report = _get_report(tmp_path, tampered, ["format", "selfsig"])
     assert report["code"].split()[1:] == ["format=PASS", "selfsig=FAIL"]
     assert report["results"]["selfsig"]["reason"] == "2/2 manifest(s) failed"
@@ -384,16 +386,16 @@ OTHER_RULES = {
 
 def _sign_under(payload_type, body):
     priv, pub = bytes(32), bytes.fromhex(FROZEN_KEY["pubkey"])
-    raw = canonical_bytes(body)
+    raw = serialize_canonical(body)
     return {
         "dsse": {
             "payloadType": payload_type,
             "payload": base64.b64encode(raw).decode(),
             "signatures": [
                 {
-                    "keyid": keys.keyid_for(pub, payload_type),
+                    "keyid": keys.derive_keyid(pub, payload_type),
                     "sig": base64.b64encode(
-                        keys.sign(priv, signing_input(raw, payload_type))
+                        keys.sign(priv, build_signing_input(raw, payload_type))
                     ).decode(),
                 }
             ],
@@ -411,7 +413,7 @@ def test_formats__a_file_is_read_under_its_own_entry(tmp_path, monkeypatch):
     # verified under the rules its own payloadType names, beside a v1 file under v1's.
     monkeypatch.setitem(constants.FORMATS, OTHER_FORMAT, OTHER_RULES)
     other = _sign_under(OTHER_FORMAT, FROZEN_BODY)
-    assert signing_input(FROZEN_BODY_BYTES, OTHER_FORMAT) == (
+    assert build_signing_input(FROZEN_BODY_BYTES, OTHER_FORMAT) == (
         b'asexec-PAE/other 33 application/vnd.asexec.other+json 31 {"phase":"prereg","target":"m"}'
     )
     assert other["dsse"]["signatures"][0]["keyid"].startswith("other-256:")
@@ -442,7 +444,7 @@ def test_formats__signing_uses_the_entry_of_manifest_payload_type(monkeypatch):
     signed = _signed_prereg()
     assert signed["dsse"]["payloadType"] == constants.MANIFEST_PAYLOAD_TYPE
     assert signed["dsse"]["signatures"][0]["keyid"].startswith("sha-256:")
-    assert manifest.ref(_decode_payload(signed)).startswith("sha-256:")
+    assert manifest.derive_ref(_decode_payload(signed)).startswith("sha-256:")
 
 
 def test_digest_ref_prefix():
@@ -450,10 +452,10 @@ def test_digest_ref_prefix():
     # Fallback: a new format entry, selected by payloadType. The label must never disagree
     # with the digest.
     assert _get_signing_format()["digest_ref_prefix"] == "sha-256:"
-    assert keys.keyid_for(bytes(32)) == (
+    assert keys.derive_keyid(bytes(32)) == (
         "sha-256:66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925"
     )
-    assert manifest.ref(b'{"a":1}') == (
+    assert manifest.derive_ref(b'{"a":1}') == (
         "sha-256:015abd7f5cc57a2dd94b7590f04ad8084273905ee33ec5cebeae62276a97f862"
     )
 

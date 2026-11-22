@@ -50,7 +50,7 @@ def test_reject_unknown_chain():
 
 def test_time_of_round_is_genesis_plus_periods():
     # quicknet genesis + (round-1)*period
-    assert drand.time_of_round(ROUND, CHAIN) == 1692803367 + (ROUND - 1) * 3
+    assert drand.compute_round_time(ROUND, CHAIN) == 1692803367 + (ROUND - 1) * 3
 
 
 def test_pinned_chains_are_quicknet_with_its_genesis_and_period():
@@ -72,7 +72,7 @@ def test_pinned_chains_are_quicknet_with_its_genesis_and_period():
             "scheme": "bls-unchained-g1-rfc9380",
         }
     }
-    assert drand.time_of_round(1000, CHAIN) == 1692806364  # 2023-08-23T15:59:24Z
+    assert drand.compute_round_time(1000, CHAIN) == 1692806364  # 2023-08-23T15:59:24Z
 
 
 # --- build_verified_floor: a round fetched earlier, verified at signing ----------- #
@@ -80,7 +80,7 @@ def test_verified_floor_of_a_saved_round_is_the_floor_fetch_floor_writes():
     """A round as drand's HTTP API returns it ({round, randomness, signature}), verified
     offline, is the anchor.floor record --floor writes for the same round."""
     saved = {"round": ROUND, "randomness": RAND, "signature": SIG}
-    assert drand.build_verified_floor(saved, CHAIN) == drand.floor_record(
+    assert drand.build_verified_floor(saved, CHAIN) == drand.build_floor_record(
         {"chain_hash": CHAIN, **saved}
     )
     assert drand.build_verified_floor(saved, CHAIN) == {
@@ -129,7 +129,7 @@ def test_verify_floor_accepts_real_round():
         "status": "verified",
         "floor_type": "drand",
         "round": ROUND,
-        "created_no_earlier_than": drand.time_of_round(ROUND, CHAIN),
+        "created_no_earlier_than": drand.compute_round_time(ROUND, CHAIN),
     }
 
 

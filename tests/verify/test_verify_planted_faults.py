@@ -32,9 +32,9 @@ def _run(tmp_path, *manifests, tests=REQUIRED):
     return verify_paths(paths, list(tests), artifacts_dir=str(tmp_path / "artifacts"))
 
 
-def _pair(prereg):
+def _make_pair(prereg):
     """``prereg`` and the base postreg, re-linked to it, both signed."""
-    return d.sign(prereg), d.sign(d.with_field(d.POSTREG, "fulfills", d.ref(prereg)))
+    return d.sign(prereg), d.sign(d.with_field(d.POSTREG, "fulfills", d.derive_ref(prereg)))
 
 
 def _content_reasons(report):
@@ -98,7 +98,7 @@ def test_fault__subject_entry_without_a_digest(tmp_path):
 )
 def test_fault__signed_body_field_verify_does_not_examine(tmp_path, path, value):
     """Unknown fields and wrong types in fields no test examines change nothing."""
-    report = _run(tmp_path, *_pair(d.with_field(d.PREREG, path, value)), tests=TESTS_LINKED)
+    report = _run(tmp_path, *_make_pair(d.with_field(d.PREREG, path, value)), tests=TESTS_LINKED)
     assert report["code"] == PREFIX + "chain=PASS format=PASS keyconsist=PASS selfsig=PASS"
     assert report["commitments"][0]["state"] == "fulfilled"
 
@@ -116,7 +116,7 @@ def test_fault__phase_not_a_string_joins_nothing(tmp_path):
     assert report["commitments"] == [] and report["notarization_only"] == []
 
 
-_HEX = d.ref(d.PREREG).split(":")[1]
+_HEX = d.derive_ref(d.PREREG).split(":")[1]
 
 
 @pytest.mark.parametrize(
@@ -152,7 +152,7 @@ def test_fault__fulfills_not_exactly_the_ref(tmp_path, post):
 def test_fault__unsigned_envelope_field_verify_does_not_examine(tmp_path, edit):
     """Fields of the file outside the body that this format does not define are read by no
     test: the format is dsse.payloadType, and the algorithm is the format's."""
-    pre, post = _pair(d.PREREG)
+    pre, post = _make_pair(d.PREREG)
     edit(pre)
     assert _run(tmp_path, pre, post, tests=TESTS_LINKED)["code"] == (
         PREFIX + "chain=PASS format=PASS keyconsist=PASS selfsig=PASS"
@@ -171,7 +171,7 @@ SIG = SIGNED["dsse"]["signatures"][0]
         {"sig": d.encode_b64(d.decode_payload({"dsse": {"payload": SIG["sig"]}}) + b"\0")},
         {"sig": ""},
         {"sig": d.decode_payload({"dsse": {"payload": SIG["sig"]}}).hex()},
-        {"pubkey": "00" * 31, "keyid": keys.keyid_for(bytes(31))},
+        {"pubkey": "00" * 31, "keyid": keys.derive_keyid(bytes(31))},
         {"pubkey": "00" * 33},
     ],
     ids=[
@@ -227,7 +227,7 @@ def test_fault__very_deep_body_fails_format_everywhere(tmp_path):
 def test_fault__postreg_with_a_duplicate_key_in_the_body_joins_no_commitment(tmp_path):
     """Run rules: a postreg whose body repeats a key is malformed, validly signed or not, so
     it is neither counted nor rejected, nor notarization-only."""
-    post = d.with_field(d.POSTREG, "fulfills", d.ref(d.PREREG))
+    post = d.with_field(d.POSTREG, "fulfills", d.derive_ref(d.PREREG))
     raw = d.make_body_bytes(post).replace(b'"notes":"postreg0"', b'"notes":"a","notes":"postreg0"')
     report = _run(tmp_path, d.sign(d.PREREG), d.sign_bytes(raw), tests=TESTS_LINKED)
     assert report["code"] == PREFIX + "chain=FAIL format=FAIL keyconsist=FAIL selfsig=PASS"

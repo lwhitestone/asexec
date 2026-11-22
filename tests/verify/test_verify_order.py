@@ -170,7 +170,7 @@ def test_order__fail__2_a_rejected_copy_s_ceiling_is_not_the_prereg_s(sc, make_s
     ceiling, though genuine, early and for the same body, is not read, so the commitment's
     own late ceiling decides."""
     early = _make_late_ceiling_for_the_commitment(sc, make_server, ceiling_for)
-    early["dsse"]["signatures"][0]["keyid"] = keys.keyid_for(keys.generate()[1])
+    early["dsse"]["signatures"][0]["keyid"] = keys.derive_keyid(keys.generate()[1])
     sc.add_raw("prereg-forged-copy", json.dumps(early))
     report = sc.verify("ceiling", "order")
     assert report["code"] == "asexec-verify/1 ceiling=PASS format=PASS order=FAIL selfsig=FAIL"
@@ -188,7 +188,7 @@ def test_order__fail__2_another_signer_s_ceiling_is_not_the_prereg_s(sc, make_se
     other = keys.generate()
     raw = d.decode_payload(json.loads(sc.read("prereg")))
     copy = d.sign_bytes(raw, other)
-    nonce = d.ref(raw).split(":", 1)[-1]
+    nonce = d.derive_ref(raw).split(":", 1)[-1]
     copy["ceiling"] = ceiling_for(nonce, "synthetic", sc.server_pub, sc.sign_response)
     sc.add_raw("prereg-other-signer", json.dumps(copy))
     sc.add_postreg("post-other", fulfills="prereg")
@@ -198,8 +198,8 @@ def test_order__fail__2_another_signer_s_ceiling_is_not_the_prereg_s(sc, make_se
     assert report["code"] == "asexec-verify/1 ceiling=PASS format=PASS order=FAIL selfsig=PASS"
     by_signer = {c["keyid"]: c["order"] for c in report["commitments"]}
     assert len(by_signer) == 2
-    mine = by_signer[keys.keyid_for(d.TEST_KEY[1])]
-    theirs = by_signer[keys.keyid_for(other[1])]
+    mine = by_signer[keys.derive_keyid(d.TEST_KEY[1])]
+    theirs = by_signer[keys.derive_keyid(other[1])]
     assert mine["ceiling"]["no_later_than_us"] == FLOOR_US + 61_000_000
     assert [p["status"] for p in mine["postregs"]] == ["not-after"]
     assert theirs["ceiling"]["no_later_than_us"] == CEILING_US

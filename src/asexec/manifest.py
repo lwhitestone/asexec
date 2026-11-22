@@ -30,7 +30,7 @@ from collections import Counter
 from typing import Any
 
 from . import keys
-from .canonical import canonical_bytes, decode_base64, encode_base64, signing_input
+from .canonical import build_signing_input, decode_base64, encode_base64, serialize_canonical
 from .constants import FORMATS, MANIFEST_PAYLOAD_TYPE
 from .errors import ManifestError
 from .models import Anchor, Dsse, Manifest, ManifestBody, Signature
@@ -101,7 +101,7 @@ def _build(
         status=status,
         evidence=evidence,
     )
-    return body.to_body()
+    return body.dump_body()
 
 
 def build_prereg(target, **fields) -> dict[str, Any]:
@@ -112,7 +112,7 @@ def build_postreg(target, *, fulfills, **fields) -> dict[str, Any]:
     return _build("postreg", target, fulfills=fulfills, **fields)
 
 
-def ref(body_bytes: bytes, payload_type: str = MANIFEST_PAYLOAD_TYPE) -> str:
+def derive_ref(body_bytes: bytes, payload_type: str = MANIFEST_PAYLOAD_TYPE) -> str:
     """Stable content reference to a manifest body: ``sha-256:<hex>`` of its body bytes as
     stored, with the prefix of format ``payload_type`` (by default the one signing writes).
 
@@ -130,11 +130,11 @@ def sign(body: dict[str, Any], private_key: bytes, public_key: bytes) -> dict[st
     # Refuse what verify would reject as too deep (format #2), before encoding recurses into it.
     _check_value_within_max_nesting_depth(body, MAX_NESTING_DEPTH)
     _check_signable(body)
-    body_bytes = canonical_bytes(body)
-    sig = keys.sign(private_key, signing_input(body_bytes))
+    body_bytes = serialize_canonical(body)
+    sig = keys.sign(private_key, build_signing_input(body_bytes))
     dsse = Dsse(
         payload=encode_base64(body_bytes),
-        signatures=[Signature(keyid=keys.keyid_for(public_key), sig=encode_base64(sig))],
+        signatures=[Signature(keyid=keys.derive_keyid(public_key), sig=encode_base64(sig))],
     )
     return Manifest(dsse=dsse, pubkey=public_key.hex()).model_dump(mode="json")
 

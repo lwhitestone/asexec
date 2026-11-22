@@ -202,7 +202,7 @@ def test_selfsig__fail__3_signature_by_pubkey(scenario):
 
     def swap_key(envelope):
         envelope["pubkey"] = other_pub.hex()
-        envelope["dsse"]["signatures"][0]["keyid"] = keys.keyid_for(other_pub)  # keep #4
+        envelope["dsse"]["signatures"][0]["keyid"] = keys.derive_keyid(other_pub)  # keep #4
 
     scenario.tamper("postreg0", swap_key)
     _assert_fails_selfsig_only(scenario)
@@ -220,7 +220,7 @@ def test_selfsig__fail__4_keyid_derives_from_pubkey(scenario, value):
     if value is _MISSING:
         scenario.unset("postreg0", path)
     elif value == "other":
-        scenario.set("postreg0", path, keys.keyid_for(keys.generate()[1]))
+        scenario.set("postreg0", path, keys.derive_keyid(keys.generate()[1]))
     else:
         scenario.set("postreg0", path, value)
     _assert_fails_selfsig_only(scenario)

@@ -115,14 +115,14 @@ def test_ceiling__pass__2_nonce_is_ref_of_the_stored_bytes(sc):
     assert report["code"] == PASS
     (prereg,) = [m for m in report["manifests"] if m["phase"] == "prereg"]
     assert prereg["ceiling"]["status"] == "verified"
-    assert prereg["ref"] == d.ref(stored)
+    assert prereg["ref"] == d.derive_ref(stored)
 
 
 def test_ceiling__fail__2_nonce_is_not_ref_of_a_reserialized_body(sc):
     """ceiling #2: a witness for the canonical re-serialization of the same JSON value is
     not a witness for the bytes stored: nothing re-serializes the body, so it fails."""
     sc.edit_body_bytes("prereg", _respell_spaced)
-    canonical_hex = d.ref(d.make_body_bytes(sc._body("prereg"))).split(":", 1)[1]
+    canonical_hex = d.derive_ref(d.make_body_bytes(sc._body("prereg"))).split(":", 1)[1]
     sc.ceilings["prereg"] = lambda nonce_hex: _record(sc, canonical_hex)
     report = sc.verify("ceiling")
     assert report["code"] == FAIL

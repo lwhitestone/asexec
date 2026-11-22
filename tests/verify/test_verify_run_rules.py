@@ -269,7 +269,7 @@ def test_run__prereg_failing_format_is_not_a_provided_prereg(scenario, path, val
     assert report["results"]["keyconsist"]["applicable"] == 0
     assert report["commitments"] == []
     (lone,) = report["notarization_only"]
-    assert lone["fulfills"] == d.ref(d.decode_payload(json.loads(scenario.read("prereg"))))
+    assert lone["fulfills"] == d.derive_ref(d.decode_payload(json.loads(scenario.read("prereg"))))
 
 
 def test_run__verification_is_offline(scenario, monkeypatch):

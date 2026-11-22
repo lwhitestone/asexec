@@ -138,7 +138,7 @@ class Scenario:
 
     # --- declaring manifests ------------------------------------------------ #
     def add_prereg(self, name: str) -> None:
-        self.specs[name] = _Spec("prereg", self._subject(["harness/eval.py"]))
+        self.specs[name] = _Spec("prereg", self._build_subject(["harness/eval.py"]))
 
     def add_postreg(
         self,
@@ -147,7 +147,7 @@ class Scenario:
         prev: str | None = None,
         transcript: str = "transcript0.txt",
     ) -> None:
-        subject = self._subject([transcript, "harness/eval.py"])
+        subject = self._build_subject([transcript, "harness/eval.py"])
         self.specs[name] = _Spec("postreg", subject, fulfills=fulfills, prev=prev)
 
     def with_floor(self, name: str = "prereg") -> None:
@@ -241,13 +241,13 @@ class Scenario:
         self.servers = {WITNESS_ID: {"pubkey": pubkey}}
 
     # --- building ------------------------------------------------------------ #
-    def _subject(self, names: list[str]) -> list[dict]:
-        return [data.subject_entry(n) for n in names]
+    def _build_subject(self, names: list[str]) -> list[dict]:
+        return [data.make_subject_entry(n) for n in names]
 
-    def _link(self, target: str | None) -> str | None:
+    def _resolve_link(self, target: str | None) -> str | None:
         if target is None or target.startswith("sha-256:"):
             return target
-        return data.ref(self._build_raw(target))
+        return data.derive_ref(self._build_raw(target))
 
     def _body(self, name: str) -> dict:
         if name not in self._bodies:
@@ -260,9 +260,9 @@ class Scenario:
         body["subject"] = copy.deepcopy(spec.subject)
         body["notes"] = name  # makes sibling bodies distinct, so their refs differ
         if spec.kind == "postreg":
-            body["fulfills"] = self._link(spec.fulfills)
+            body["fulfills"] = self._resolve_link(spec.fulfills)
             if spec.prev is not None:
-                body["prev_hash"] = self._link(spec.prev)
+                body["prev_hash"] = self._resolve_link(spec.prev)
         if spec.floor:
             body["anchor"] = {"floor": copy.deepcopy(data.FLOOR)}
         for fn in spec.mutations:
@@ -284,7 +284,7 @@ class Scenario:
             envelope = data.sign_bytes(raw, self.signers.get(name, self.key))
             record = self.ceilings.get(name)
             if record is not None:
-                nonce_hex = data.ref(raw).split(":", 1)[-1]
+                nonce_hex = data.derive_ref(raw).split(":", 1)[-1]
                 if record is _AUTO:
                     record = self.ceiling_for(
                         nonce_hex, WITNESS_ID, self.server_pub, self.sign_response

@@ -183,8 +183,8 @@ def test_matching__same_body_by_two_keys_is_two_commitments(scenario):
     (ref_a, key_a, *_), (ref_b, key_b, *_) = _summary(report)
     assert ref_a == ref_b
     by_key = {c["keyid"]: c for c in report["commitments"]}
-    assert len(by_key[keys.keyid_for(scenario.key[1])]["counted_postregs"]) == 3
-    assert len(by_key[keys.keyid_for(other[1])]["counted_postregs"]) == 1
+    assert len(by_key[keys.derive_keyid(scenario.key[1])]["counted_postregs"]) == 3
+    assert len(by_key[keys.derive_keyid(other[1])]["counted_postregs"]) == 1
     assert all(c["rejected_postregs"] == [] for c in report["commitments"])
 
 
@@ -223,7 +223,7 @@ def test_matching__invalid_signature_is_rejected_under_both(scenario):
 
 PREREG_INVALID = "the pre-registration's signature is invalid"
 TESTS_LINKED = ("chain", "keyconsist")
-OTHER_KEYID = keys.keyid_for(keys.generate()[1])  # a keyid no file here derives
+OTHER_KEYID = keys.derive_keyid(keys.generate()[1])  # a keyid no file here derives
 
 
 def _make_broken_copy(scenario, name="prereg", keyid=None):
@@ -275,12 +275,12 @@ def test_matching__fail__4_prereg_meets_selfsig_conditions(scenario, break_prere
     assert report["notarization_only"] == []
     (rejected,) = report["rejected_preregs"]
     prereg = json.loads(scenario.read("prereg"))
-    assert rejected["ref"] == d.ref(d.decode_payload(prereg))
+    assert rejected["ref"] == d.derive_ref(d.decode_payload(prereg))
     assert rejected["keyid"] == _get_keyid(prereg)  # dsse.signatures[0].keyid, as the signer
     assert rejected["reason"] == "invalid signature"
     postregs = [json.loads(scenario.read(f"postreg{i}")) for i in range(3)]
     assert [(r["ref"], r["keyid"], r["reason"]) for r in rejected["rejected_postregs"]] == [
-        (d.ref(d.decode_payload(p)), _get_keyid(p), PREREG_INVALID) for p in postregs
+        (d.derive_ref(d.decode_payload(p)), _get_keyid(p), PREREG_INVALID) for p in postregs
     ]
     assert report["results"]["chain"]["applicable"] == 0
     assert report["results"]["keyconsist"]["applicable"] == 0
@@ -312,7 +312,7 @@ def test_matching__postreg_counted_by_a_commitment_is_not_rejected_under_a_rejec
     signature broken, or another key's keyid claimed) is a rejected pre-registration of the
     same ref. A postreg that counts toward the commitment is not rejected under the copy, as
     it is not rejected under the ref's other commitments."""
-    other_keyid = None if same_keyid else keys.keyid_for(keys.generate()[1])
+    other_keyid = None if same_keyid else keys.derive_keyid(keys.generate()[1])
     scenario.add_raw("copy", _make_broken_copy(scenario, keyid=other_keyid))
     report = scenario.verify(*TESTS_LINKED)
     assert report["code"] == "asexec-verify/1 chain=PASS format=PASS keyconsist=PASS selfsig=FAIL"
@@ -335,19 +335,19 @@ def test_matching__forged_copy_claiming_a_key_does_not_make_that_key_a_signer(sc
     other = keys.generate()
     forged = json.loads(scenario.read("prereg"))
     forged["pubkey"] = other[1].hex()
-    _set_keyid(forged, keys.keyid_for(other[1]))
+    _set_keyid(forged, keys.derive_keyid(other[1]))
     scenario.add_raw("forged", json.dumps(forged))
     scenario.sign_with("postreg2", other)
     report = scenario.verify(*TESTS_LINKED)
     assert report["code"] == "asexec-verify/1 chain=PASS format=PASS keyconsist=FAIL selfsig=FAIL"
     commitment = _commitment(report)
-    assert commitment["keyid"] == keys.keyid_for(scenario.key[1])
+    assert commitment["keyid"] == keys.derive_keyid(scenario.key[1])
     assert len(commitment["counted_postregs"]) == 2
     (by_b,) = commitment["rejected_postregs"]
-    assert by_b["keyid"] == keys.keyid_for(other[1])
+    assert by_b["keyid"] == keys.derive_keyid(other[1])
     assert by_b["reason"] == "signed by a different key than the pre-registration"
     (rejected,) = report["rejected_preregs"]
-    assert rejected["keyid"] == keys.keyid_for(other[1])
+    assert rejected["keyid"] == keys.derive_keyid(other[1])
     assert [(r["ref"], r["reason"]) for r in rejected["rejected_postregs"]] == [
         (by_b["ref"], PREREG_INVALID)
     ]
@@ -372,7 +372,9 @@ def test_matching__postreg_naming_only_rejected_preregs_is_rejected_under_each(s
     rejected pre-registration of the ref, whatever its own signature, and is not
     notarization-only."""
     scenario.tamper("prereg", _break_sig)
-    scenario.add_raw("other", _make_broken_copy(scenario, keyid=keys.keyid_for(keys.generate()[1])))
+    scenario.add_raw(
+        "other", _make_broken_copy(scenario, keyid=keys.derive_keyid(keys.generate()[1]))
+    )
     scenario.set("postreg0", "body.target.model_id", "SWAPPED", after_signing=True)
     report = scenario.verify(*TESTS_LINKED)
     assert report["code"] == "asexec-verify/1 chain=FAIL format=PASS keyconsist=FAIL selfsig=FAIL"
@@ -398,7 +400,9 @@ def test_matching__copies_of_a_rejected_prereg_are_listed_once(scenario):
 
 
 def test_matching__rejected_preregs_do_not_depend_on_file_order(scenario):
-    scenario.add_raw("copy", _make_broken_copy(scenario, keyid=keys.keyid_for(keys.generate()[1])))
+    scenario.add_raw(
+        "copy", _make_broken_copy(scenario, keyid=keys.derive_keyid(keys.generate()[1]))
+    )
     scenario.sign_with("postreg2", keys.generate())
     paths = scenario.write()
     tests = ["chain", "format", "keyconsist", "selfsig"]

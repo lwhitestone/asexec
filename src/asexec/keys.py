@@ -23,7 +23,7 @@ from .parsing import MAX_NESTING_DEPTH, parse_json
 _ALG = FORMATS[MANIFEST_PAYLOAD_TYPE]["signing_key_alg"]
 
 
-def keyid_for(public_key: bytes, payload_type: str = MANIFEST_PAYLOAD_TYPE) -> str:
+def derive_keyid(public_key: bytes, payload_type: str = MANIFEST_PAYLOAD_TYPE) -> str:
     """Stable key identifier: ``sha-256:<hex of sha256(pubkey)>``, with the prefix of format
     ``payload_type`` (by default the one signing writes)."""
     return FORMATS[payload_type]["digest_ref_prefix"] + hashlib.sha256(public_key).hexdigest()
@@ -42,7 +42,7 @@ def save(private_key: bytes, path: str, *, force: bool = False) -> str:
     Returns the keyid.
     """
     pub = bytes(nacl.signing.SigningKey(private_key).verify_key)
-    kid = keyid_for(pub)
+    kid = derive_keyid(pub)
     secret = {
         "version": 1,
         "alg": _ALG,

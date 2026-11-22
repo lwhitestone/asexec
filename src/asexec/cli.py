@@ -381,7 +381,7 @@ def _resolve_ref(value: str, flag: str) -> str:
     body bytes it stores) or a well-formed ``sha-256:<64 lowercase hex>`` ref; anything else
     (e.g. a typo'd path) is an error."""
     if os.path.isfile(value):
-        return manifest.ref(_load_manifest_body(value, flag)[0])
+        return manifest.derive_ref(_load_manifest_body(value, flag)[0])
     if REF_RE.fullmatch(value):
         return value
     raise SystemExit(
@@ -429,7 +429,7 @@ def _show(text: str) -> None:
 # --------------------------------------------------------------------------- #
 # commands
 # --------------------------------------------------------------------------- #
-def cmd_keygen(args) -> int:
+def run_keygen(args) -> int:
     """Generate a cryptographic key for signing pre- and post-registrations."""
     out = args.out or f"asexec-{uuid.uuid4()}.key"
     priv, _pub = keys.generate()
@@ -447,7 +447,7 @@ def cmd_keygen(args) -> int:
     return EXIT_OK
 
 
-def cmd_prereg(args) -> int:
+def run_prereg(args) -> int:
     """Write a signed pre-registration, signalling the intended execution."""
     target = _get_target(args)  # argparse requires one
     priv, pub = keys.load_signing_key(args.key)
@@ -465,7 +465,7 @@ def cmd_prereg(args) -> int:
         items=items,
     )
     mani = manifest.sign(body, priv, pub)
-    ref = manifest.ref(manifest.read_body(mani)[0])
+    ref = manifest.derive_ref(manifest.read_body(mani)[0])
     _attach_ceiling(mani, ref, args.ceiling, args.best_effort)
     manifest.save(mani, args.out)
     print(f"{OK} pre-registration written: {args.out}")
@@ -475,7 +475,7 @@ def cmd_prereg(args) -> int:
     return EXIT_OK
 
 
-def cmd_postreg(args) -> int:
+def run_postreg(args) -> int:
     """Write a signed post-registration, documenting the execution and fulfilling
     a pre-registration as promised."""
     priv, pub = keys.load_signing_key(args.key)
@@ -521,7 +521,7 @@ def cmd_postreg(args) -> int:
         evidence=evidence,
     )
     mani = manifest.sign(body, priv, pub)
-    ref = manifest.ref(manifest.read_body(mani)[0])
+    ref = manifest.derive_ref(manifest.read_body(mani)[0])
     _attach_ceiling(mani, ref, args.ceiling, args.best_effort)
     manifest.save(mani, args.out)
     print(f"{OK} post-registration written: {args.out}")
@@ -532,11 +532,11 @@ def cmd_postreg(args) -> int:
     return EXIT_OK
 
 
-def cmd_verify(args) -> int:
+def run_verify(args) -> int:
     """Run a series of verification tests on the prereg-postreg cycle to prove that
     this execution met the desired standards. Produces a code summarizing the tests
     performed and the results of each. ``args.tests`` is already validated (see
-    ``_tests_arg``).
+    ``_parse_tests_arg``).
 
     The verdict is decided before anything is printed, so a reader that closes stdout early
     (``asexec verify … | head -1``) does not change the exit status."""
@@ -763,14 +763,14 @@ _NOT_AFTER: dict[str, Callable[[dict, dict], str]] = {
 }
 
 
-def cmd_identity(args) -> int:
+def run_identity(args) -> int:
     """Standalone emit/match function pair for tying a known public identity via
     domain to a public key, no certificate authority (CA) needed. ``emit`` a json file
     which embeds the key and domain and publish it. Anyone may then check via
     ``match`` that the asserted identity is placed at the given domain."""
     if args.identity_cmd == "emit":
         _priv, pub = keys.load_signing_key(args.key)
-        pair = {"keyid": keys.keyid_for(pub), "pubkey": pub.hex()}
+        pair = {"keyid": keys.derive_keyid(pub), "pubkey": pub.hex()}
         doc = identity.build_wellknown([pair], domain=args.domain)
         identity.write_wellknown(doc, args.out)
         print(f"{OK} wrote {args.out}")
@@ -781,7 +781,7 @@ def cmd_identity(args) -> int:
     keyid = args.keyid
     if args.key:
         _priv, pub = keys.load_signing_key(args.key)
-        keyid = keys.keyid_for(pub)
+        keyid = keys.derive_keyid(pub)
     res = identity.match_binding(args.domain, keyid=keyid, pubkey_hex=args.pubkey)
     s = OK if res["bound"] else NO
     print(
@@ -806,7 +806,7 @@ def _add_anchor_flags(p):
     )
     floor.add_argument(
         "--floor-round",
-        type=_json_arg(_check_round_shape, _FILE_DEPTH),
+        type=_make_json_arg(_check_round_shape, _FILE_DEPTH),
         help="attach as the floor a drand round fetched earlier, for example when a run "
         'started, as drand\'s HTTP API returns it: JSON {"round": ..., "randomness": ..., '
         '"signature": ...} of the chain --floor fetches from. Verified at signing (offline); '
@@ -814,7 +814,7 @@ def _add_anchor_flags(p):
     )
     floor.add_argument(
         "--floor-round-file",
-        type=_nonempty_arg,
+        type=_check_nonempty_arg,
         help="the --floor-round JSON, from a file (a saved drand API response)",
     )
     p.add_argument(
@@ -840,7 +840,7 @@ class _Parser(argparse.ArgumentParser):
 
 
 # Argument types: each validates a value at parse time, so a bad one is a usage error.
-def _tests_arg(spec: str) -> list[str]:
+def _parse_tests_arg(spec: str) -> list[str]:
     """``--tests``: known test names, including every one in ``verifier.REQUIRED_TESTS``."""
     try:
         return verifier.parse_tests(spec)
@@ -848,7 +848,7 @@ def _tests_arg(spec: str) -> list[str]:
         raise argparse.ArgumentTypeError(str(e)) from e
 
 
-def _due_arg(value: str) -> str:
+def _check_due_arg(value: str) -> str:
     """``--due``: an ISO-8601 deadline, returned verbatim, as verify parses it
     (``verifier.parse_due``, the one parse of ``due``).
 
@@ -867,7 +867,7 @@ def _due_arg(value: str) -> str:
     return value
 
 
-def _nonempty_arg(value: str) -> str:
+def _check_nonempty_arg(value: str) -> str:
     """Any option's value: an empty one is no value, and is never read as absent."""
     if not value:
         raise argparse.ArgumentTypeError("must not be empty")
@@ -876,7 +876,7 @@ def _nonempty_arg(value: str) -> str:
 
 def _check_domain_arg(value: str) -> str:
     """``--domain``: a name with no whitespace or control character (it goes into a URL)."""
-    _nonempty_arg(value)
+    _check_nonempty_arg(value)
     if any(c.isspace() or not c.isprintable() for c in value):
         raise argparse.ArgumentTypeError(
             f"a domain name has no whitespace or control character: {value!r}"
@@ -884,13 +884,13 @@ def _check_domain_arg(value: str) -> str:
     return value
 
 
-def _json_arg(shape: Callable, max_depth: int):
+def _make_json_arg(shape: Callable, max_depth: int):
     """An argparse ``type`` for an inline JSON value: not empty, JSON under a manifest file's
     rules (``_parse_strict_json``, at most ``max_depth`` deep), and held to ``shape``. A value that
     fails is a usage error."""
 
     def parse(value: str):
-        _nonempty_arg(value)
+        _check_nonempty_arg(value)
         try:
             return shape(_parse_strict_json(value, max_depth))
         except ValueError as e:
@@ -900,13 +900,13 @@ def _json_arg(shape: Callable, max_depth: int):
 
 
 def _add_arg_or_file(
-    p, name: str, required: bool = False, help=None, file_help=None, type=_nonempty_arg
+    p, name: str, required: bool = False, help=None, file_help=None, type=_check_nonempty_arg
 ):
     """``--<name>`` and ``--<name>-file``: at most one (exactly one if ``required``). Neither
     may be empty; ``type`` checks the inline value."""
     group = p.add_mutually_exclusive_group(required=required)
     group.add_argument(f"--{name}", help=help, type=type)
-    group.add_argument(f"--{name}-file", help=file_help, type=_nonempty_arg)
+    group.add_argument(f"--{name}-file", help=file_help, type=_check_nonempty_arg)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -927,18 +927,20 @@ def build_parser() -> argparse.ArgumentParser:
     kg = sub.add_parser("keygen", help="generate an ed25519 keypair (no CA)")
     kg.add_argument(
         "--out",
-        type=_nonempty_arg,
+        type=_check_nonempty_arg,
         default=None,
         help="secret key file (default: asexec-<uuid>.key)",
     )
     kg.add_argument(
         "--force", action="store_true", help="overwrite an existing key file (the old key is lost)"
     )
-    kg.set_defaults(func=cmd_keygen)
+    kg.set_defaults(func=run_keygen)
 
     # asexec prereg
     pr = sub.add_parser("prereg", help="sign a pre-registration before a run")
-    pr.add_argument("--key", required=True, type=_nonempty_arg, help="key that signs the prereg")
+    pr.add_argument(
+        "--key", required=True, type=_check_nonempty_arg, help="key that signs the prereg"
+    )
     _add_arg_or_file(
         pr,
         "target",
@@ -948,7 +950,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pr.add_argument(
         "--due",
-        type=_due_arg,
+        type=_check_due_arg,
         help="disclosure deadline, ISO-8601 with an explicit offset or Z "
         "(optional; e.g. 2026-08-30T00:00:00Z)",
     )
@@ -961,7 +963,7 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument(
         "--subject",
         nargs="+",
-        type=_nonempty_arg,
+        type=_check_nonempty_arg,
         help="file(s) to hash, each named by its path relative to the current directory "
         "(no directories; verify finds them under --artifacts; optional at prereg time)",
     )
@@ -983,7 +985,7 @@ def build_parser() -> argparse.ArgumentParser:
         help='the plan the claim is tested against, as JSON: {"name": <file path>, '
         '"media_type": ..., "label": ...}; asexec hashes the file (--hash-alg)',
         file_help="the --plan JSON, from a file",
-        type=_json_arg(_check_plan_shape, _FILE_DEPTH),
+        type=_make_json_arg(_check_plan_shape, _FILE_DEPTH),
     )
     _add_arg_or_file(
         pr,
@@ -991,25 +993,25 @@ def build_parser() -> argparse.ArgumentParser:
         help='what the claim commits to deliver, as a JSON array: [{"id": "S1", "kind": '
         '"run"}, ...]; ids must be unique, and each is accounted for by a postreg\'s --item-id',
         file_help="the --items JSON array, from a file",
-        type=_json_arg(_check_items_shape, _FILE_DEPTH),
+        type=_make_json_arg(_check_items_shape, _FILE_DEPTH),
     )
     _add_anchor_flags(pr)
-    pr.add_argument("--out", type=_nonempty_arg, default="preregistration.json")
-    pr.set_defaults(func=cmd_prereg)
+    pr.add_argument("--out", type=_check_nonempty_arg, default="preregistration.json")
+    pr.set_defaults(func=run_prereg)
 
     # asexec postreg
     po = sub.add_parser("postreg", help="sign a post-registration after a run")
-    po.add_argument("--key", required=True, type=_nonempty_arg)
+    po.add_argument("--key", required=True, type=_check_nonempty_arg)
     po.add_argument(
         "--fulfills",
         required=True,
-        type=_nonempty_arg,
+        type=_check_nonempty_arg,
         help="pre-registration file, or a literal sha-256:<64 hex> ref, this fulfils",
     )
     _add_arg_or_file(po, "target", help="override target (default: inherit from prereg)")
     po.add_argument(
         "--due",
-        type=_due_arg,
+        type=_check_due_arg,
         help="override disclosure deadline, ISO-8601 with an explicit offset or Z "
         "(default: inherit from prereg)",
     )
@@ -1017,7 +1019,7 @@ def build_parser() -> argparse.ArgumentParser:
     po.add_argument(
         "--subject",
         nargs="+",
-        type=_nonempty_arg,
+        type=_check_nonempty_arg,
         help="file(s) to hash (outputs, transcript, harness files), each named by its path "
         "relative to the current directory (no directories)",
     )
@@ -1029,19 +1031,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     po.add_argument(
         "--prev",
-        type=_nonempty_arg,
+        type=_check_nonempty_arg,
         help="prior postreg file (or sha-256:<64 hex> ref) in this commitment's chain",
     )
     po.add_argument("--provenance", choices=["asserted", "reproducible"], default="asserted")
     po.add_argument(
         "--repro-recipe",
-        type=_json_arg(_check_repro_recipe_shape, _IN_BODY_DEPTH),
+        type=_make_json_arg(_check_repro_recipe_shape, _IN_BODY_DEPTH),
         help="JSON: {seed, decode, runtime} if provenance=reproducible",
     )
     _add_arg_or_file(po, "notes")
     po.add_argument(
         "--item-id",
-        type=_nonempty_arg,
+        type=_check_nonempty_arg,
         help="the id of the prereg's item this postreg accounts for",
     )
     po.add_argument(
@@ -1055,49 +1057,49 @@ def build_parser() -> argparse.ArgumentParser:
         help='files that back this postreg, as a JSON array: [{"name": <file path>, '
         '"media_type": ..., "uri": ...}, ...]; asexec hashes each file (--hash-alg)',
         file_help="the --evidence JSON array, from a file",
-        type=_json_arg(_check_evidence_shape, _FILE_DEPTH),
+        type=_make_json_arg(_check_evidence_shape, _FILE_DEPTH),
     )
     _add_anchor_flags(po)
-    po.add_argument("--out", type=_nonempty_arg, default="postregistration.json")
-    po.set_defaults(func=cmd_postreg)
+    po.add_argument("--out", type=_check_nonempty_arg, default="postregistration.json")
+    po.set_defaults(func=run_postreg)
 
     # asexec verify
     vy = sub.add_parser("verify", help="verify manifests offline; produce a canonical verify code")
     vy.add_argument(
-        "paths", nargs="+", type=_nonempty_arg, help="manifest file(s) or a directory of them"
+        "paths", nargs="+", type=_check_nonempty_arg, help="manifest file(s) or a directory of them"
     )
     vy.add_argument(
         "--tests",
         required=True,
-        type=_tests_arg,
+        type=_parse_tests_arg,
         help="comma-separated tests to run (MUST include "
         f"{' and '.join(repr(t) for t in sorted(verifier.REQUIRED_TESTS))}). "
         f"available: {', '.join(verifier.TEST_CATALOG)}",
     )
     vy.add_argument(
         "--artifacts",
-        type=_nonempty_arg,
+        type=_check_nonempty_arg,
         help="directory of original artifacts, to check content hashes",
     )
-    vy.set_defaults(func=cmd_verify)
+    vy.set_defaults(func=run_verify)
 
     # asexec identity
     idp = sub.add_parser("identity", help="key<->domain binding via .well-known (no CA)")
     isub = idp.add_subparsers(dest="identity_cmd", required=True)
     ie = isub.add_parser("emit", help="write a .well-known/asexec.json for your key")
-    ie.add_argument("--key", required=True, type=_nonempty_arg)
+    ie.add_argument("--key", required=True, type=_check_nonempty_arg)
     ie.add_argument("--domain", type=_check_domain_arg)
-    ie.add_argument("--out", type=_nonempty_arg, default="asexec.json")
-    ie.set_defaults(func=cmd_identity)
+    ie.add_argument("--out", type=_check_nonempty_arg, default="asexec.json")
+    ie.set_defaults(func=run_identity)
     iv = isub.add_parser(
         "match", help="check a key matches that which is asserted by a domain (network)"
     )
     iv.add_argument("--domain", required=True, type=_check_domain_arg)
     which = iv.add_mutually_exclusive_group(required=True)  # exactly one key to look for
-    which.add_argument("--keyid", type=_nonempty_arg)
-    which.add_argument("--pubkey", type=_nonempty_arg)
-    which.add_argument("--key", type=_nonempty_arg, help="a key file, to derive the keyid")
-    iv.set_defaults(func=cmd_identity)
+    which.add_argument("--keyid", type=_check_nonempty_arg)
+    which.add_argument("--pubkey", type=_check_nonempty_arg)
+    which.add_argument("--key", type=_check_nonempty_arg, help="a key file, to derive the keyid")
+    iv.set_defaults(func=run_identity)
 
     return p
 

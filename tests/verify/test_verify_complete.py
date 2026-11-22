@@ -162,7 +162,7 @@ def test_complete__pass__3_a_postreg_for_an_unlisted_item_is_shown_not_failed(sc
     assert report["code"] == PASS
     (unlisted,) = _get_complete(report)["unlisted"]
     assert unlisted["item_id"] == "Z9"
-    assert unlisted["ref"] == d.ref(d.decode_payload(json.loads(sc.read("extra"))))
+    assert unlisted["ref"] == d.derive_ref(d.decode_payload(json.loads(sc.read("extra"))))
 
 
 @pytest.mark.parametrize("due", ["next tuesday", 12345, ""], ids=["text", "number", "empty"])

@@ -39,7 +39,7 @@ def test_floor__pass__all(sc):
     assert report["code"] == PASS
     floor = report["manifests"][0]["floor"]
     assert floor["status"] == "verified"
-    assert floor["created_no_earlier_than"] == drand.time_of_round(1000, drand.QUICKNET_HASH)
+    assert floor["created_no_earlier_than"] == drand.compute_round_time(1000, drand.QUICKNET_HASH)
 
 
 @pytest.mark.parametrize("absent", ["missing", "null"])

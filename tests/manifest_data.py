@@ -7,8 +7,8 @@
 A file is a wrapper around a DSSE envelope: ``{"dsse": {"payloadType", "payload", "signatures":
 [{"keyid", "sig"}]}, "pubkey"}``, where ``dsse.payload`` is the base64 of the body bytes and
 ``sig`` the base64 of the signature, as DSSE has them, and ``pubkey`` is hex. Signing
-serializes a body as the writer does (``canonical_bytes``) and reuses the library's
-``signing_input``, so the signed bytes are the real ones, and writes the ``payloadType``
+serializes a body as the writer does (``serialize_canonical``) and reuses the library's
+``build_signing_input``, so the signed bytes are the real ones, and writes the ``payloadType``
 signing writes (pinned in ``tests/test_constants.py``), so a release commit that changes it
 changes these files with it. Any bytes can be signed (``sign_bytes``), and nothing else of the
 writer is used, so nothing gates what can be signed.
@@ -26,7 +26,7 @@ from typing import Any
 import nacl.signing
 
 from asexec import keys
-from asexec.canonical import canonical_bytes, pae, signing_input
+from asexec.canonical import build_signing_input, encode_pae, serialize_canonical
 from asexec.constants import FORMATS, MANIFEST_PAYLOAD_TYPE
 
 # The files a verify scenario writes under --artifacts, and their sha-256 digests. A subject
@@ -65,17 +65,17 @@ _SEED = bytes(range(32))
 TEST_KEY = (_SEED, bytes(nacl.signing.SigningKey(_SEED).verify_key))
 
 
-def subject_entry(name: str) -> dict[str, Any]:
+def make_subject_entry(name: str) -> dict[str, Any]:
     """A subject entry for one of ``ARTIFACTS``, carrying its own ``hash_alg``."""
     return {"name": name, "hash_alg": "sha-256", "digest": {"sha-256": DIGESTS[name]}}
 
 
 def make_body_bytes(body: dict[str, Any]) -> bytes:
     """The bytes signing stores for ``body``: its canonical serialization."""
-    return canonical_bytes(body)
+    return serialize_canonical(body)
 
 
-def ref(body: dict[str, Any] | bytes) -> str:
+def derive_ref(body: dict[str, Any] | bytes) -> str:
     """``sha-256:`` + the hex sha-256 of the body bytes (``body``'s, if it is a dict)."""
     raw = body if isinstance(body, bytes) else make_body_bytes(body)
     return "sha-256:" + hashlib.sha256(raw).hexdigest()
@@ -88,29 +88,33 @@ PREREG = {
     "target": TARGET,
     "due": DUE,
     "declaration": "all runs in full",
-    "subject": [subject_entry("harness/eval.py")],
+    "subject": [make_subject_entry("harness/eval.py")],
     "notes": "prereg",
 }
 POSTREG = {
     **PREREG,
     "phase": "postreg",
-    "subject": [subject_entry("transcript0.txt"), subject_entry("harness/eval.py")],
-    "fulfills": ref(PREREG),
+    "subject": [make_subject_entry("transcript0.txt"), make_subject_entry("harness/eval.py")],
+    "fulfills": derive_ref(PREREG),
     "notes": "postreg0",
 }
 
 
 # The claim record (ROADMAP, New properties): a prereg's plan and items, and a postreg's
 # item_id, status and evidence. plan and each evidence entry are checked like a subject entry.
-PLAN = {**subject_entry("plan.md"), "media_type": "text/markdown", "label": "the plan"}
+PLAN = {**make_subject_entry("plan.md"), "media_type": "text/markdown", "label": "the plan"}
 ITEMS = [{"id": "S1", "kind": "run"}, {"id": "S2", "kind": "ablation"}]
 EVIDENCE = [
-    {**subject_entry("results/scores.json"), "media_type": "application/json", "uri": "https://e"}
+    {
+        **make_subject_entry("results/scores.json"),
+        "media_type": "application/json",
+        "uri": "https://e",
+    }
 ]
 CLAIM_PREREG = {**PREREG, "plan": PLAN, "items": ITEMS, "notes": "claim prereg"}
 CLAIM_POSTREG = {
     **POSTREG,
-    "fulfills": ref(CLAIM_PREREG),
+    "fulfills": derive_ref(CLAIM_PREREG),
     "item_id": "S1",
     "status": "reported",
     "evidence": EVIDENCE,
@@ -135,8 +139,8 @@ def sign_bytes(raw: bytes, key: tuple[bytes, bytes] = TEST_KEY) -> dict[str, Any
             "payload": base64.b64encode(raw).decode("ascii"),
             "signatures": [
                 {
-                    "keyid": keys.keyid_for(pub),
-                    "sig": encode_b64(keys.sign(priv, signing_input(raw))),
+                    "keyid": keys.derive_keyid(pub),
+                    "sig": encode_b64(keys.sign(priv, build_signing_input(raw))),
                 }
             ],
         },
@@ -158,7 +162,7 @@ def sign_labelled(
     priv, _pub = key
     envelope = sign(body, key)
     version = FORMATS[MANIFEST_PAYLOAD_TYPE]["signing_pae_version"]
-    signed = pae(version, payload_type.encode(), make_body_bytes(body))
+    signed = encode_pae(version, payload_type.encode(), make_body_bytes(body))
     envelope["dsse"]["payloadType"] = payload_type
     envelope["dsse"]["signatures"][0]["sig"] = encode_b64(keys.sign(priv, signed))
     return envelope

@@ -6,7 +6,7 @@ The layout of a file is in ``manifest.py``.
 this tool writes: ``strict`` (no coercion) and ``extra="forbid"`` (a stray field is a caller
 bug). They do not participate in the cryptography: signing serializes a plain ``dict`` to
 the body bytes once (see ``canonical.py``), and signs those bytes. A body model is built,
-validated, then dumped to a dict via :meth:`ManifestBody.to_body` (``mode="json"``,
+validated, then dumped to a dict via :meth:`ManifestBody.dump_body` (``mode="json"``,
 ``exclude_none=True``) before it is serialized and signed.
 
 **Input models** (``*Input``) parse what the verifier reads, one slice at a time. They
@@ -147,7 +147,7 @@ class SubjectEntryInput(InputModel):
     digest: dict[str, Any]  # content #1
 
     @model_validator(mode="after")
-    def _digest_for_alg(self) -> SubjectEntryInput:
+    def _check_digest_for_alg(self) -> SubjectEntryInput:
         if not isinstance(self.digest.get(self.hash_alg), str):
             raise ValueError("digest[hash_alg] is not a string")
         bytes.fromhex(self.digest[self.hash_alg])  # a ValueError here: not hex
@@ -242,7 +242,7 @@ Status = Literal["reported", "excluded", "blocked"]
 
 
 class Floor(FloorInput):
-    """A drand freshness floor (``anchor.floor``), as ``drand.floor_record`` writes it."""
+    """A drand freshness floor (``anchor.floor``), as ``drand.build_floor_record`` writes it."""
 
     model_config = ConfigDict(extra="forbid")
     null_is_absent = False
@@ -339,7 +339,7 @@ class ManifestBody(BaseModel):
             raise ValueError("postreg manifest missing mandatory 'fulfills'")
         return self
 
-    def to_body(self) -> dict[str, Any]:
+    def dump_body(self) -> dict[str, Any]:
         """Return the plain dict that gets serialized to the body bytes and signed."""
         return self.model_dump(mode="json", exclude_none=True)
 

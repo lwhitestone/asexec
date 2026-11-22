@@ -43,7 +43,7 @@ def _lower_hex(value: str) -> str:
     return value
 
 
-def _pinned_chain(value: str) -> str:
+def _check_pinned_chain(value: str) -> str:
     if value not in chains.CHAINS:
         raise ValueError("not a drand chain the verifier pins")
     return value
@@ -99,7 +99,7 @@ SignatureBase64 = Annotated[str, AfterValidator(_check_signature)]
 NormalName = Annotated[str, AfterValidator(_check_normal_name)]
 
 # A drand chain hash the verifier pins (floor #2). ``chains.CHAINS`` is fixed at import.
-PinnedChain = Annotated[str, AfterValidator(_pinned_chain)]
+PinnedChain = Annotated[str, AfterValidator(_check_pinned_chain)]
 
 # ``body.phase`` / ``fulfills`` / ``prev_hash``: compared by string equality, never
 # parsed (chain #2). ``None`` when absent; any other non-string value is ``DANGLING``.

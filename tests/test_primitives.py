@@ -7,29 +7,37 @@ import os
 import pytest
 
 from asexec import hashing, keys
-from asexec.canonical import canonical_bytes, decode_base64, encode_base64, pae, signing_input
+from asexec.canonical import (
+    build_signing_input,
+    decode_base64,
+    encode_base64,
+    encode_pae,
+    serialize_canonical,
+)
 from asexec.errors import HashAlgError, ManifestError
 
 
 def test_canonical_is_key_order_independent():
     left = {"b": 1, "a": 2, "c": [3, {"y": 1, "x": 2}]}
     right = {"c": [3, {"x": 2, "y": 1}], "a": 2, "b": 1}
-    assert canonical_bytes(left) == canonical_bytes(right)
+    assert serialize_canonical(left) == serialize_canonical(right)
 
 
 def test_canonical_compact_utf8():
-    assert canonical_bytes({"k": "café"}) == b'{"k":"caf\xc3\xa9"}'
+    assert serialize_canonical({"k": "café"}) == b'{"k":"caf\xc3\xa9"}'
 
 
 def test_pae_is_unambiguous():
     # length-prefixing prevents "abc"+"" from colliding with "ab"+"c"
-    assert pae(b"v", b"t", b"abc") != pae(b"v", b"t", b"ab") + b"c"
-    assert pae(b"DSSEv1", b"t", b"{}") == b"DSSEv1 1 t 2 {}"
+    assert encode_pae(b"v", b"t", b"abc") != encode_pae(b"v", b"t", b"ab") + b"c"
+    assert encode_pae(b"DSSEv1", b"t", b"{}") == b"DSSEv1 1 t 2 {}"
 
 
 def test_signing_input_changes_with_the_body_bytes():
-    assert signing_input(b'{"a":1}') != signing_input(b'{"a":2}')
-    assert signing_input(b'{"a":1}') != signing_input(b'{"a": 1}')  # the bytes, not the JSON
+    assert build_signing_input(b'{"a":1}') != build_signing_input(b'{"a":2}')
+    assert build_signing_input(b'{"a":1}') != build_signing_input(
+        b'{"a": 1}'
+    )  # the bytes, not the JSON
 
 
 @pytest.mark.parametrize("data", [b"", b"A", b"AB", b"ABC", bytes(range(256))])
@@ -159,7 +167,7 @@ def test_unknown_hash_alg_raises(tmp_path):
 
 def test_keyid_stable_and_sign_verify():
     priv, pub = keys.generate()
-    assert keys.keyid_for(pub) == keys.keyid_for(pub)
+    assert keys.derive_keyid(pub) == keys.derive_keyid(pub)
     sig = keys.sign(priv, b"msg")
     assert keys.verify(pub, b"msg", sig)
     assert not keys.verify(pub, b"tampered", sig)
@@ -180,5 +188,5 @@ def test_key_save_load_roundtrip_and_perms(tmp_path):
     p2, pub2 = keys.load_signing_key(str(kp))
     assert p2 == priv
     assert pub2 == pub
-    assert keys.keyid_for(pub2) == kid
+    assert keys.derive_keyid(pub2) == kid
     assert json.loads((tmp_path / "k.key.pub").read_text())["keyid"] == kid

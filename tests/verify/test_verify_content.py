@@ -23,7 +23,7 @@ EMPTY = (
 EVAL_DIGEST = d.DIGESTS["harness/eval.py"]
 
 
-def _entry_reasons(report, field=None):
+def _get_entry_reasons(report, field=None):
     """Failure reasons of every entry (of ``field`` only, if given) that did not match."""
     return [
         entry["reason"]
@@ -104,7 +104,7 @@ def test_content__fail__1_entry_is_well_formed(scenario, entry):
     _set_prereg_subject(scenario, entry)
     report = scenario.verify("content")
     assert report["code"] == FAIL
-    assert _entry_reasons(report) == ["malformed subject entry"]
+    assert _get_entry_reasons(report) == ["malformed subject entry"]
 
 
 @pytest.mark.parametrize("subject", [[], "x", {}], ids=["empty-list", "string", "object"])
@@ -127,7 +127,7 @@ def test_content__fail__2_hash_alg_is_available(scenario):
     _set_prereg_subject(scenario, _make_entry("harness/eval.py", "00", "blake9"))
     report = scenario.verify("content")
     assert report["code"] == FAIL
-    assert _entry_reasons(report) == ["algorithm unavailable: 'blake9'"]
+    assert _get_entry_reasons(report) == ["algorithm unavailable: 'blake9'"]
 
 
 @pytest.mark.parametrize(
@@ -164,20 +164,20 @@ def test_content__fail__3_name_is_a_normalized_relative_path(scenario, name):
     _set_prereg_subject(scenario, _make_entry(name))
     report = scenario.verify("content")
     assert report["code"] == FAIL
-    assert _entry_reasons(report) == ["name is not a normalized relative path"]
+    assert _get_entry_reasons(report) == ["name is not a normalized relative path"]
 
 
 @pytest.mark.parametrize("second_digest", ["same", "other"])
 def test_content__fail__4_names_are_unique(scenario, second_digest):
     """content #4: no two entries of one subject have the same name, whatever their
     digests; each of them fails."""
-    second = d.subject_entry("harness/eval.py")
+    second = d.make_subject_entry("harness/eval.py")
     if second_digest == "other":
         second = _make_entry("harness/eval.py", d.DIGESTS["transcript0.txt"])
-    _set_prereg_subject(scenario, d.subject_entry("harness/eval.py"), second)
+    _set_prereg_subject(scenario, d.make_subject_entry("harness/eval.py"), second)
     report = scenario.verify("content")
     assert report["code"] == FAIL
-    assert _entry_reasons(report) == ["duplicate name"] * 2
+    assert _get_entry_reasons(report) == ["duplicate name"] * 2
 
 
 def test_content__pass__4_the_same_name_in_two_manifests_is_not_a_duplicate(scenario):
@@ -194,7 +194,7 @@ def test_content__fail__5_name_resolves_inside_artifacts(scenario):
     _set_prereg_subject(scenario, _make_entry("link.txt", digest))
     report = scenario.verify("content")
     assert report["code"] == FAIL
-    assert _entry_reasons(report) == ["path resolves outside --artifacts"]
+    assert _get_entry_reasons(report) == ["path resolves outside --artifacts"]
 
 
 def test_content__pass__5_symlink_inside_is_hashed_through_to_its_target(scenario):
@@ -216,7 +216,7 @@ def test_content__fail__6_artifact_exists(scenario, case):
         _set_prereg_subject(scenario, _make_entry("gone.py"))
         report = scenario.verify("content")
     assert report["code"] == FAIL
-    assert _entry_reasons(report) == ["artifact not found"]
+    assert _get_entry_reasons(report) == ["artifact not found"]
 
 
 @pytest.mark.parametrize("case", ["directory", "symlink-to-directory", "fifo"])
@@ -234,7 +234,7 @@ def test_content__fail__7_artifact_is_a_file(scenario, case):
     _set_prereg_subject(scenario, _make_entry(name, old_dir_hash))
     report = scenario.verify("content")
     assert report["code"] == FAIL
-    assert _entry_reasons(report) == ["artifact is not a file"]
+    assert _get_entry_reasons(report) == ["artifact is not a file"]
 
 
 def test_content__fail__8_artifact_is_readable(scenario, monkeypatch):
@@ -246,7 +246,7 @@ def test_content__fail__8_artifact_is_readable(scenario, monkeypatch):
     monkeypatch.setattr(hashing, "hash_file", deny)
     report = scenario.verify("content")
     assert report["code"] == FAIL
-    assert set(_entry_reasons(report)) == {"artifact unreadable: Permission denied"}
+    assert set(_get_entry_reasons(report)) == {"artifact unreadable: Permission denied"}
 
 
 @pytest.mark.parametrize("target", ["transcript0.txt", "harness/eval.py"])
@@ -313,7 +313,7 @@ def test_content__fail__1_plan_is_a_well_formed_entry(scenario, plan):
     scenario.set("prereg", "body.plan", plan)
     report = scenario.verify("content")
     assert report["code"] == FAIL
-    assert _entry_reasons(report) == ["malformed plan entry"]
+    assert _get_entry_reasons(report) == ["malformed plan entry"]
 
 
 @pytest.mark.parametrize(
@@ -331,7 +331,7 @@ def test_content__fail__1_evidence_is_a_non_empty_array_of_entries(scenario, evi
     scenario.set("postreg0", "body.evidence", evidence)
     report = scenario.verify("content")
     assert report["code"] == FAIL
-    assert _entry_reasons(report) == [reason]
+    assert _get_entry_reasons(report) == [reason]
 
 
 @pytest.mark.parametrize("field", ["plan", "evidence"])
@@ -342,7 +342,7 @@ def test_content__fail__3_plan_and_evidence_names_are_normalized(scenario, field
     scenario.set("prereg" if field == "plan" else "postreg0", name, "./" + d.EVIDENCE[0]["name"])
     report = scenario.verify("content")
     assert report["code"] == FAIL
-    assert _entry_reasons(report, field) == ["name is not a normalized relative path"]
+    assert _get_entry_reasons(report, field) == ["name is not a normalized relative path"]
 
 
 def test_content__fail__4_evidence_names_are_unique(scenario):
@@ -350,12 +350,12 @@ def test_content__fail__4_evidence_names_are_unique(scenario):
     scenario.set("postreg0", "body.evidence", d.EVIDENCE * 2)
     report = scenario.verify("content")
     assert report["code"] == FAIL
-    assert _entry_reasons(report, "evidence") == ["duplicate name"] * 2
+    assert _get_entry_reasons(report, "evidence") == ["duplicate name"] * 2
 
 
 def test_content__pass__4_a_name_in_subject_and_evidence_is_not_a_duplicate(scenario):
     """content #4: names are unique within one list; a file may be a subject and evidence."""
-    scenario.set("postreg0", "body.evidence", [d.subject_entry("transcript0.txt")])
+    scenario.set("postreg0", "body.evidence", [d.make_subject_entry("transcript0.txt")])
     assert scenario.code("content") == PASS
 
 
@@ -367,7 +367,7 @@ def test_content__fail__7_plan_and_evidence_name_a_file(scenario, field):
     scenario.set("prereg" if field == "plan" else "postreg0", path, "harness")
     report = scenario.verify("content")
     assert report["code"] == FAIL
-    assert _entry_reasons(report, field) == ["artifact is not a file"]
+    assert _get_entry_reasons(report, field) == ["artifact is not a file"]
 
 
 @pytest.mark.parametrize("target", ["plan.md", "results/scores.json"])

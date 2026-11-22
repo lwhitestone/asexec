@@ -18,7 +18,7 @@ from .constants import FORMATS, MANIFEST_PAYLOAD_TYPE
 from .errors import ManifestError
 
 
-def canonical_bytes(payload: Any) -> bytes:
+def serialize_canonical(payload: Any) -> bytes:
     """Deterministically serialize a JSON-compatible object to the body bytes signing stores.
 
     Rules (documented so any implementation can reproduce them):
@@ -61,7 +61,7 @@ def decode_base64(text: str) -> bytes:
     return data
 
 
-def pae(version: bytes, payload_type: bytes, body: bytes) -> bytes:
+def encode_pae(version: bytes, payload_type: bytes, body: bytes) -> bytes:
     """Pre-Authentication Encoding (DSSE).
 
     PAE(t, b) = VERSION SP LEN(t) SP t SP LEN(b) SP b
@@ -81,8 +81,8 @@ def pae(version: bytes, payload_type: bytes, body: bytes) -> bytes:
     )
 
 
-def signing_input(body: bytes, payload_type: str = MANIFEST_PAYLOAD_TYPE) -> bytes:
+def build_signing_input(body: bytes, payload_type: str = MANIFEST_PAYLOAD_TYPE) -> bytes:
     """The exact bytes to sign/verify for the body bytes ``body`` of format ``payload_type``
     (a key of ``FORMATS``; by default the one signing writes), under that format's rules."""
     version = FORMATS[payload_type]["signing_pae_version"]
-    return pae(version, payload_type.encode("ascii"), body)
+    return encode_pae(version, payload_type.encode("ascii"), body)

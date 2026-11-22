@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 import asexec
 from asexec import MANIFEST_PREDICATE_TYPE, drand, keys, manifest
-from asexec.canonical import canonical_bytes, signing_input
+from asexec.canonical import build_signing_input, serialize_canonical
 from asexec.constants import MANIFEST_PAYLOAD_TYPE
 from asexec.errors import ManifestError
 from asexec.models import BODY_FIELDS, WRAPPER_FIELDS, Ceiling, Dsse, Manifest, Signature
@@ -23,14 +23,14 @@ def _target():
 DUE = "2099-01-01T00:00:00Z"
 
 
-def _subj(name="h.py"):
+def _make_subject(name="h.py"):
     return [{"name": name, "hash_alg": "sha-256", "digest": {"sha-256": "00"}}]
 
 
 def test_predicate_type_is_the_only_format_identifier_in_the_body():
     # predicateType says the body is an asexec manifest; schema_id is no longer written.
     assert MANIFEST_PREDICATE_TYPE == "https://asexec.org/manifest/v1"
-    body = manifest.build_prereg(_target(), due=DUE, subject=_subj())
+    body = manifest.build_prereg(_target(), due=DUE, subject=_make_subject())
     assert body["predicateType"] == "https://asexec.org/manifest/v1"
     assert body["phase"] == "prereg"
     assert "schema_id" not in body
@@ -43,14 +43,16 @@ def test_target_may_be_freeform_text():
 
 
 def test_ref_is_signature_independent():
-    body = manifest.build_prereg(_target(), due=DUE, subject=_subj())
+    body = manifest.build_prereg(_target(), due=DUE, subject=_make_subject())
     priv1, pub1 = keys.generate()
     priv2, pub2 = keys.generate()
     m1 = manifest.sign(body, priv1, pub1)
     m2 = manifest.sign(dict(body), priv2, pub2)
     # different signatures, same body => same ref
     assert m1["dsse"]["signatures"][0]["sig"] != m2["dsse"]["signatures"][0]["sig"]
-    assert manifest.ref(manifest.read_body(m1)[0]) == manifest.ref(manifest.read_body(m2)[0])
+    assert manifest.derive_ref(manifest.read_body(m1)[0]) == manifest.derive_ref(
+        manifest.read_body(m2)[0]
+    )
 
 
 def test_sign_writes_a_dsse_envelope_in_the_wrapper():
@@ -58,26 +60,26 @@ def test_sign_writes_a_dsse_envelope_in_the_wrapper():
     untrusted: {asexec_version}}, and dsse.payload is the base64 of the body's canonical
     serialization."""
     priv, pub = keys.generate()
-    body = manifest.build_prereg(_target(), due=DUE, subject=_subj())
+    body = manifest.build_prereg(_target(), due=DUE, subject=_make_subject())
     signed = manifest.sign(body, priv, pub)
     assert list(signed) == ["dsse", "pubkey", "untrusted"]
     assert signed["untrusted"] == {"asexec_version": asexec.__version__}
     assert list(signed["dsse"]) == ["payloadType", "payload", "signatures"]
     assert signed["dsse"]["payloadType"] == MANIFEST_PAYLOAD_TYPE
-    assert signed["dsse"]["payload"] == base64.b64encode(canonical_bytes(body)).decode()
+    assert signed["dsse"]["payload"] == base64.b64encode(serialize_canonical(body)).decode()
     (entry,) = signed["dsse"]["signatures"]
-    assert entry == {"keyid": keys.keyid_for(pub), "sig": entry["sig"]}
+    assert entry == {"keyid": keys.derive_keyid(pub), "sig": entry["sig"]}
     assert signed["pubkey"] == pub.hex()
-    assert manifest.read_body(signed) == (canonical_bytes(body), body)
+    assert manifest.read_body(signed) == (serialize_canonical(body), body)
 
 
 def test_sign_then_verify_matches():
     priv, pub = keys.generate()
-    body = manifest.build_prereg(_target(), due=DUE, subject=_subj())
+    body = manifest.build_prereg(_target(), due=DUE, subject=_make_subject())
     signed = manifest.sign(body, priv, pub)
     raw, _body = manifest.read_body(signed)
     sig = base64.b64decode(signed["dsse"]["signatures"][0]["sig"], validate=True)
-    assert keys.verify(bytes.fromhex(signed["pubkey"]), signing_input(raw), sig)
+    assert keys.verify(bytes.fromhex(signed["pubkey"]), build_signing_input(raw), sig)
 
 
 def test_sign_refuses_a_body_with_no_utf8_form():
@@ -210,7 +212,7 @@ def test_due_optional_at_prereg():
 def test_subject_entry_requires_its_own_hash_alg():
     # Each entry carries its own hash_alg; one stripped from a hand-built body is refused.
     priv, pub = keys.generate()
-    body = manifest.build_prereg(_target(), due=DUE, subject=_subj())
+    body = manifest.build_prereg(_target(), due=DUE, subject=_make_subject())
     assert body["subject"][0]["hash_alg"] == "sha-256"
     assert "hash_alg" not in body  # no body-level hash_alg is written
     del body["subject"][0]["hash_alg"]
@@ -220,7 +222,7 @@ def test_subject_entry_requires_its_own_hash_alg():
 
 def test_builders_take_no_body_level_hash_alg():
     with pytest.raises(TypeError):
-        manifest.build_prereg(_target(), subject=_subj(), hash_alg="sha-256")
+        manifest.build_prereg(_target(), subject=_make_subject(), hash_alg="sha-256")
 
 
 def test_writer_subject_entry_requires_hash_alg():
@@ -231,12 +233,12 @@ def test_writer_subject_entry_requires_hash_alg():
 
 def test_writer_refuses_duplicate_subject_names():
     with pytest.raises(ValidationError, match="twice"):
-        manifest.build_prereg(_target(), subject=_subj() + _subj())
+        manifest.build_prereg(_target(), subject=_make_subject() + _make_subject())
 
 
 def test_sign_refuses_a_hand_built_body_with_duplicate_subject_names():
     priv, pub = keys.generate()
-    body = manifest.build_prereg(_target(), subject=_subj())
+    body = manifest.build_prereg(_target(), subject=_make_subject())
     body["subject"].append(dict(body["subject"][0]))
     with pytest.raises(ManifestError, match="twice"):
         manifest.sign(body, priv, pub)
@@ -247,7 +249,7 @@ def test_sign_refuses_a_hand_built_body_with_duplicate_subject_names():
 )
 def test_writer_refuses_a_name_that_is_not_a_normalized_relative_path(name):
     with pytest.raises(ValidationError):
-        manifest.build_prereg(_target(), subject=_subj(name))
+        manifest.build_prereg(_target(), subject=_make_subject(name))
 
 
 def test_signing_refuses_a_body_without_target():
@@ -263,7 +265,7 @@ def test_signing_refuses_a_body_without_target():
 
 def test_signing_refuses_a_body_without_predicate_type():
     priv, pub = keys.generate()
-    body = manifest.build_prereg(_target(), due=DUE, subject=_subj())
+    body = manifest.build_prereg(_target(), due=DUE, subject=_make_subject())
     del body["predicateType"]
     with pytest.raises(ManifestError):
         manifest.sign(body, priv, pub)
@@ -271,7 +273,7 @@ def test_signing_refuses_a_body_without_predicate_type():
 
 def test_postreg_requires_fulfills():
     priv, pub = keys.generate()
-    body = manifest.build_prereg(_target(), due=DUE, subject=_subj())
+    body = manifest.build_prereg(_target(), due=DUE, subject=_make_subject())
     body["phase"] = "postreg"  # now it's a postreg with no fulfills
     with pytest.raises(ManifestError):
         manifest.sign(body, priv, pub)
@@ -294,7 +296,7 @@ def test_writer_floor_rejects_what_it_would_not_write(change):
     floor = {"floor_type": "drand", "chain_hash": drand.QUICKNET_HASH, "round": 1,
              "signature": "cd", **change}  # fmt: skip
     with pytest.raises(ValidationError):
-        manifest.build_prereg(_target(), due=DUE, subject=_subj(), floor=floor)
+        manifest.build_prereg(_target(), due=DUE, subject=_make_subject(), floor=floor)
 
 
 @pytest.mark.parametrize("field", ["nonce", "pubkey", "response"])
@@ -355,13 +357,13 @@ def test_floor_lands_in_anchor_and_ref_stable_across_ceiling():
         "signature": "cd",
         "randomness": "ef",
     }
-    body = manifest.build_prereg(_target(), due=DUE, subject=_subj(), floor=floor)
+    body = manifest.build_prereg(_target(), due=DUE, subject=_make_subject(), floor=floor)
     assert body["anchor"]["floor"]["floor_type"] == "drand"
     signed = manifest.sign(body, priv, pub)
-    ref_before = manifest.ref(manifest.read_body(signed)[0])
+    ref_before = manifest.derive_ref(manifest.read_body(signed)[0])
     # attaching a ceiling in the wrapper must not perturb the body ref
     manifest.attach_ceiling(signed, {"ceiling_type": "roughtime", "nonce": ref_before})
-    assert manifest.ref(manifest.read_body(signed)[0]) == ref_before
+    assert manifest.derive_ref(manifest.read_body(signed)[0]) == ref_before
     assert manifest.get_ceiling(signed)["nonce"] == ref_before
 
 

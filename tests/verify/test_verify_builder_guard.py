@@ -25,7 +25,7 @@ TESTS = [
 ALL_PASS = "asexec-verify/1 " + " ".join(f"{name}=PASS" for name in TESTS)
 
 
-def _built(raw):
+def _build_from_raw(raw):
     """What the writer builds from the same inputs as the raw body."""
     fields = ("due", "declaration", "subject", "notes", "plan", "items", "item_id", "status")
     args = {k: raw[k] for k in (*fields, "evidence") if k in raw}
@@ -37,7 +37,7 @@ def _built(raw):
 
 
 PREREG_WITH_FLOOR = d.with_field(d.PREREG, "anchor.floor", d.FLOOR)
-POSTREG_TO_IT = d.with_field(d.POSTREG, "fulfills", d.ref(PREREG_WITH_FLOOR))
+POSTREG_TO_IT = d.with_field(d.POSTREG, "fulfills", d.derive_ref(PREREG_WITH_FLOOR))
 
 
 @pytest.mark.parametrize(
@@ -46,8 +46,8 @@ POSTREG_TO_IT = d.with_field(d.POSTREG, "fulfills", d.ref(PREREG_WITH_FLOOR))
     ids=["prereg", "postreg", "prereg-floor", "claim-prereg", "claim-postreg"],
 )
 def test_guard__writer_builds_the_raw_body_and_envelope(raw):
-    assert _built(raw) == raw
-    written = manifest.sign(_built(raw), *d.TEST_KEY)
+    assert _build_from_raw(raw) == raw
+    written = manifest.sign(_build_from_raw(raw), *d.TEST_KEY)
     assert written == {**d.sign(raw), "untrusted": {"asexec_version": asexec.__version__}}
 
 
@@ -61,7 +61,11 @@ def test_guard__writer_output_and_raw_data_verify_alike(tmp_path):
         pairs = [("pre", PREREG_WITH_FLOOR), ("post", POSTREG_TO_IT)]
         pairs += [("claim-pre", d.CLAIM_PREREG), ("claim-post", d.CLAIM_POSTREG)]
         for name, raw in pairs:
-            env = manifest.sign(_built(raw), *d.TEST_KEY) if source == "writer" else d.sign(raw)
+            env = (
+                manifest.sign(_build_from_raw(raw), *d.TEST_KEY)
+                if source == "writer"
+                else d.sign(raw)
+            )
             path = tmp_path / f"{source}-{name}.json"
             path.write_text(json.dumps(env))
             paths.append(str(path))

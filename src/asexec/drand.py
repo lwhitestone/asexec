@@ -34,7 +34,7 @@ _API_MIRRORS = [
 ]
 
 
-def time_of_round(round_no: int, chain_hash: str) -> int:
+def compute_round_time(round_no: int, chain_hash: str) -> int:
     p = CHAINS[chain_hash]
     return p["genesis_time"] + (round_no - 1) * p["period"]
 
@@ -55,14 +55,14 @@ def fetch_latest_round(chain_hash: str) -> dict:
                 "randomness": data["randomness"],
                 "signature": data["signature"],
             }
-            floor_record(round_data)  # a malformed round from this mirror: try the next
+            build_floor_record(round_data)  # a malformed round from this mirror: try the next
             return round_data
         except Exception as e:  # try next mirror
             last_err = e
     raise NetworkError(f"could not fetch drand round from any mirror: {last_err}")
 
 
-def floor_record(round_data: dict) -> dict:
+def build_floor_record(round_data: dict) -> dict:
     """Wrap a fetched round into a typed ``anchor.floor`` record.
 
     The floor is the signed, sign-time *freshness beacon*: it proves the
@@ -108,7 +108,7 @@ def build_verified_floor(round_data: dict, chain_hash: str) -> dict:
 def fetch_floor(chain_hash: str) -> dict:
     """Fetch the latest round of ``chain_hash`` as an ``anchor.floor`` record. SIGN-TIME
     ONLY."""
-    return floor_record(fetch_latest_round(chain_hash))
+    return build_floor_record(fetch_latest_round(chain_hash))
 
 
 def verify_floor(floor: FloorInput) -> dict:
@@ -121,7 +121,7 @@ def verify_floor(floor: FloorInput) -> dict:
         ok = verify_round(
             floor.round, floor.signature, floor.randomness, chain_hash=floor.chain_hash
         )
-        t = time_of_round(floor.round, floor.chain_hash)
+        t = compute_round_time(floor.round, floor.chain_hash)
     except Exception as e:  # e.g. a round too large for 8 bytes
         return {"status": "invalid", "error": str(e)}
     return {

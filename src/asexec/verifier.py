@@ -122,7 +122,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from . import drand, hashing, keys, manifest
-from .canonical import decode_base64, signing_input
+from .canonical import build_signing_input, decode_base64
 from .constants import FORMATS, VERIFY_CODE_VERSION
 from .errors import ManifestError, VerificationError
 from .fields import is_normal_name
@@ -197,7 +197,7 @@ _MICROSECOND = datetime.timedelta(microseconds=1)
 
 def parse_due(text: str) -> tuple[datetime.datetime, bool]:
     """The instant an ISO-8601 ``due`` names, and whether it has no UTC offset. The one parse
-    of ``due``: signing (``cli._due_arg``, which refuses a naive one) and verify both use it,
+    of ``due``: signing (``cli._check_due_arg``, which refuses a naive one) and verify both use it,
     so what signing takes is what verify reads.
 
     ``Z`` stands for ``+00:00``. A value with no offset is read as UTC, so the instant never
@@ -311,7 +311,7 @@ def verify_format(mani: dict[str, Any]) -> dict[str, Any]:
         "ok": True,
         "errors": [],
         "payload_type": payload_type,
-        "ref": manifest.ref(body_bytes, payload_type),
+        "ref": manifest.derive_ref(body_bytes, payload_type),
         "keyid": _get_claimed_keyid(mani),
         "body_bytes": body_bytes,
         "body": body,
@@ -336,8 +336,8 @@ def verify_selfsig(mani: dict[str, Any], body_bytes: bytes, payload_type: str) -
     sig = decode_base64(entry.sig)
     return {
         "examined": True,
-        "signature_ok": keys.verify(pub, signing_input(body_bytes, payload_type), sig),  # #3
-        "keyid_ok": keys.keyid_for(pub, payload_type) == entry.keyid,  # selfsig #4
+        "signature_ok": keys.verify(pub, build_signing_input(body_bytes, payload_type), sig),  # #3
+        "keyid_ok": keys.derive_keyid(pub, payload_type) == entry.keyid,  # selfsig #4
     }
 
 
@@ -662,7 +662,7 @@ def verify_paths(
         ceilings, claims, items = pr.pop("_ceilings"), pr.pop("_claims"), pr.pop("_items")
         own_ceilings, floors = pr.pop("_own_ceilings"), pr.pop("_floors")
         due_present, due_ts, due_naive, due_us = _parse_due(pr.get("due"))
-        state = _commitment_state(pr, now, due_present, due_ts)
+        state = _derive_commitment_state(pr, now, due_present, due_ts)
         chain_ok, chain_note = _check_chain(pr["counted_postregs"])
         # Each counted postreg against due (timely #2-#4), when there is a due to compare with.
         timeliness = (
@@ -758,7 +758,7 @@ def _get_no_later_than(ceiling: dict[str, Any]) -> int:
 def _get_no_earlier_than(floor: dict[str, Any]) -> int:
     """The time a verified floor shows its manifest was made no earlier than, in microseconds
     since the epoch: its drand round's time on the pinned chain, genesis plus (round - 1)
-    periods (``drand.time_of_round``, in whole seconds), never a time the file states."""
+    periods (``drand.compute_round_time``, in whole seconds), never a time the file states."""
     return floor["created_no_earlier_than"] * 1_000_000
 
 
@@ -1096,7 +1096,7 @@ REASON_DIFFERENT_KEY = "signed by a different key than the pre-registration"
 REASON_PREREG_INVALID_SIGNATURE = "the pre-registration's signature is invalid"
 
 
-def _commitment_state(
+def _derive_commitment_state(
     pr: dict[str, Any], now: float, due_present: bool, due_ts: float | None
 ) -> str:
     if pr["counted_postregs"]:
