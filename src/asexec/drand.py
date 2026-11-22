@@ -18,6 +18,7 @@ import urllib.request
 from .chains import CHAINS, QUICKNET_HASH
 from .errors import NetworkError
 from .models import Floor, FloorInput
+from .parsing import MAX_NESTING_DEPTH, parse_json
 
 # The chain signing uses: --floor fetches from it, and --floor-round must be a round of it.
 # The CLI passes it to every sign-time helper (none has a default). Verify never reads it.
@@ -45,7 +46,8 @@ def fetch_latest_round(chain_hash: str) -> dict:
         url = f"{base}/{chain_hash}/public/latest"
         try:
             with urllib.request.urlopen(url, timeout=10) as resp:
-                data = json.load(resp)
+                raw = resp.read()
+            data = parse_json(raw.decode(json.detect_encoding(raw)), MAX_NESTING_DEPTH)
             round_data = {
                 "beacon": CHAINS[chain_hash]["beacon_id"],
                 "chain_hash": chain_hash,

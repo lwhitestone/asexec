@@ -1,5 +1,5 @@
-"""The JSON rules every input is held to: manifest files and bodies, key files, identity
-documents and the CLI's JSON values.
+"""The JSON rules every JSON input is held to: manifest files and bodies, key files, identity
+documents, drand responses and the CLI's JSON values.
 
 It imports only ``errors``, so any module can use it.
 """

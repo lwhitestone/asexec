@@ -2,6 +2,8 @@
 
 import io
 import json
+import subprocess
+import sys
 
 import pytest
 
@@ -189,6 +191,49 @@ def test_fetch_latest_round_all_mirrors_fail_raises_network_error(monkeypatch):
     monkeypatch.setattr(drand.urllib.request, "urlopen", fake_urlopen)
     with pytest.raises(NetworkError, match="any mirror"):
         drand.fetch_latest_round(CHAIN)
+
+
+@pytest.mark.parametrize(
+    "body,why",
+    [
+        (b"[" * 65 + b"]" * 65, "nested more than 64 deep"),
+        (b'{"round": 1, "round": 2}', "duplicate JSON key"),
+    ],
+    ids=["too-deep", "duplicate-key"],
+)
+def test_fetch_latest_round_holds_a_response_to_the_json_rules(monkeypatch, body, why):
+    monkeypatch.setattr(drand.urllib.request, "urlopen", lambda url, timeout: _Resp(body))
+    with pytest.raises(NetworkError, match=why):
+        drand.fetch_latest_round(CHAIN)
+
+
+# In a process of its own: decoding this deep in a small-stack thread segfaults on 3.12 and 3.13.
+_FETCH_DEEP_RESPONSE = """
+import io, threading, urllib.request
+from asexec import drand
+from asexec.errors import NetworkError
+
+DEEP = b"[" * 5000 + b"]" * 5000
+urllib.request.urlopen = lambda url, timeout: io.BytesIO(DEEP)
+
+def fetch():
+    try:
+        drand.fetch_latest_round(drand.SIGNING_CHAIN)
+    except NetworkError as e:
+        print(e)
+
+threading.stack_size(256 * 1024)
+thread = threading.Thread(target=fetch)
+thread.start()
+thread.join()
+"""
+
+
+def test_fetch_latest_round_refuses_a_deep_response_without_recursing():
+    run = subprocess.run(
+        [sys.executable, "-c", _FETCH_DEEP_RESPONSE], capture_output=True, text=True, timeout=60
+    )
+    assert run.returncode == 0 and "nested more than 64 deep" in run.stdout
 
 
 def test_fetch_latest_round_malformed_body_is_network_error(monkeypatch):
