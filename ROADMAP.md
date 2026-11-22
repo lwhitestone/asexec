@@ -203,9 +203,9 @@ adds sits outside it, in the wrapper:
   verifiers must also accept URL-safe), padding required (DSSE is silent), a required
   `keyid` that is `sha-256:` of `pubkey` (optional in DSSE), and exactly one signature
   (DSSE allows several, with a threshold). (Done ahead of 0.4.0.)
-- `ceiling` cannot be inside the body (its nonce is the body's own hash). In the wrapper
-  it can still be attached after signing; it is bound by `nonce == ref` and authenticated
-  by the witness's own signature.
+- `ceiling` cannot be inside the body (its nonce covers the signature: the pubkey, the
+  signature and the bytes signed). In the wrapper it is attached after signing; it is bound
+  by that nonce and authenticated by the witness's own signature.
 - `pubkey` needs no signature: `selfsig` requires `signatures[0].keyid` to derive from it,
   so a substituted key fails. With `signer`, `--trusted-keys` additionally decides which
   keys are accepted.
@@ -542,7 +542,7 @@ Kept here so they are not re-litigated:
   fields never implies it was checked.
 - **Floor and ceiling generalize along disjoint axes.** A floor is a public
   beacon (fixed at T, independent of the manifest, embeddable): drand, NIST,
-  block hashes. A ceiling is a witness that ingested `ref(payload)` (attached
+  block hashes. A ceiling is a witness that ingested the signature (attached
   after signing, at the envelope): Roughtime, OTS, cosigners. A beacon cannot
   be a ceiling and a witness cannot be a floor.
 - **Subjects are explicit.** A subject lists files, each hashed exactly as listed. No

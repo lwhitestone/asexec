@@ -390,16 +390,16 @@ def _resolve_ref(value: str, flag: str) -> str:
     )
 
 
-def _attach_ceiling(mani: dict, ref: str, want_ceiling: bool, best_effort: bool) -> None:
+def _attach_ceiling(mani: dict, want_ceiling: bool, best_effort: bool) -> None:
     """Optionally fetch a Roughtime ceiling witness and attach it (sign-time,
-    network). The nonce is the body's ``ref``, so this must run *after* signing; it
-    does not perturb ref. A failed fetch aborts (nothing is written) unless
+    network). Its nonce covers the signature (``manifest.derive_witness_nonce``), so this
+    runs *after* signing. A failed fetch aborts (nothing is written) unless
     ``best_effort``."""
     if not want_ceiling:
         return
     from . import roughtime
 
-    nonce = ref  # sha-256:<hex>
+    nonce = manifest.derive_witness_nonce(mani)
     try:
         ceiling = roughtime.fetch_ceiling(nonce)
     except Exception as e:
@@ -474,7 +474,7 @@ def run_prereg(args) -> int:
     )
     mani = manifest.sign(body, priv, pub)
     ref = manifest.derive_ref(manifest.read_body(mani)[0])
-    _attach_ceiling(mani, ref, args.ceiling, args.best_effort)
+    _attach_ceiling(mani, args.ceiling, args.best_effort)
     manifest.save(mani, args.out)
     print(f"{OK} pre-registration written: {args.out}")
     print(f"  ref : {ref}")
@@ -530,7 +530,7 @@ def run_postreg(args) -> int:
     )
     mani = manifest.sign(body, priv, pub)
     ref = manifest.derive_ref(manifest.read_body(mani)[0])
-    _attach_ceiling(mani, ref, args.ceiling, args.best_effort)
+    _attach_ceiling(mani, args.ceiling, args.best_effort)
     manifest.save(mani, args.out)
     print(f"{OK} post-registration written: {args.out}")
     print(f"  ref      : {ref}")

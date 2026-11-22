@@ -194,7 +194,7 @@ Checked at 2026-12-31T23:59:59Z
 
 | Test | Examines (\*) | Passes when all |
 |---|---|---|
-| [`ceiling`](#ceiling) | • `ceiling.ceiling_type`<br>• `ceiling.nonce`<br>• `ceiling.witness_id`<br>• `ceiling.pubkey`<br>• `ceiling.response`<br>• `dsse.payload` | 1. `ceiling.ceiling_type` is `roughtime`<br>2. `ceiling.nonce` equals `ref`<br>3. `ceiling.witness_id` has a pinned key<br>4. `ceiling.pubkey`, if present, equals the pinned key<br>5. `ceiling.response` verifies against the pinned key |
+| [`ceiling`](#ceiling) | • `ceiling.ceiling_type`<br>• `ceiling.nonce`<br>• `ceiling.witness_id`<br>• `ceiling.pubkey`<br>• `ceiling.response`<br>• `pubkey`, `dsse.signatures[0].sig`, `dsse.payloadType`, `dsse.payload` | 1. `ceiling.ceiling_type` is `roughtime`<br>2. `ceiling.nonce` is of this file's signature<br>3. `ceiling.witness_id` has a pinned key<br>4. `ceiling.pubkey`, if present, equals the pinned key<br>5. `ceiling.response` verifies against the pinned key |
 | [`chain`](#chain) | • `body.phase`<br>• `body.fulfills`<br>• `body.prev_hash`<br>• `pubkey`<br>• `dsse.signatures`<br>• `dsse.signatures[0].sig`<br>• `dsse.signatures[0].keyid` | 1. exactly one counted postreg has no `body.prev_hash`<br>2. every other `body.prev_hash` is the `ref` of a counted postreg<br>3. no `ref` is the `body.prev_hash` of more than one counted postreg |
 | [`complete`](#complete) | • `body.items`<br>• `body.items[].id`<br>• `body.due` (of the prereg)<br>• `body.item_id` and `body.status`, of each counted postreg<br>• which postregs are counted, and their `ceiling` (as for `timely`) | (for each commitment whose prereg lists at least one item)<br>1. `body.items` is an array of objects with string ids<br>2. no two items have the same `id`<br>3. each item has a counted postreg with its `item_id` and a `status` of `reported`, `excluded` or `blocked`<br>4. a `body.due`, if present, is parseable<br>5. with a `due`, such a postreg is on time, as `timely` judges it |
 | [`content`](#content) | • `body.subject`<br>• `body.subject[].name`<br>• `body.subject[].hash_alg`<br>• `body.subject[].digest`<br>• `body.plan` and its `name`, `hash_alg`, `digest`<br>• `body.evidence` and each entry's `name`, `hash_alg`, `digest`<br>• `--artifacts` | 1. `body.subject` and `body.evidence` are non-empty arrays, and `body.plan` an object, of well-formed entries<br>2. the entry's `hash_alg` is available<br>3. `name` is a normalized relative path<br>4. no other entry of the list has the same `name`<br>5. `name` resolves inside `--artifacts`<br>6. the artifact exists, as the OS resolves `name`<br>7. the artifact is a regular file<br>8. the artifact is readable<br>9. recomputed digest equals `digest[hash_alg]` |
@@ -226,11 +226,17 @@ Roughtime witness: the manifest was created no later than time T.
 - `ceiling.witness_id`
 - `ceiling.pubkey`
 - `ceiling.response`
-- `dsse.payload` (the body bytes, whose digest is `ref`)
+- `pubkey`, `dsse.signatures[0].sig`, `dsse.payloadType` and `dsse.payload` (what the nonce
+  covers)
 
 **Passes when all**
 1. `ceiling.ceiling_type == "roughtime"`.
-2. `ceiling.nonce` equals the hex of `ref`, the sha-256 of the body bytes.
+2. `ceiling.nonce` is the hex of the file's witness nonce: the sha-256 of `pubkey`'s bytes,
+   then `dsse.signatures[0].sig`'s bytes, then the PAE signing input that signature covers.
+   So a ceiling shows that this key had signed these bytes by its time. Copied onto the same
+   body signed by another key, it fails, and so does one for the body's `ref` alone. A file
+   whose `pubkey` is not hex, or whose `sig` is not strict base64, has no such nonce, and its
+   ceiling fails with `no well-formed signature (selfsig #2) for the nonce to cover`.
 3. `ceiling.witness_id` names a witness whose long-term key is pinned in the verifier. The
    key is never taken from the file.
 4. If `ceiling.pubkey` is present, it equals the pinned long-term key.
@@ -263,7 +269,7 @@ $ asexec verify prereg.json --tests format,selfsig,ceiling
   "pubkey": "91230c4e…",
   "ceiling": {
     "ceiling_type": "roughtime",
-    "nonce": "b17107d0…",                        // = ref, without the prefix
+    "nonce": "5d03a7c2…",                        // the witness nonce (#2), without the prefix
     "witness_id": "int08h-Roughtime",
     "pubkey": "016e6e02…",                       // the pinned int08h key
     "response": "06000000400000006000…"

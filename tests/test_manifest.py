@@ -1,10 +1,12 @@
 """Manifest build/sign/ref + the signing gate (asexec schema)."""
 
 import base64
+import hashlib
 import subprocess
 import sys
 import time
 
+import nacl.signing
 import pytest
 from pydantic import ValidationError
 
@@ -40,6 +42,32 @@ def test_target_may_be_freeform_text():
     # freeform: a plain-string target is a valid (lower-disclosure) commitment.
     body = manifest.build_prereg("claude-opus-4-8 via the anthropic API", due=DUE)
     assert body["target"] == "claude-opus-4-8 via the anthropic API"
+
+
+def test_the_witness_nonce_is_of_the_pubkey_signature_and_signed_bytes():
+    """A ceiling's nonce is derived as VERIFICATION.md (ceiling #2) has it, computed here from
+    the spec. It covers the payloadType, which each release sets, so no value is pinned."""
+    priv = bytes(32)
+    pub = bytes(nacl.signing.SigningKey(priv).verify_key)
+    signed = manifest.sign(manifest.build_prereg("t"), priv, pub)
+    nonce = manifest.derive_witness_nonce(signed)
+    sig = base64.b64decode(signed["dsse"]["signatures"][0]["sig"])
+    body = base64.b64decode(signed["dsse"]["payload"])
+    assert nonce == "sha-256:" + hashlib.sha256(pub + sig + build_signing_input(body)).hexdigest()
+
+
+def test_the_witness_nonce_differs_by_signer_not_by_ceiling():
+    body = manifest.build_prereg("t")
+    first, second = keys.generate(), keys.generate()
+    one = manifest.sign(body, *first)
+    assert manifest.derive_witness_nonce(one) != manifest.derive_witness_nonce(
+        manifest.sign(body, *second)
+    )
+    assert manifest.derive_witness_nonce(one) == manifest.derive_witness_nonce(
+        manifest.sign(body, *first)  # ed25519 is deterministic: a copy has the same nonce
+    )
+    with_ceiling = manifest.attach_ceiling(dict(one), {"ceiling_type": "roughtime"})
+    assert manifest.derive_witness_nonce(with_ceiling) == manifest.derive_witness_nonce(one)
 
 
 def test_ref_is_signature_independent():

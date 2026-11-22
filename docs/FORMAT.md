@@ -72,7 +72,7 @@ ref        = sha-256(body bytes)
     "payload": "eyJwaGFzZSI6InByZXJlZyIs…",      // base64 of the body bytes
     "signatures": [ { "keyid": "…", "sig": "…" } ]
   },
-  "ceiling": { … },                              // optional, unsigned; nonce = ref
+  "ceiling": { … },                              // optional, unsigned; nonce covers pubkey and sig
   "pubkey": "…",                                 // unsigned; must derive signatures[0].keyid
   "untrusted": { "asexec_version": "0.4.0" }     // optional, unsigned, never tested
 }

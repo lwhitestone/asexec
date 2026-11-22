@@ -117,8 +117,8 @@ test:
   proves which private key signed, not whose it is, so a signer can still claim "that's not
   my key" or "my key was stolen". The optional
   [identity check](#identity-optional-domain-control-check-no-ca) ties a public key to a
-  domain, outside `verify`; a ceiling witness shows a manifest existed before any claimed
-  theft. There is no key revocation (see [Keys](#keys)).
+  domain, outside `verify`; a ceiling witness shows that the key had signed the manifest by
+  its time, so before any theft claimed after it. There is no key revocation (see [Keys](#keys)).
 - **Provenance.** Content hashes prove a transcript wasn't altered; they do not prove it is the
   output of the named harness+model (asserted by the signer, not re-executed).
 - **Completeness.** It renders only the manifests you give it; it cannot prove a lab pre-registered
@@ -279,7 +279,7 @@ and `sig`). Fields marked `always` are always written by `asexec prereg` or
     "ceiling_type": "roughtime",
     "witness_id": "int08h-Roughtime",
     "pubkey": "016e6e02…",
-    "nonce": "4be1c1f8…",                               // = ref, the sha-256 of the body bytes
+    "nonce": "4be1c1f8…",                               // covers pubkey, sig and the signed bytes
     "midpoint": 1785911400.0,
     "radius": 1.0,
     "response": "0400000040…"
@@ -386,9 +386,9 @@ several, with a threshold). Verify checks the bytes the file stores, exactly as 
 re-serializes them, so a body written by another tool, spaced or ordered differently,
 verifies the same way. The body borrows [in-toto](https://in-toto.io/) field names. A
 postreg carries its prereg's `target`, `due` and `declaration`, links back with `fulfills`
-(the prereg's ref, the sha-256 of its body bytes, which is also its ceiling `nonce`) and
+(the prereg's ref, the sha-256 of its body bytes) and
 `prev_hash`, and, from the CLI, adds `provenance` and `repro_recipe`. The ceiling and
-`pubkey` sit outside the signed body: the ceiling's nonce is the body's own hash, and
+`pubkey` sit outside the signed body: the ceiling's nonce covers the signature itself, and
 `selfsig` requires the signature's `keyid` to derive from `pubkey`, so a substituted key
 fails. The floor sits inside the body, because a value fixed before signing can be signed.
 `untrusted` is the one section of the file nothing checks: unsigned, read by no test and

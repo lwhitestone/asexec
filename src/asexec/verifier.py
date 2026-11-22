@@ -26,7 +26,7 @@ The verify code is a summary of a computation, not a credential. Real verificati
 Tests (the catalog - only verifiable claims, no self-declarations)
 --------------------------------------------------------------------
   - ``ceiling``    : a ceiling witness (Roughtime) signature verifies against a
-                     pinned key AND its nonce == ref (of the body bytes). Applies
+                     pinned key AND its nonce is of this file's signature. Applies
                      to manifests that carry a ceiling.
   - ``chain``      : prev_hash chain integrity (one root, no gaps, no forks: a
                      single linear chain). Applies to
@@ -404,14 +404,17 @@ def verify_floor(body: dict[str, Any]) -> dict[str, Any]:
     return drand.verify_floor(parsed)  # floor #4 equality, #5 BLS; never raises
 
 
-def verify_ceiling(
-    mani: dict[str, Any], ref: str, servers: dict[str, dict[str, object]]
-) -> dict[str, Any]:
+# Why a ceiling can't be checked: the file has no well-formed signature for its nonce to cover.
+REASON_CEILING_NO_SIGNATURE = "no well-formed signature (selfsig #2) for the nonce to cover"
+
+
+def verify_ceiling(mani: dict[str, Any], servers: dict[str, dict[str, object]]) -> dict[str, Any]:
     """Verify the ceiling witness in the file's wrapper (if present).
 
     Two conditions: (1) the witness signature verifies against a pinned key,
-    and (2) the witness's nonce binds to THIS manifest (nonce == ``ref``, the digest of
-    its body bytes). Called only for a manifest that passed ``format``. Delegates the
+    and (2) the witness's nonce binds to THIS file's signature
+    (``manifest.derive_witness_nonce``: its pubkey, its signature and the bytes signed).
+    Called only for a manifest that passed ``format``. Delegates the
     binding, the pin lookup in ``servers`` (the pinned witnesses, which ``verify_paths``
     resolves) and the witness cryptography to the ``roughtime`` module.
     """
@@ -424,8 +427,12 @@ def verify_ceiling(
         return _invalid(e, "ceiling_type")
     from . import roughtime
 
+    try:  # a pubkey that is not hex, or a sig of the wrong shape (selfsig #2)
+        nonce = manifest.derive_witness_nonce(mani)
+    except (KeyError, IndexError, TypeError, ValueError):
+        return {"status": "invalid", "error": REASON_CEILING_NO_SIGNATURE}
     try:  # ceiling #2 binding, #3 pin lookup, #4 equality, #5 response
-        return roughtime.verify_ceiling(parsed, ref, servers)
+        return roughtime.verify_ceiling(parsed, nonce, servers)
     except Exception as e:  # an unsigned, attacker-shaped wrapper field must not crash verify
         return {"status": "invalid", "error": str(e)}
 
@@ -587,7 +594,7 @@ def verify_paths(
         floor = verify_floor(body) if clean else {"status": "absent"}
         if floor.get("status") == "verified":
             floor["no_earlier_than_us"] = _get_no_earlier_than(floor)
-        ceiling = verify_ceiling(mani, fmt["ref"], servers) if clean else {"status": "absent"}
+        ceiling = verify_ceiling(mani, servers) if clean else {"status": "absent"}
         content = verify_content(body, artifacts_dir) if clean else {"status": "skipped"}
         if ceiling.get("status") == "verified":
             ceiling["no_later_than_us"] = _get_no_later_than(ceiling)

@@ -1,13 +1,13 @@
 """Roughtime ceiling witness.
 
-A ceiling proves a manifest was created *no later than* time T. Unlike the drand
-floor (a public beacon, embeddable in the signed body), a ceiling needs an
-external witness that ingested ``hash(M)`` and attested a time - so it attaches
-in the file's wrapper, outside ``dsse`` (its nonce is ``ref``, the hash of the body
-bytes, which cannot live inside the body it hashes). 0.2.0+ uses Roughtime: a server
-signs a response committing to the client's nonce and a timestamp, under a long-lived
-key we pin. Verification is therefore fully offline against a pinned constant, exactly
-like a drand round.
+A ceiling proves a manifest was created *no later than* time T. Unlike the drand floor (a
+public beacon, embeddable in the signed body), a ceiling needs an external witness that
+ingested a nonce and attested a time - so it attaches in the file's wrapper, outside
+``dsse`` (its nonce covers the file's signature, see ``manifest.derive_witness_nonce``, so
+it can only be fetched after signing). 0.2.0+ uses Roughtime: a server signs a response
+committing to the client's nonce and a timestamp, under a long-lived key we pin.
+Verification is therefore fully offline against a pinned constant, exactly like a drand
+round.
 The trust class here is a signature-witness's "trust these signers about time"
 (a *different* trust class, surfaced explicitly by the verifier).
 
@@ -46,7 +46,7 @@ Verification (offline)
   3. ``SIG`` verifies ``SREP`` under the delegated key ``DELE.PUBK``.
   4. The Merkle path (``PATH``,``INDX``) roots the client nonce at ``SREP.ROOT``.
   5. ``DELE.MINT <= SREP.MIDP <= DELE.MAXT`` (the online key was valid then).
-  6. The nonce equals ``ref``, of the stored body bytes (checked by the caller).
+  6. The nonce is the file's witness nonce (computed by the caller).
 
 **Reconciliation status:** the wire format is confirmed against a *live*
 ``int08h-Roughtime`` response - a real captured response is baked as an offline
@@ -114,7 +114,7 @@ SERVERS: dict[str, dict[str, object]] = {
 DELEGATION_CONTEXT = b"RoughTime v1 delegation signature--\x00"
 RESPONSE_CONTEXT = b"RoughTime v1 response signature\x00"
 
-NONCE_LEN = 32  # our nonce = sha-256(body): 32 bytes
+NONCE_LEN = 32  # our nonce, a sha-256: 32 bytes
 _TREE_LEAF = b"\x00"
 _TREE_NODE = b"\x01"
 _REQUEST_MIN_LEN = 1024  # amplification defense (padding)
@@ -299,10 +299,10 @@ def verify_ceiling(
     """Verify a parsed envelope ``ceiling`` and its binding to ``expected_nonce``:
     ceiling #2-#5 beyond their shape, which is ``models.CeilingInput``'s job.
 
-    ``expected_nonce`` is the manifest's ``ref`` (``sha-256:<hex>``); the ceiling
-    binds iff its nonce equals that digest. The long-term key is resolved from
-    the pinned ``servers`` map (in production ``SERVERS``) by ``witness_id``, NOT taken
-    from the record.
+    ``expected_nonce`` is the file's witness nonce (``sha-256:<hex>``, from
+    ``manifest.derive_witness_nonce``); the ceiling binds iff its nonce equals it. The
+    long-term key is resolved from the pinned ``servers`` map (in production ``SERVERS``) by
+    ``witness_id``, NOT taken from the record.
     """
     out: dict[str, object] = {
         "status": "invalid",
@@ -313,7 +313,7 @@ def verify_ceiling(
 
     want_hex = expected_nonce.split(":", 1)[-1]
     if ceiling.nonce != want_hex:
-        out["error"] = "ceiling nonce does not bind to this manifest (nonce != ref)"
+        out["error"] = "ceiling nonce does not bind to this manifest's signature"
         return out
 
     entry = servers.get(ceiling.witness_id)

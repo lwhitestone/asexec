@@ -18,6 +18,7 @@ import sys
 import threading
 import time
 
+import manifest_data as d
 import pytest
 
 import asexec
@@ -1337,7 +1338,7 @@ def test_verify_prints_ceiling_and_trust_section(
     tmp_path, key, prereg, capsys, monkeypatch, make_server, ceiling_for
 ):
     mani = manifest.load(prereg)
-    nonce_hex = _read_ref(prereg).split(":", 1)[-1]
+    nonce_hex = d.derive_witness_nonce(mani)
     lt_pub, sign_response = make_server()
     monkeypatch.setitem(roughtime.SERVERS, "synthetic", {"pubkey": lt_pub})
     manifest.attach_ceiling(mani, ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response))
@@ -1897,7 +1898,7 @@ def witness(monkeypatch, make_server, ceiling_for):
 
     def attach(path):
         mani = manifest.load(str(path))
-        nonce_hex = _read_ref(path).split(":", 1)[-1]
+        nonce_hex = d.derive_witness_nonce(json.loads(path.read_text()))
         manifest.attach_ceiling(mani, ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response))
         manifest.save(mani, str(path))
 
@@ -2136,7 +2137,7 @@ def test_verify_shows_a_witness_time_past_year_9999_as_epoch_seconds(
                "--out", pre) == 0  # fmt: skip
     assert run("postreg", "--key", key, "--fulfills", pre, "--out", post) == 0
     mani = manifest.load(str(post))
-    nonce_hex = _read_ref(post).split(":", 1)[-1]
+    nonce_hex = d.derive_witness_nonce(json.loads(post.read_text()))
     manifest.attach_ceiling(mani, ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response))
     manifest.save(mani, str(post))
     capsys.readouterr()
@@ -2389,7 +2390,7 @@ def witness_at(monkeypatch, make_server, ceiling_for):
 
         def attach(path):
             mani = manifest.load(str(path))
-            nonce_hex = _read_ref(path).split(":", 1)[-1]
+            nonce_hex = d.derive_witness_nonce(json.loads(path.read_text()))
             record = ceiling_for(nonce_hex, "synthetic", lt_pub, sign_response)
             manifest.attach_ceiling(mani, record)
             manifest.save(mani, str(path))

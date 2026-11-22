@@ -215,14 +215,27 @@ def read_body(manifest: dict[str, Any]) -> tuple[bytes, dict[str, Any]]:
     return body_bytes, parse_body(body_bytes)
 
 
+def derive_witness_nonce(manifest: dict[str, Any]) -> str:
+    """The nonce a ceiling witnesses for a signed file: ``sha-256:`` and the sha-256 of its
+    ``pubkey``'s bytes, its signature's bytes and the signing input that signature covers
+    (VERIFICATION.md, ceiling #2). So a ceiling shows this key had signed these bytes by its
+    time, and can't be moved to the same body signed by another key. Raises ``KeyError``,
+    ``IndexError``, ``TypeError`` or ``ValueError`` for a file with no such signature."""
+    dsse = manifest["dsse"]
+    payload_type = dsse["payloadType"]
+    signed = build_signing_input(decode_base64(dsse["payload"]), payload_type)
+    sig = decode_base64(dsse["signatures"][0]["sig"])
+    witnessed = bytes.fromhex(manifest["pubkey"]) + sig + signed
+    return FORMATS[payload_type]["digest_ref_prefix"] + hashlib.sha256(witnessed).hexdigest()
+
+
 def attach_ceiling(manifest: dict[str, Any], ceiling: dict[str, Any]) -> dict[str, Any]:
     """Attach a ceiling witness in the wrapper, beside ``dsse`` and ``pubkey``.
 
-    The ceiling cannot live inside the signed body: its nonce is the body's ``ref`` (a hash
-    of the body bytes), so embedding it would be circular. It is self-authenticated by the
-    witness signature and binds to this manifest via ``nonce == ref`` (checked by the
-    verifier). Attaching a ceiling does not perturb ``ref``, so ``fulfills``/``prev_hash``
-    links stay stable and a ceiling can be attached after signing.
+    The ceiling can only be fetched after signing: its nonce covers the signature
+    (``derive_witness_nonce``). It is self-authenticated by the witness signature, and the
+    verifier checks the nonce. Attaching a ceiling changes neither ``ref`` nor the signature,
+    so ``fulfills``/``prev_hash`` links stay stable.
     """
     manifest["ceiling"] = ceiling
     return manifest
