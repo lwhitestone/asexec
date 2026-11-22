@@ -4263,18 +4263,20 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 - New tests: `timely`, `complete`, `order`.
 - A prereg that fails `selfsig` is not a commitment.
 - `floor` requires `body.anchor.floor.chain_hash`.
+- `floor` and `order` now reject a drand signature that isn't 48 bytes in G1, and `--floor` verifies the round before signing.
 - A commitment with no `due` and no counted postreg is `no-due`. `open` now means a due in the future.
 - When stdout closes early, the exit status is still the verdict.
 
 ## CLI
 
-- New: `--plan`, `--items`, `--item-id`, `--status`, `--evidence`, `--floor-round`, and a `-file` form of each JSON option.
+- New: `--plan`, `--items`, `--item-id`, `--status`, `--evidence`, `--floor-round`, and `-file` forms of `--plan`, `--items`, `--evidence` and `--floor-round`.
 - Empty values and wrongly shaped inline JSON exit 64. JSON input with a repeated key, or nested more than 64 deep, is refused.
 - `postreg --fulfills` refuses a file that fails `format`. It doesn't check `selfsig`, and the postreg inherits `target`, `due` and `declaration` from that file, so run `verify` on the prereg first.
 
 ## Fixed
 
 - A small malformed file could make `verify` run for a very long time (0.3.20).
+- Text in a manifest could print a fake verify code line (0.3.20).
 - A deep body could crash the builders and `sign`, and a deep drand response `fetch_latest_round`.
 - `sign` accepted an empty or non-string `fulfills`.
 
