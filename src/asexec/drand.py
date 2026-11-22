@@ -24,6 +24,9 @@ from .parsing import MAX_NESTING_DEPTH, parse_json
 # The CLI passes it to every sign-time helper (none has a default). Verify never reads it.
 SIGNING_CHAIN = QUICKNET_HASH
 
+# A signature is a G1 point in its one compressed encoding, this many bytes.
+_G1_SIGNATURE_LENGTH = 48
+
 # RFC 9380 ciphersuite DST for BLS signatures on G1 (minimal-signature-size).
 _DST = b"BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_"
 
@@ -40,7 +43,8 @@ def compute_round_time(round_no: int, chain_hash: str) -> int:
 
 
 def fetch_latest_round(chain_hash: str) -> dict:
-    """Fetch the latest round of ``chain_hash`` from a public drand mirror. SIGN-TIME ONLY."""
+    """Fetch the latest round of ``chain_hash`` from a public drand mirror, verified
+    (``build_verified_floor``). SIGN-TIME ONLY."""
     last_err = None
     for base in _API_MIRRORS:
         url = f"{base}/{chain_hash}/public/latest"
@@ -48,15 +52,14 @@ def fetch_latest_round(chain_hash: str) -> dict:
             with urllib.request.urlopen(url, timeout=10) as resp:
                 raw = resp.read()
             data = parse_json(raw.decode(json.detect_encoding(raw)), MAX_NESTING_DEPTH)
-            round_data = {
+            floor = build_verified_floor(data, chain_hash)  # one that fails: try the next mirror
+            return {
                 "beacon": CHAINS[chain_hash]["beacon_id"],
                 "chain_hash": chain_hash,
-                "round": int(data["round"]),
-                "randomness": data["randomness"],
-                "signature": data["signature"],
+                "round": floor["round"],
+                "randomness": floor["randomness"],
+                "signature": floor["signature"],
             }
-            build_floor_record(round_data)  # a malformed round from this mirror: try the next
-            return round_data
         except Exception as e:  # try next mirror
             last_err = e
     raise NetworkError(f"could not fetch drand round from any mirror: {last_err}")
@@ -81,7 +84,7 @@ def build_floor_record(round_data: dict) -> dict:
 
 
 def build_verified_floor(round_data: dict, chain_hash: str) -> dict:
-    """An ``anchor.floor`` record for a round fetched earlier, verified offline at signing.
+    """An ``anchor.floor`` record for a fetched round, verified offline at signing.
 
     ``round_data`` is a round as drand's HTTP API returns it (``round``, ``randomness``,
     ``signature``) for ``chain_hash``, the chain the caller signs with. The
@@ -142,14 +145,18 @@ def verify_round(
     """Offline BLS verification of a round of ``chain_hash``.
 
     Checks (a) randomness == sha256(signature) unless ``randomness_hex`` is None (a floor
-    may leave it out), and (b) the BLS12-381 signature over sha256(round) against that
-    chain's pinned group public key.
+    may leave it out), (b) the signature is the 48-byte encoding of a point in G1, and (c)
+    it is the BLS12-381 signature over sha256(round) under that chain's pinned group public
+    key. With (b) a round has one signature, and so one randomness.
     """
     if chain_hash not in CHAINS:
         return False
     params = CHAINS[chain_hash]
 
     sig_bytes = bytes.fromhex(signature_hex)
+    # decompress_G1 is strict about 48 bytes, but ignores any bit above them
+    if len(sig_bytes) != _G1_SIGNATURE_LENGTH:
+        return False
     if randomness_hex is not None:
         if hashlib.sha256(sig_bytes).hexdigest() != randomness_hex:
             return False
@@ -157,13 +164,17 @@ def verify_round(
     # Lazy import: BLS math is only needed when actually verifying a round.
     from py_ecc.bls.hash_to_curve import hash_to_G1
     from py_ecc.bls.point_compression import decompress_G1, decompress_G2
-    from py_ecc.optimized_bls12_381 import G2, pairing
+    from py_ecc.optimized_bls12_381 import G2, curve_order, is_inf, multiply, pairing
 
     pub = bytes.fromhex(params["public_key"])  # 96-byte compressed G2
     try:
         pk = decompress_G2((int.from_bytes(pub[:48], "big"), int.from_bytes(pub[48:], "big")))
         sig = decompress_G1(int.from_bytes(sig_bytes, "big"))  # 48-byte compressed G1
     except Exception:
+        return False
+    # decompress_G1 checks the curve, not the subgroup, and a point outside G1 can pair as the
+    # genuine signature does
+    if not is_inf(multiply(sig, curve_order)):
         return False
 
     msg = hashlib.sha256(round_no.to_bytes(8, "big")).digest()

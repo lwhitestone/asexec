@@ -4,6 +4,7 @@ Each ``verify_paths`` run does the BLS check once per floor-carrying manifest (a
 second), so the scenario carries a floor on the prereg only.
 """
 
+import hashlib
 import json
 
 import manifest_data as d
@@ -129,6 +130,14 @@ def test_floor__fail__3_round_is_int_and_signature_is_hex(sc, field, value):
 def test_floor__fail__4_randomness_is_sha256_of_signature(sc):
     """floor #4: a present randomness equals sha256(signature)."""
     _edit_floor(sc, randomness="00" * 32)
+    assert sc.code("floor") == FAIL
+
+
+def test_floor__fail__5_signature_is_its_48_byte_encoding(sc):
+    """floor #5: the signature is its 48-byte encoding. With a prefix it would still pair, and
+    give another randomness."""
+    sig = "01" + d.FLOOR["signature"]
+    _edit_floor(sc, signature=sig, randomness=hashlib.sha256(bytes.fromhex(sig)).hexdigest())
     assert sc.code("floor") == FAIL
 
 

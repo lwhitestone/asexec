@@ -107,7 +107,9 @@ test:
   pre-registration existed before the post-registration was made. *It bounds the run only as
   tightly as the run's use of that round: a round the run fetched when it started and used
   (as its seed, say) lets a re-execution check it; a round it merely records, or one
-  `--floor` fetched at signing, proves nothing about when the run started.*
+  `--floor` fetched at signing, proves nothing about when the run started. The signer also
+  chooses which round, and can try many real ones, so a seed taken from a round is not proof
+  that the seed wasn't picked.*
 
 ### What `asexec` cannot prove
 
@@ -450,7 +452,7 @@ everything needed to perform a verification is baked-in to the prereg/postreg ma
 There are a few opt-in registration paths that use a network connection:
 
 - `prereg/postreg --floor`: Fetches a distributed randomness beacon round from `api.drand.sh`
-  (or a fallback) at sign-time. `--floor-round` / `--floor-round-file` take a round fetched
+  (or a fallback) at sign-time, and verifies it before signing. `--floor-round` / `--floor-round-file` take a round fetched
   earlier instead, and verify it offline.
 - `prereg/postreg --ceiling`: Makes a UDP socket call (with server-list fallbacks) to a
   Roughtime server at sign-time.

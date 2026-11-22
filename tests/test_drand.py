@@ -1,11 +1,14 @@
 """Offline drand quicknet verification, using a baked real round (no network)."""
 
+import hashlib
 import io
 import json
 import subprocess
 import sys
 
 import pytest
+from py_ecc.bls.point_compression import compress_G1, decompress_G1
+from py_ecc.optimized_bls12_381 import FQ, add, curve_order, field_modulus, is_inf, multiply
 
 from asexec import drand
 from asexec.errors import NetworkError
@@ -73,6 +76,42 @@ def test_pinned_chains_are_quicknet_with_its_genesis_and_period():
         }
     }
     assert drand.compute_round_time(1000, CHAIN) == 1692806364  # 2023-08-23T15:59:24Z
+
+
+def _add_point_outside_g1(signature: str) -> str:
+    """``signature`` plus a point of the curve that is outside G1, compressed: 48 bytes that
+    decode, and pair as the genuine signature does."""
+    point = decompress_G1(int(signature, 16))
+    x = 1
+    while True:
+        x += 1
+        y = pow(x**3 + 4, (field_modulus + 1) // 4, field_modulus)
+        if (y * y - x**3 - 4) % field_modulus == 0:
+            torsion = multiply((FQ(x), FQ(y), FQ.one()), curve_order)
+            if not is_inf(torsion):
+                return compress_G1(add(point, torsion)).to_bytes(48, "big").hex()
+
+
+@pytest.mark.parametrize(
+    "respell",
+    [
+        lambda sig: "00" + sig,
+        lambda sig: "01" + sig,
+        lambda sig: "7fa312c4" * 12 + sig,
+        _add_point_outside_g1,
+    ],
+    ids=["leading-zero-byte", "prefixed", "longer-prefix", "outside-g1"],
+)
+def test_a_round_has_one_signature_and_so_one_randomness(respell):
+    sig = respell(SIG)
+    assert sig != SIG
+    randomness = hashlib.sha256(bytes.fromhex(sig)).hexdigest()
+    assert not drand.verify_round(ROUND, sig, randomness, chain_hash=CHAIN)
+    assert not drand.verify_round(ROUND, sig, None, chain_hash=CHAIN)
+    with pytest.raises(ValueError, match="does not verify"):
+        drand.build_verified_floor(
+            {"round": ROUND, "randomness": randomness, "signature": sig}, CHAIN
+        )
 
 
 # --- build_verified_floor: a round fetched earlier, verified at signing ----------- #
@@ -262,6 +301,46 @@ def test_fetch_latest_round_malformed_round_falls_back_to_next_mirror(monkeypatc
         lambda url, timeout: _Resp(json.dumps(bodies.pop(0)).encode()),
     )
     assert drand.fetch_floor(CHAIN) == _floor().model_dump()
+
+
+_PREFIXED = "01" + SIG
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        pytest.param({"round": ROUND + 1}, id="another-rounds-signature"),
+        pytest.param({"round": ROUND + 0.9}, id="round-not-integer"),
+        pytest.param({"round": str(ROUND)}, id="round-a-string"),
+        pytest.param({"randomness": "00" * 32}, id="wrong-randomness"),
+        pytest.param(
+            {
+                "signature": _PREFIXED,
+                "randomness": hashlib.sha256(bytes.fromhex(_PREFIXED)).hexdigest(),
+            },
+            id="respelled-signature",
+        ),
+    ],
+)
+def test_fetch_floor_never_signs_a_round_that_does_not_verify(monkeypatch, bad):
+    """--floor is held to what --floor-round is: the next mirror is tried, else it fails."""
+    good = {"round": ROUND, "randomness": RAND, "signature": SIG}
+    bodies = [{**good, **bad}, good]
+    monkeypatch.setattr(
+        drand.urllib.request,
+        "urlopen",
+        lambda url, timeout: _Resp(json.dumps(bodies.pop(0)).encode()),
+    )
+    assert drand.fetch_floor(CHAIN) == _floor().model_dump()
+    assert bodies == []
+
+    monkeypatch.setattr(
+        drand.urllib.request,
+        "urlopen",
+        lambda url, timeout: _Resp(json.dumps({**good, **bad}).encode()),
+    )
+    with pytest.raises(NetworkError, match="any mirror"):
+        drand.fetch_floor(CHAIN)
 
 
 def test_fetch_floor_every_mirror_malformed_is_network_error(monkeypatch):
