@@ -4125,3 +4125,59 @@ Then a final evidence run, the PR description, and a reply on each thread before
   exits 0.
 
 **Still open:** B1 remains in v0.3.20 and on `main` until this lands or is backported.
+
+#### Follow-up decisions (2026-11-21)
+
+- [x] **Backport: none.** 0.3.20 keeps B1 to B3 until a release from this branch.
+- [x] **Naming: the rule extends to the functions this PR modifies** (`f8c0990`): 20 in `src`,
+  11 in the tests, three in the example. This supersedes "Not renamed" in step 3 for those.
+  `main` keeps its name, as the entry point. Functions the PR doesn't touch keep theirs.
+- [x] **drand responses are held to the JSON rules** (`97bba16`). `fetch_latest_round` was the
+  one JSON input still parsed with no depth limit, and a deep response segfaulted 3.12 and
+  3.13 in a small-stack thread. The triage and the final evidence above both missed it.
+  - Release note for #40: "A drand response that nests too deep or repeats a key is refused,
+    and the next mirror is tried."
+- [x] **The removed and renamed Python API is listed,** here and in the PR description.
+- [ ] **Open: releasing this branch as 0.3.x, to not wait through the betas.** ROADMAP allows
+  the break in a 0.3.x `PATCH` with a release note. Rehearsed at `f8c0990`, it doesn't work
+  today:
+  - `release.sh 0.3.21` is refused (no `payloadType` for the 0.3 line), and so is `0.3.21b1`
+    (a beta must be of an `X.Y.0`).
+  - A `0.3 → v1` row alone is refused too, since a patch needs the literal `v1` key. Forcing
+    it would also publish `v1` before 0.4.0, against D6a: 0.4.0 would then accept files that
+    ROADMAP says are unsupported, and v1 could no longer change safely.
+  - A label of its own (`application/vnd.asexec.0.3.21+json`) keeps v1 free. It needs three
+    changes: a `release.sh` rule; the frozen-vector skip widened from 0.4.0 betas (seven
+    tests fail without it); and an unknown-format reason, because a v1 release would
+    otherwise call such a file "newer than this release".
+- The CPython 3.13 crash is #61.
+
+**Python API changed since 0.3.20** (release note for #40; not a promised surface):
+
+- **Renamed:**
+  - `canonical`: `canonical_bytes` → `serialize_canonical`, `pae` → `encode_pae`, `signing_input` → `build_signing_input`
+  - `keys`: `keyid_for` → `derive_keyid`
+  - `manifest`: `ref` → `derive_ref`, `get_body` → `read_body` (returns the bytes and the body)
+  - `drand`: `floor_record` → `build_floor_record`, `time_of_round` → `compute_round_time`, `fetch_round` → `fetch_latest_round` (no round number), `DEFAULT_CHAIN` → `SIGNING_CHAIN`
+  - `verifier`: `verify_signature` → `verify_format` and `verify_selfsig`
+  - `models`: `ManifestBody.to_body` → `dump_body`
+  - `cli`: `cmd_*` → `run_*`
+- **Removed:**
+  - `hashing`: `hash_bytes`, `hash_dir`, `digest_path`
+  - `drand`: `round_at_time`
+  - `verifier`: `REQUIRED_TEST`
+  - `constants`: `MANIFEST_SCHEMA_ID`; `DIGEST_REF_PREFIX`, `SIGNING_KEY_ALG` and `SIGNING_PAE_VERSION` are now keys of each `FORMATS` entry
+  - `models`: `ManifestBody`'s `schema_id`, `hash_alg` and `identity`, and `digest_needs_hash_alg`
+- **Other arguments or types:**
+  - `derive_ref` and `build_signing_input` take the body bytes, not a dict, and `encode_pae` takes the version first.
+  - No default any more: the chain in `compute_round_time`, `fetch_floor` and `verify_round` (keyword-only there, and `randomness_hex` is required); `alg` in `hash_file` and `build_subject`; `artifacts_dir` in `verify_paths`; `servers` in `roughtime.verify_ceiling`; `domain` in `build_wellknown`; `timeout` in `fetch_wellknown`; `keyid` and `pubkey_hex` in `match_binding`; `FloorInput.chain_hash`.
+  - `verifier.verify_ceiling` takes the `ref`. `build_prereg` and `build_postreg` take `**fields`, with no `hash_alg`.
+  - The envelope, signature and manifest models follow the DSSE layout, and `subject` can't be an empty list.
+- **Moved, still importable from the old module:** `drand.CHAINS` and `QUICKNET_HASH` (to `chains`), `manifest.MAX_NESTING_DEPTH` (to `parsing`).
+
+**Evidence at `f8c0990`, in fresh clones:**
+- pytest: 1333 passed on each of 3.12, 3.13 and 3.14. The three new drand tests failed first.
+- The deep drand response is refused cleanly on all three, at each stack size tried.
+- The 3,000-claim differential against `ba8aa47` is still identical.
+- `0.4.0b1` and `0.4.0` release against a throwaway remote.
+- The wheel smoke test and the adequacy example pass.
