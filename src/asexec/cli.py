@@ -135,11 +135,11 @@ def _get_notes(args) -> str | dict | None:
     return _get_arg_or_file(args, "notes", "notes_file", _free_form_file("--notes-file"))
 
 
-# What a --plan / --evidence entry may say. asexec hashes the file at ``name`` and fills in
-# ``hash_alg`` (--hash-alg) and ``digest``, as --subject does; the rest is declared, never
-# tested.
-_PLAN_FIELDS = ("name", "media_type", "label")
-_EVIDENCE_FIELDS = ("name", "media_type", "uri")
+# What a --plan / --evidence entry may say besides ``name``: the declared fields, text or
+# absent, never tested. asexec hashes the file at ``name`` and fills in ``hash_alg``
+# (--hash-alg) and ``digest``, as --subject does.
+_PLAN_DECLARED = ("media_type", "label")
+_EVIDENCE_DECLARED = ("media_type", "uri")
 
 
 def _strict_json(text: str, max_depth: int):
@@ -154,8 +154,9 @@ def _strict_json(text: str, max_depth: int):
         raise ValueError(f"not valid JSON: {e}") from None
 
 
-def _spec_shape(spec, flag: str, allowed: tuple[str, ...]) -> dict:
-    """A file described as ``{"name": <path>, ...}``; ``ValueError`` if it is not one."""
+def _spec_shape(spec, flag: str, declared: tuple[str, ...]) -> dict:
+    """A file described as ``{"name": <path>, <declared>...}``; ``ValueError`` if it is not
+    one."""
     if not isinstance(spec, dict) or not isinstance(spec.get("name"), str):
         raise ValueError(f"{flag} needs a 'name' (a file path) in each entry: {spec!r}")
     why = hashing.name_problem(spec["name"])
@@ -166,13 +167,14 @@ def _spec_shape(spec, flag: str, allowed: tuple[str, ...]) -> dict:
             f"{flag}: asexec hashes the file and fills in hash_alg and digest "
             "(choose the algorithm with --hash-alg)"
         )
+    allowed = ("name", *declared)
     unknown = sorted(set(spec) - set(allowed))
     if unknown:
         raise ValueError(
             f"{flag}: unknown field(s) {', '.join(map(repr, unknown))}; "
             f"an entry may hold {', '.join(map(repr, allowed))}"
         )
-    for field in allowed[1:]:  # the declared fields: text, or absent
+    for field in declared:  # text, or absent
         if spec.get(field) is not None and not isinstance(spec[field], str):
             raise ValueError(f"{flag}: {field!r} must be a string: {spec[field]!r}")
     return spec
@@ -181,7 +183,7 @@ def _spec_shape(spec, flag: str, allowed: tuple[str, ...]) -> dict:
 def _plan_shape(value) -> dict:
     if not isinstance(value, dict):
         raise ValueError(f'--plan must be a JSON object, like {{"name": "plan.md"}}: {value!r}')
-    return _spec_shape(value, "--plan", _PLAN_FIELDS)
+    return _spec_shape(value, "--plan", _PLAN_DECLARED)
 
 
 def _items_shape(value) -> list:
@@ -213,7 +215,7 @@ def _evidence_shape(value) -> list:
         )
     if not value:
         raise ValueError("--evidence must list at least one file")
-    return [_spec_shape(spec, "--evidence", _EVIDENCE_FIELDS) for spec in value]
+    return [_spec_shape(spec, "--evidence", _EVIDENCE_DECLARED) for spec in value]
 
 
 def _shaped_arg_or_file(args, name: str, shape: Callable):
