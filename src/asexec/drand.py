@@ -4,7 +4,7 @@ Embedding a drand round proves a manifest was created *no earlier than* that
 round's time; it is a "freshness"/anti-precomputation floor.
 
 Verification is fully offline: the quicknet chain parameters are pinned as
-constants here (no network fetch at verify time). Only fetching a fresh round
+constants in ``chains.py`` (no network fetch at verify time). Only fetching a fresh round
 *at sign time* touches the network. A ``{chain_hash: params}`` map lets old
 manifests survive a future drand network rotation.
 """
@@ -14,34 +14,10 @@ from __future__ import annotations
 import hashlib
 import json
 import urllib.request
-from typing import TYPE_CHECKING
 
+from .chains import CHAINS, QUICKNET_HASH
 from .errors import NetworkError
-
-if TYPE_CHECKING:  # models imports this module, through fields (for the pinned chains)
-    from .models import FloorInput
-
-# --- pinned chain parameters (verify-time constants; never fetched) ---------
-# Keyed by chain hash. The values come from https://api.drand.sh/<hash>/info and are pinned
-# as literals in tests/test_drand.py. A floor names its chain (body.anchor.floor.chain_hash)
-# and verify never picks one. An entry is never edited or removed, so old manifests keep
-# verifying. To add, switch or withdraw a chain, see "Pinned trust roots" in
-# docs/DEVELOPMENT.md.
-QUICKNET_HASH = "52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971"
-
-CHAINS: dict[str, dict] = {
-    QUICKNET_HASH: {
-        "beacon_id": "quicknet",
-        "public_key": (
-            "83cf0f2896adee7eb8b5f01fcad3912212c437e0073e911fb90022d3e760183c"
-            "8c4b450b6a0a6c3ac6a5776a2d1064510d1fec758c921cc22b0e17e63aaf4bcb"
-            "5ed66304de9cf809bd274ca73bab4af5a6e9c76a4bc09e76eae8991ef5ece45a"
-        ),
-        "genesis_time": 1692803367,
-        "period": 3,
-        "scheme": "bls-unchained-g1-rfc9380",
-    },
-}
+from .models import Floor, FloorInput
 
 # The chain signing uses: --floor fetches from it, and --floor-round must be a round of it.
 # The CLI passes it to every sign-time helper (none has a default). Verify never reads it.
@@ -93,8 +69,6 @@ def floor_record(round_data: dict) -> dict:
     embedded in the signed body. Raises ``ValidationError`` if the round is not a
     well-formed drand round (``models.Floor``).
     """
-    from .models import Floor  # lazy: models imports this module (for the pinned chains)
-
     return Floor(
         floor_type="drand",
         chain_hash=round_data["chain_hash"],
@@ -113,8 +87,6 @@ def verified_floor(round_data: dict, chain_hash: str) -> dict:
     chain, an integer round, lowercase hex, ``randomness == sha256(signature)``, and a BLS
     signature for the round under the pinned key. Raises ``ValueError`` otherwise (a
     pydantic ``ValidationError`` is one), so an unverifiable round is never signed."""
-    from .models import Floor, FloorInput  # lazy: models imports this module
-
     floor = Floor(  # strict: a round of "1000" or true is not an integer, here as in verify
         floor_type="drand",
         chain_hash=chain_hash,

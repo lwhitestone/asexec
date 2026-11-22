@@ -17,6 +17,7 @@ import nacl.signing
 
 from .constants import FORMATS, MANIFEST_PAYLOAD_TYPE
 from .errors import AsexecError
+from .parsing import MAX_NESTING_DEPTH, parse_json
 
 # The algorithm of the format signing writes: a key file names it, and only such a key signs.
 _ALG = FORMATS[MANIFEST_PAYLOAD_TYPE]["signing_key_alg"]
@@ -83,12 +84,10 @@ def load_signing_key(path: str) -> tuple[bytes, bytes]:
 
     Raises ``OSError`` if the file cannot be read, else ``AsexecError`` if it is not
     a valid key file."""
-    from .manifest import parse_json  # here, not at the top: manifest imports this module
-
     with open(path) as f:
         try:  # a manifest file's JSON rules: no repeated key, and at most 64 deep, so no
             # parser reaches its recursion limit (which differs between Python versions)
-            data = parse_json(f.read())
+            data = parse_json(f.read(), MAX_NESTING_DEPTH)
         except (ValueError, AsexecError) as e:  # not UTF-8 or JSON, or a rule broken
             raise AsexecError(f"key file {path!r} is not valid JSON: {e}") from None
     if not isinstance(data, dict):

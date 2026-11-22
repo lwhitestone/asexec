@@ -180,7 +180,7 @@ numbers can never be reused, so fix forward with a new version.
 ## Pinned trust roots
 
 `floor` and `ceiling` verify against roots pinned in the source:
-- **drand chains:** `drand.CHAINS`, keyed by chain hash.
+- **drand chains:** `chains.CHAINS`, keyed by chain hash.
 - **Roughtime servers:** `roughtime.SERVERS`, keyed by `witness_id`.
 
 Verify never fetches a root and never takes a key from a manifest. A manifest names its root
@@ -220,6 +220,6 @@ the one permitted exception to the support promise
   withdrawal.
 
 **How each root is pinned in the tests today:**
-- `drand.CHAINS` is pinned in full as a literal in `tests/test_drand.py`.
+- `chains.CHAINS` is pinned in full as a literal in `tests/test_drand.py`.
 - `roughtime.SERVERS` is not. Only `int08h-Roughtime`'s key is checked, through its captured
   response in `tests/test_roughtime.py`.

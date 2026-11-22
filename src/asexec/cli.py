@@ -20,7 +20,7 @@ from collections.abc import Callable
 
 from pydantic import ValidationError
 
-from . import __version__, drand, hashing, identity, keys, manifest, verifier
+from . import __version__, drand, hashing, identity, keys, manifest, parsing, verifier
 from .constants import FORMATS, MANIFEST_PAYLOAD_TYPE, SUBJECT_DEFAULT_HASH_ALG
 from .errors import AsexecError, ManifestError, VerificationError
 from .models import STATUSES
@@ -46,21 +46,21 @@ EXIT_USAGE = 64  # usage error (sysexits EX_USAGE): the arguments themselves are
 # --------------------------------------------------------------------------- #
 # How deep a JSON value may nest: a manifest file's limit, or one less for a value that sits one
 # level down in the body (target, declaration, notes, repro_recipe), so the body is at most 64.
-_FILE_DEPTH = manifest.MAX_NESTING_DEPTH
-_IN_BODY_DEPTH = manifest.MAX_NESTING_DEPTH - 1
+_FILE_DEPTH = parsing.MAX_NESTING_DEPTH
+_IN_BODY_DEPTH = parsing.MAX_NESTING_DEPTH - 1
 
 
 def _rule_broken(e: ManifestError, max_depth: int) -> str:
-    """A JSON rule's message (``manifest.parse_json``), saying why a value inside the body is
+    """A JSON rule's message (``parsing.parse_json``), saying why a value inside the body is
     held one level shallower."""
     if max_depth < _FILE_DEPTH and str(e).startswith("nested more than"):
         return f"{e} (its value sits one level down in a body, which is at most {_FILE_DEPTH})"
     return str(e)
 
 
-def _read_json(path: str, max_depth: int = _FILE_DEPTH):
+def _read_json(path: str, max_depth: int):
     """The JSON value a ``--…-file`` holds, held to a manifest file's JSON rules: UTF-8 JSON
-    text (RFC 8259), no duplicate key, at most ``max_depth`` deep (``manifest.parse_json``).
+    text (RFC 8259), no duplicate key, at most ``max_depth`` deep (``parsing.parse_json``).
     Raises ``ManifestError`` (exit 1, one line) otherwise: what a file holds is not an
     argument. Paths are shown quoted, so a newline in one can't split the error line."""
     with open(path, "rb") as f:
@@ -72,7 +72,7 @@ def _read_json(path: str, max_depth: int = _FILE_DEPTH):
             f"{path!r} must contain valid JSON: it is not UTF-8 text ({e})"
         ) from None
     try:
-        return manifest.parse_json(text, max_depth)
+        return parsing.parse_json(text, max_depth)
     except ManifestError as e:  # a duplicate key, or nested too deep
         raise ManifestError(f"{path!r}: {_rule_broken(e, max_depth)}") from None
     except ValueError as e:  # not JSON, or an integer of more digits than Python reads
@@ -143,11 +143,11 @@ _EVIDENCE_DECLARED = ("media_type", "uri")
 
 
 def _strict_json(text: str, max_depth: int):
-    """A JSON value held to a manifest file's JSON rules (``manifest.parse_json``: no
+    """A JSON value held to a manifest file's JSON rules (``parsing.parse_json``: no
     duplicate key, since parsers disagree on which value wins, and at most ``max_depth``
     deep); ``ValueError`` otherwise."""
     try:
-        return manifest.parse_json(text, max_depth)
+        return parsing.parse_json(text, max_depth)
     except ManifestError as e:  # a duplicate key, or nested too deep
         raise ValueError(_rule_broken(e, max_depth)) from None
     except ValueError as e:  # not JSON, or an integer of more digits than Python reads
@@ -223,7 +223,7 @@ def _shaped_arg_or_file(args, name: str, shape: Callable):
     fails it is a usage error (64); a file's content that fails it exits 1."""
 
     def load_file(path: str):
-        value = _read_json(path)  # the same JSON rules as an inline value
+        value = _read_json(path, _FILE_DEPTH)  # the same JSON rules as an inline value
         try:
             return shape(value)
         except ValueError as e:
@@ -804,7 +804,7 @@ def _add_anchor_flags(p):
     )
     floor.add_argument(
         "--floor-round",
-        type=_json_arg(_round_shape),
+        type=_json_arg(_round_shape, _FILE_DEPTH),
         help="attach as the floor a drand round fetched earlier, for example when a run "
         'started, as drand\'s HTTP API returns it: JSON {"round": ..., "randomness": ..., '
         '"signature": ...} of the chain --floor fetches from. Verified at signing (offline); '
@@ -882,7 +882,7 @@ def _domain_arg(value: str) -> str:
     return value
 
 
-def _json_arg(shape: Callable, max_depth: int = _FILE_DEPTH):
+def _json_arg(shape: Callable, max_depth: int):
     """An argparse ``type`` for an inline JSON value: not empty, JSON under a manifest file's
     rules (``_strict_json``, at most ``max_depth`` deep), and held to ``shape``. A value that
     fails is a usage error."""
@@ -981,7 +981,7 @@ def build_parser() -> argparse.ArgumentParser:
         help='the plan the claim is tested against, as JSON: {"name": <file path>, '
         '"media_type": ..., "label": ...}; asexec hashes the file (--hash-alg)',
         file_help="the --plan JSON, from a file",
-        type=_json_arg(_plan_shape),
+        type=_json_arg(_plan_shape, _FILE_DEPTH),
     )
     _add_arg_or_file(
         pr,
@@ -989,7 +989,7 @@ def build_parser() -> argparse.ArgumentParser:
         help='what the claim commits to deliver, as a JSON array: [{"id": "S1", "kind": '
         '"run"}, ...]; ids must be unique, and each is accounted for by a postreg\'s --item-id',
         file_help="the --items JSON array, from a file",
-        type=_json_arg(_items_shape),
+        type=_json_arg(_items_shape, _FILE_DEPTH),
     )
     _add_anchor_flags(pr)
     pr.add_argument("--out", type=_nonempty_arg, default="preregistration.json")
@@ -1053,7 +1053,7 @@ def build_parser() -> argparse.ArgumentParser:
         help='files that back this postreg, as a JSON array: [{"name": <file path>, '
         '"media_type": ..., "uri": ...}, ...]; asexec hashes each file (--hash-alg)',
         file_help="the --evidence JSON array, from a file",
-        type=_json_arg(_evidence_shape),
+        type=_json_arg(_evidence_shape, _FILE_DEPTH),
     )
     _add_anchor_flags(po)
     po.add_argument("--out", type=_nonempty_arg, default="postregistration.json")

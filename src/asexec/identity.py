@@ -22,7 +22,7 @@ from .constants import (
     MANIFEST_PAYLOAD_TYPE,
 )
 from .errors import AsexecError, NetworkError
-from .manifest import parse_json
+from .parsing import MAX_NESTING_DEPTH, parse_json
 
 
 def build_wellknown(keyid_pubkey_pairs: list[dict[str, str]], domain: str | None) -> dict:
@@ -65,7 +65,7 @@ def fetch_wellknown(domain: str, timeout: int) -> dict:
             f"UTF-32 ({e})"
         ) from None
     try:  # a manifest file's JSON rules, so a document reads the same on every Python
-        return parse_json(text)
+        return parse_json(text, MAX_NESTING_DEPTH)
     except (ValueError, AsexecError) as e:
         raise AsexecError(f"{url} is not an asexec identity document: {e}") from None
 

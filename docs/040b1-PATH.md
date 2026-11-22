@@ -4072,7 +4072,16 @@ Checking them turned up three bugs that no comment names (B1 to B3).
   - Release notes for #40: "A malformed manifest can no longer make the JSON depth check take
     quadratic time (present in 0.3.20)." and "The builders and `sign` refuse a too-deep or
     cyclic body without recursing, and `sign` requires `fulfills` to be a non-empty string."
-- [ ] 2. A: the structural changes.
+- [x] 2. A: the structural changes.
+  - `parsing.py` holds the JSON rules and the depth limit, and imports only `errors`.
+    `chains.py` holds the pinned drand chains, and imports nothing from asexec. The three
+    deferred imports that worked around cycles (one in `keys`, two in `drand`) are gone, and
+    each module imports on its own in a fresh interpreter.
+  - `max_depth` has no default on `_check_within_max_nesting_depth`, `parse_json`, or the two
+    CLI helpers that passed one through (`_read_json`, `_json_arg`). Every caller names the
+    limit. This supersedes "kept" for those defaults in the note above.
+  - The scanner's check stays private: since step 1, `parse_json` is its one caller.
+  - No behaviour change. `scripts/check.sh` clean, 1330 passed.
 - [ ] 3. B: the names, with the PR-wide sweep as its own commit.
 - [ ] 4. C: the comments, last, because 2 and 3 move those lines.
 

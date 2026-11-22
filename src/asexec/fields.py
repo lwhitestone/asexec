@@ -11,7 +11,7 @@ from typing import Annotated, Any
 
 from pydantic import AfterValidator, PlainValidator, Strict
 
-from . import canonical, drand
+from . import canonical, chains
 
 
 def _fromhex_ok(value: str) -> str:
@@ -44,7 +44,7 @@ def _lower_hex(value: str) -> str:
 
 
 def _pinned_chain(value: str) -> str:
-    if value not in drand.CHAINS:
+    if value not in chains.CHAINS:
         raise ValueError("not a drand chain the verifier pins")
     return value
 
@@ -98,7 +98,7 @@ SignatureBase64 = Annotated[str, AfterValidator(_signature_ok)]
 # A subject, plan or evidence ``name`` as this tool writes it (content #3).
 NormalName = Annotated[str, AfterValidator(_normal_name)]
 
-# A drand chain hash the verifier pins (floor #2). ``drand.CHAINS`` is fixed at import.
+# A drand chain hash the verifier pins (floor #2). ``chains.CHAINS`` is fixed at import.
 PinnedChain = Annotated[str, AfterValidator(_pinned_chain)]
 
 # ``body.phase`` / ``fulfills`` / ``prev_hash``: compared by string equality, never

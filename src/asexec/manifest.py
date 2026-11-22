@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from collections import Counter
 from typing import Any
 
@@ -35,6 +34,7 @@ from .canonical import b64decode, b64encode, canonical_bytes, signing_input
 from .constants import FORMATS, MANIFEST_PAYLOAD_TYPE
 from .errors import ManifestError
 from .models import Anchor, Dsse, Manifest, ManifestBody, Signature
+from .parsing import MAX_NESTING_DEPTH, parse_json
 
 # The signing gate: what signing refuses to go without. It is the writer's rule, not a
 # verify test. format and selfsig check every file's frame and signature, never body
@@ -79,7 +79,9 @@ def _build(
     # The fields that may hold objects or arrays, before the model recurses into them.
     values = [target, declaration, subject, floor, repro_recipe, notes, plan, items, evidence]
     for value in values:
-        _check_value_depth(value, MAX_NESTING_DEPTH - 1)  # each sits one level into the body
+        _check_value_within_max_nesting_depth(
+            value, MAX_NESTING_DEPTH - 1
+        )  # each sits one level into the body
     anchor = Anchor(floor=floor) if floor is not None else None
     body = ManifestBody(
         phase=phase,
@@ -126,7 +128,7 @@ def sign(body: dict[str, Any], private_key: bytes, public_key: bytes) -> dict[st
     """Serialize ``body`` to its body bytes and sign them: the file, as a dict, with the
     unsigned ``untrusted.asexec_version`` of this release beside them."""
     # Refuse what verify would reject as too deep (format #2), before encoding recurses into it.
-    _check_value_depth(body, MAX_NESTING_DEPTH)
+    _check_value_within_max_nesting_depth(body, MAX_NESTING_DEPTH)
     _check_signable(body)
     body_bytes = canonical_bytes(body)
     sig = keys.sign(private_key, signing_input(body_bytes))
@@ -137,7 +139,7 @@ def sign(body: dict[str, Any], private_key: bytes, public_key: bytes) -> dict[st
     return Manifest(dsse=dsse, pubkey=public_key.hex()).model_dump(mode="json")
 
 
-def _check_value_depth(value: Any, max_depth: int) -> None:
+def _check_value_within_max_nesting_depth(value: Any, max_depth: int) -> None:
     """Refuse a value to be signed that nests more than ``max_depth`` deep, or holds itself.
 
     It doesn't recurse: deep enough, the model and the encoder overflow the C stack, which can
@@ -236,57 +238,10 @@ def save(manifest: dict[str, Any], path: str) -> None:
         f.write("\n")
 
 
-def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    """``object_pairs_hook``: a repeated key is ambiguous (parsers disagree on
-    which wins), so a file that contains one is malformed."""
-    out: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in out:
-            raise ManifestError(f"duplicate JSON key {key!r}")
-        out[key] = value
-    return out
-
-
-# The deepest a manifest file, or the body it holds, may nest arrays and objects (the
-# outermost object is 1). Each is counted on its own: the file holds the body as a string, so
-# a body's depth is the same in any file. Manifests nest about 5 deep. A deeper one is
-# rejected before it is parsed, so no parser, model or encoder ever reaches its recursion
-# limit: those limits differ between Python versions and machines, and would make the same
-# file verify differently.
-MAX_NESTING_DEPTH = 64
-
-# A JSON string (skipped, so brackets inside one don't count) or a bracket. The quantifiers are
-# possessive and the closing quote optional, so the scan is linear: an unterminated string runs
-# to the end of the text, which json.loads then rejects, and is never rescanned.
-_STRING_OR_BRACKET = re.compile(r'"[^"\\]*+(?:\\.[^"\\]*+)*+"?|[\[\]{}]', re.DOTALL)
-
-
-def _check_nesting(text: str, max_depth: int = MAX_NESTING_DEPTH) -> None:
-    depth = 0
-    for match in _STRING_OR_BRACKET.finditer(text):
-        token = match.group()
-        if token in ("[", "{"):
-            depth += 1
-            if depth > max_depth:
-                raise ManifestError(f"nested more than {max_depth} deep")
-        elif token in ("]", "}"):
-            depth -= 1
-
-
-def parse_json(text: str, max_depth: int = MAX_NESTING_DEPTH) -> Any:
-    """A JSON value held to the JSON rules of a manifest file: unique keys, nested at most
-    ``max_depth`` deep (``MAX_NESTING_DEPTH`` unless the value is to sit inside a body). Raises
-    ``ManifestError`` for either rule, else a ``ValueError`` if ``text`` is not JSON
-    (``json.JSONDecodeError``, or an integer of more digits than Python reads). The CLI holds
-    every JSON value it is given to these rules."""
-    _check_nesting(text, max_depth)
-    return json.loads(text, object_pairs_hook=_reject_duplicate_keys)
-
-
 def _parse_object(text: str, what: str) -> dict[str, Any]:
     """The JSON rules a file and a body are both held to (``parse_json``), and a JSON object.
     Raises ``ManifestError`` or ``json.JSONDecodeError`` (a ``ValueError``)."""
-    data = parse_json(text)
+    data = parse_json(text, MAX_NESTING_DEPTH)
     if not isinstance(data, dict):
         raise ManifestError(f"{what} must be a JSON object")
     return data
