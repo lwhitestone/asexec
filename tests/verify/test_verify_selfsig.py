@@ -170,9 +170,13 @@ def test_selfsig__fail__2_sig_is_strict_base64_of_64_bytes(scenario, spelling):
     alphabet, padded, no whitespace, one spelling) of 64 bytes, an ed25519 signature's
     length. Hex, as asexec wrote before, another spelling of the same bytes, and a
     signature of another length fail; the file still passes format."""
-    stored = base64.b64encode(_read_sig_bytes(scenario)).decode()
-    # postreg0's signature (a fixed key and body) uses both of the characters URL-safe
-    # base64 replaces, and leaves its last character's unused bits clear.
+    # The signature must use both of the characters URL-safe base64 replaces. It depends on
+    # the payloadType, which each release commit sets, so vary the body until it does.
+    for i in range(1000):
+        stored = base64.b64encode(_read_sig_bytes(scenario)).decode()
+        if "+" in stored and "/" in stored:
+            break
+        scenario.set("postreg0", "body.notes", f"postreg0, variant {i}")
     assert "+" in stored and "/" in stored and stored.endswith("==")
     assert _set_unused_bits(stored) != stored
     scenario.tamper("postreg0", _make_sig_respelling(spelling))
