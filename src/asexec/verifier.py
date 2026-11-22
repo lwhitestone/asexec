@@ -112,6 +112,7 @@ belongs to no commitment, so it has no state, and is reported in its own list.
 from __future__ import annotations
 
 import datetime
+import errno
 import json
 import os
 import re
@@ -413,15 +414,29 @@ _NO_SUCH_PATH = object()
 def _resolve_inside(artifacts_dir: str, name: str) -> Any:
     """Resolve a normalized subject ``name`` under ``artifacts_dir``, following symlinks;
     None if it escapes (a symlink pointing outside), ``_NO_SUCH_PATH`` if no path can have
-    it."""
-    root = os.path.realpath(artifacts_dir)
+    it or the OS can't open one by it.
+
+    The OS is asked first. ``realpath`` alone follows more links than any OS does (on 3.12
+    until it hits the recursion limit, later without limit) and steps back out of a missing
+    directory, so it names files that can't be opened by the listed name."""
+    joined = os.path.join(artifacts_dir, name)
     try:
-        path = os.path.realpath(os.path.join(root, name))
+        os.stat(joined)
+        opens = True
+    except OSError as e:
+        if e.errno == errno.ELOOP:  # before realpath follows the links
+            return _NO_SUCH_PATH
+        opens = False
     except ValueError:  # embedded NUL, or UnicodeEncodeError
+        return _NO_SUCH_PATH
+    try:
+        root = os.path.realpath(artifacts_dir)
+        path = os.path.realpath(os.path.join(root, name))
+    except (ValueError, RecursionError):  # links the OS stopped short of, behind a missing one
         return _NO_SUCH_PATH
     if path != root and not path.startswith(root + os.sep):
         return None
-    return path
+    return path if opens else _NO_SUCH_PATH
 
 
 def _verify_entry(item: Any, artifacts_dir: str, repeated: set[str], field: str) -> dict[str, Any]:

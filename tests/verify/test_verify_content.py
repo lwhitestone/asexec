@@ -219,6 +219,51 @@ def test_content__fail__6_artifact_exists(scenario, case):
     assert _get_entry_reasons(report) == ["artifact not found"]
 
 
+def _make_chain(directory, links, target):
+    """``links`` symlinks in ``directory``, each to the next, the last to ``target``. The first."""
+    for i in range(links):
+        _make_symlink(directory / f"link{i}", target if i == links - 1 else f"link{i + 1}")
+    return "link0"
+
+
+@pytest.mark.parametrize(
+    "case", ["too-many-links", "past-the-recursion-limit", "through-a-missing-directory"]
+)
+def test_content__fail__6_the_os_can_open_the_name(scenario, case):
+    """content #6: the OS can open the name. A chain of links it won't follow, or a link
+    through a directory that isn't there, is no artifact on every Python, and never an
+    exception, though realpath alone would give the file's path."""
+    digest = hashing.hash_file(str(scenario.artifacts / "harness" / "eval.py"), "sha-256")
+    if case == "through-a-missing-directory":
+        _make_symlink(scenario.artifacts / "link0", "missing/../harness/eval.py")
+    else:
+        links = 100 if case == "too-many-links" else 1200
+        _make_chain(scenario.artifacts, links, "harness/eval.py")
+    _set_prereg_subject(scenario, _make_entry("link0", digest))
+    report = scenario.verify("content")
+    assert report["code"] == FAIL
+    assert _get_entry_reasons(report) == ["artifact not found"]
+
+
+def test_content__pass__5_a_chain_of_links_the_os_follows(scenario):
+    """content #5: links are followed as far as the OS follows them."""
+    digest = hashing.hash_file(str(scenario.artifacts / "harness" / "eval.py"), "sha-256")
+    _make_chain(scenario.artifacts, 8, "harness/eval.py")
+    _set_prereg_subject(scenario, _make_entry("link0", digest))
+    assert scenario.code("content") == PASS
+
+
+def test_content__fail__6_artifacts_is_a_chain_of_links_the_os_wont_follow(scenario, tmp_path):
+    """content #6: the same holds of --artifacts itself."""
+    real = scenario.artifacts
+    digest = hashing.hash_file(str(real / "harness" / "eval.py"), "sha-256")
+    _set_prereg_subject(scenario, _make_entry("harness/eval.py", digest))
+    scenario.artifacts = tmp_path / _make_chain(tmp_path, 1200, real.name)
+    report = scenario.verify("content")
+    assert report["code"] == FAIL
+    assert _get_entry_reasons(report) == ["artifact not found"]
+
+
 @pytest.mark.parametrize("case", ["directory", "symlink-to-directory", "fifo"])
 def test_content__fail__7_artifact_is_a_file(scenario, case):
     """content #7: the resolved path is a regular file. A directory (even one whose old v1

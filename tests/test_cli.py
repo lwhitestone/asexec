@@ -402,6 +402,52 @@ def test_prereg_escapes_the_due_it_prints(tmp_path, key, capsys, separator):
     assert f"  due : 2030-01-01{shown}00:00:00+00:00\n" in out
 
 
+_NOT_UTF8 = "x\udcff"  # a byte that is not UTF-8, as argv decodes it
+_LONE = "x\\ud800"  # a lone surrogate, spelled as JSON spells it
+
+
+@pytest.mark.parametrize(
+    "cmd,flag,value",
+    [
+        ("prereg", "--target", _NOT_UTF8),
+        ("prereg", "--declaration", _NOT_UTF8),
+        ("prereg", "--notes", _NOT_UTF8),
+        ("postreg", "--target", _NOT_UTF8),
+        ("postreg", "--declaration", _NOT_UTF8),
+        ("postreg", "--notes", _NOT_UTF8),
+        ("postreg", "--item-id", _NOT_UTF8),
+        ("prereg", "--plan", '{"name":"p","label":"' + _NOT_UTF8 + '"}'),
+        ("prereg", "--plan", '{"name":"p","label":"' + _LONE + '"}'),
+        ("prereg", "--items", '[{"id":"' + _LONE + '"}]'),
+        ("postreg", "--evidence", '[{"name":"e","uri":"' + _LONE + '"}]'),
+        ("postreg", "--repro-recipe", '{"seed":"' + _LONE + '"}'),
+        ("postreg", "--repro-recipe", '{"' + _LONE + '":1}'),
+    ],
+)
+def test_a_value_with_no_utf8_form_is_a_usage_error(tmp_path, capsys, cmd, flag, value):
+    """No body can hold it, so the argument is wrong whatever the files hold: 64, before the
+    key is read. Not exit 1, and a key is not silently respelled."""
+    out = tmp_path / "out.json"
+    link = [] if flag == "--target" else ["--target", "t"]
+    if cmd == "postreg":
+        link += ["--fulfills", REF]
+    with pytest.raises(SystemExit) as e:
+        run(cmd, "--key", tmp_path / "no-such-key", *link, flag, value, "--out", out)
+    assert e.value.code == cli.EXIT_USAGE
+    err = capsys.readouterr().err
+    assert f"error: argument {flag}: " in err and "no UTF-8 form" in err
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("flag", ["--keyid", "--pubkey"])
+def test_identity_match_refuses_a_value_with_no_utf8_form(monkeypatch, capsys, flag):
+    monkeypatch.setattr(cli.identity, "fetch_wellknown", lambda *a, **k: pytest.fail("fetched"))
+    with pytest.raises(SystemExit) as e:
+        run("identity", "match", "--domain", "lab.example", flag, _NOT_UTF8)
+    assert e.value.code == cli.EXIT_USAGE
+    assert "no UTF-8 form" in capsys.readouterr().err
+
+
 def test_verify_shows_lone_surrogates_escaped(tmp_path, key, capsys):
     """Verify reads a body holding lone surrogate escapes as signed, and the report shows
     each one escaped, as \\udXXX, rather than failing to print it."""
