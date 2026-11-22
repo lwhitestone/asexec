@@ -3665,7 +3665,7 @@ stdout), `47fcce6` (one `due` parse), `8f86d68` (README), and the notes commit t
 ```
 Identifier: the CLI's argument checks (no constant): empty values, inline JSON shapes, --repro-recipe, --domain
 Impact: BREAKS_USERS
-Affected: scripts that pass an empty value (it was read as absent: inherited, dropped or defaulted; now exit 64), a --repro-recipe that is not an object (exit 1 -> 64), a JSON value or --…-file with a repeated key or nested more than 64 deep (now refused), or a postreg --fulfills file that fails format or selfsig (it was signed against; now exit 1)
+Affected: scripts that pass an empty value (it was read as absent: inherited, dropped or defaulted; now exit 64), a --repro-recipe that is not an object (exit 1 -> 64), a JSON value or --…-file with a repeated key or nested more than 64 deep (now refused), or a postreg --fulfills file that fails format (it was signed against; now exit 1; selfsig is not checked)
 Action: pass a value or leave the option out; fix the file
 
 Identifier: verify's exit status when stdout closes (no constant)
@@ -4206,7 +4206,8 @@ Then a final evidence run, the PR description, and a reply on each thread before
 - The rehearsed `v0.3.21` tag passes the suite on 3.12, 3.13 and 3.14, the version and tag
   conditions of `verify-release`, and the wheel smoke test. 0.4.0 gives its files the
   pre-0.4.0 reason.
-- Key files from 0.3.20 sign under it. A postreg to a 0.3.20 prereg is refused.
+- Key files from 0.3.20 sign under it. A 0.3.20 prereg file is refused by `--fulfills`; by ref,
+  a postreg to it is signed, and is notarization-only.
 
 **Squash message** (title: `Core beta features (#60)`):
 
@@ -4242,7 +4243,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 ## Before you upgrade
 
-- **Finish open commitments on the version that signed the prereg.** 0.3.21 can't sign a postreg to a 0.3.20 prereg, and re-signing the prereg now loses when it was made.
+- **Finish open commitments on the version that signed the prereg.** 0.3.21 refuses a 0.3.20 prereg file in `--fulfills`. Given that prereg's ref and a `--target` it does sign a postreg, but one that never counts. Re-signing the prereg now loses when it was made.
 - **Pin the exact version from prereg through verify.** 0.3.21 signs `application/vnd.asexec.0.3.21+json` and reads only that, as each later 0.3.x will read only its own.
 - **0.3.20 manifests fail `format` here.** Verify them with 0.3.20.
 - **0.3.20 reports 0.3.21 manifests as `malformed`,** without saying to upgrade. Tell whoever verifies yours which version to use.
@@ -4269,7 +4270,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 - New: `--plan`, `--items`, `--item-id`, `--status`, `--evidence`, `--floor-round`, and a `-file` form of each JSON option.
 - Empty values and wrongly shaped inline JSON exit 64. JSON input with a repeated key, or nested more than 64 deep, is refused.
-- `postreg --fulfills` refuses a prereg file that fails `format` or `selfsig`.
+- `postreg --fulfills` refuses a file that fails `format`. It doesn't check `selfsig`, and the postreg inherits `target`, `due` and `declaration` from that file, so run `verify` on the prereg first.
 
 ## Fixed
 
