@@ -4143,9 +4143,9 @@ Then a final evidence run, the PR description, and a reply on each thread before
   - Release note for #40: "A drand response that nests too deep or repeats a key is refused,
     and the next mirror is tried."
 - [x] **The removed and renamed Python API is listed,** here and in the PR description.
-- [ ] **Open: releasing this branch as 0.3.x, to not wait through the betas.** ROADMAP allows
-  the break in a 0.3.x `PATCH` with a release note. Rehearsed at `f8c0990`, it doesn't work
-  today:
+- [x] **Releasing this branch as 0.3.x, to not wait through the betas: decided, as D6c**
+  (`fcb3c63`; see *Releasing 0.3.21* below). What it took, as found at first: ROADMAP allows
+  the break in a 0.3.x `PATCH` with a release note. Rehearsed at `f8c0990`, it didn't work:
   - `release.sh 0.3.21` is refused (no `payloadType` for the 0.3 line), and so is `0.3.21b1`
     (a beta must be of an `X.Y.0`).
   - A `0.3 → v1` row alone is refused too, since a patch needs the literal `v1` key. Forcing
@@ -4186,3 +4186,102 @@ Then a final evidence run, the PR description, and a reply on each thread before
 - The 3,000-claim differential against `ba8aa47` is still identical.
 - `0.4.0b1` and `0.4.0` release against a throwaway remote.
 - The wheel smoke test and the adequacy example pass.
+
+#### Releasing 0.3.21 (D6c)
+
+**Steps, after #60 is green:**
+1. Mark #60 ready and squash-merge it, with the message below (the default concatenates every
+   commit message).
+2. Close the issues the message lists. Nothing closes them automatically.
+3. When CI is green on main: `git pull --ff-only`, then `scripts/release.sh 0.3.21`. Until that
+   release commit, main signs with the `v1` label, so don't leave a gap.
+4. Approve the `pypi` environment after the TestPyPI smoke test.
+5. Replace the generated GitHub release notes with the draft below.
+
+**Evidence at `fcb3c63`:**
+- `scripts/check.sh`: 1341 passed.
+- Squashed onto main in a throwaway clone with a bare remote, then released in turn as
+  `0.3.21`, `0.3.22`, `0.4.0b1` (1335 passed, 6 skipped each) and `0.4.0` (1341 passed). A
+  `0.3.23` after that is refused, and leaves a clean tree.
+- The rehearsed `v0.3.21` tag passes the suite on 3.12, 3.13 and 3.14, the version and tag
+  conditions of `verify-release`, and the wheel smoke test. 0.4.0 gives its files the
+  pre-0.4.0 reason.
+- Key files from 0.3.20 sign under it. A postreg to a 0.3.20 prereg is refused.
+
+**Squash message** (title: `Core beta features (#60)`):
+
+```text
+The 0.4.0 core changes, to be released first as 0.3.21 (D6c in
+docs/040b1-PATH.md).
+
+Format (breaking): a DSSE envelope, predicateType
+https://asexec.org/manifest/v1, hash_alg on each file entry, file-list
+subjects, the claim record (plan, items, item_id, status, evidence) and
+an untrusted section.
+
+verify: BDR is split into format and selfsig; timely, complete and order
+are new; an invalidly signed prereg is not a commitment; floor requires
+chain_hash.
+
+Hardening: a linear JSON depth scan, depth checked before anything
+recurses, JSON rules on every JSON input.
+
+Release: a 0.3.x writes application/vnd.asexec.0.3.N+json. v1 is first
+released by 0.4.0.
+
+Issues: #26, #30, #31, #32, #33, #34, #35, #36, #37, #38, #42, #43, #44,
+#45, #46.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+```
+
+**Release notes:**
+
+````markdown
+**This release breaks manifests, scripts and the Python API.** It carries the 0.4.0 core changes early. It is alpha, and its manifests will not be supported by 0.4.0.
+
+## Before you upgrade
+
+- **Finish open commitments on the version that signed the prereg.** 0.3.21 can't sign a postreg to a 0.3.20 prereg, and re-signing the prereg now loses when it was made.
+- **Pin the exact version from prereg through verify.** 0.3.21 signs `application/vnd.asexec.0.3.21+json` and reads only that, as each later 0.3.x will read only its own.
+- **0.3.20 manifests fail `format` here.** Verify them with 0.3.20.
+- **0.3.20 reports 0.3.21 manifests as `malformed`,** without saying to upgrade. Tell whoever verifies yours which version to use.
+- **`--tests BDR` is now `--tests format,selfsig`.** The old name exits 64.
+- Key files from 0.3.20 still work.
+
+## Format
+
+- The file is a DSSE envelope (`dsse.payload` is base64 of the body bytes, `sig` is base64, the PAE prefix is `DSSEv1`) with `pubkey`, an optional `ceiling`, and an unchecked `untrusted` section beside it.
+- `predicateType` is `https://asexec.org/manifest/v1`. `schema_id` and `body.identity` are gone.
+- Each subject, plan and evidence entry has its own `hash_alg` and a normalized relative path. Directories are not hashed: list files, or an archive, and verify with `--artifacts` at the directory you signed from.
+- A claim record: `plan` and `items` in a prereg; `item_id`, `status` and `evidence` in a postreg.
+
+## verify
+
+- `BDR` is split into `format` (readable as a known format) and `selfsig` (unchanged since its own key signed it).
+- New tests: `timely`, `complete`, `order`.
+- A prereg that fails `selfsig` is not a commitment.
+- `floor` requires `body.anchor.floor.chain_hash`.
+- A commitment with no `due` and no counted postreg is `no-due`. `open` now means a due in the future.
+- When stdout closes early, the exit status is still the verdict.
+
+## CLI
+
+- New: `--plan`, `--items`, `--item-id`, `--status`, `--evidence`, `--floor-round`, and a `-file` form of each JSON option.
+- Empty values and wrongly shaped inline JSON exit 64. JSON input with a repeated key, or nested more than 64 deep, is refused.
+- `postreg --fulfills` refuses a prereg file that fails `format` or `selfsig`.
+
+## Fixed
+
+- A small malformed file could make `verify` run for a very long time (0.3.20).
+- A deep body could crash the builders and `sign`, and a deep drand response `fetch_latest_round`.
+- `sign` accepted an empty or non-string `fulfills`.
+
+## Python API
+
+Not a stable surface, and much of it changed. The renames and removals are listed in #60.
+
+## Known issue
+
+- #61: on Python 3.13, CPython can segfault freeing a very deeply nested value in a small-stack thread.
+````
