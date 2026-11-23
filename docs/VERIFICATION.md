@@ -1055,7 +1055,7 @@ least one counted postreg)
    UTC, as for [commitment states](#commitment-states).
 2. Each counted postreg has a `ceiling`.
 3. That ceiling meets the [`ceiling`](#ceiling) conditions (#1 to #5): its type, a nonce
-   equal to the postreg's `ref`, a pinned witness and a response that verifies. A ceiling
+   of the postreg's signature, a pinned witness and a response that verifies. A ceiling
    that fails one is no time at all, since anyone can write one, so it is treated as no
    ceiling: never as on time.
 4. Its ceiling time T is at or before `body.due`. Both are compared exactly, in whole
