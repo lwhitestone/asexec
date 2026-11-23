@@ -262,7 +262,7 @@ def test_signing_pae_version_and_manifest_payload_type():
     # MANIFEST_PAYLOAD_TYPE literal in the release commit, here and in constants.py, and this
     # is the one line in this file that holds it: the others compare against it.
     assert _get_signing_format()["signing_pae_version"] == b"DSSEv1"
-    assert constants.MANIFEST_PAYLOAD_TYPE == "application/vnd.asexec.0.3.21+json"
+    assert constants.MANIFEST_PAYLOAD_TYPE == "application/vnd.asexec.0.3.22+json"
     assert build_signing_input(FROZEN_BODY_BYTES, constants.MANIFEST_PAYLOAD_TYPE) == (
         build_signing_input(FROZEN_BODY_BYTES)
     )
