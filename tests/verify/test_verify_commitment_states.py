@@ -55,7 +55,7 @@ def test_state__fulfilled__with_no_due(scenario):
 
 
 def test_state__fulfilled__a_late_postreg_still_fulfills(scenario):
-    """fulfilled: states say whether it was reported; timely says whether on time (D5b). A
+    """fulfilled: states say whether it was reported; timely says whether on time (#46). A
     postreg after due still counts."""
     scenario.set("prereg", "body.due", "2000-01-01T00:00:00Z")
     assert _state(scenario, now=NOW) == "fulfilled"

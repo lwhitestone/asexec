@@ -133,7 +133,7 @@ supported, and main is not published.
 **The frozen vectors** in `tests/test_constants.py` are `v1` files, signed once and never
 edited. A `0.3.x` (from `0.3.21`) or `0.4.0` beta build reads only its own type, so every test
 that reads them is skipped there (the `frozen_v1` mark, reason "a 0.3.x or 0.4.0 beta build
-does not read v1, the frozen vectors' format (D6b, D6c)"). In its place, `test_current_format_sign_then_verify_roundtrip`,
+does not read v1, the frozen vectors' format"). In its place, `test_current_format_sign_then_verify_roundtrip`,
 which runs in every build, signs two files under the current entry (one from the production
 writer, one signed by hand) and checks through `verify_paths` that they pass `format`,
 `selfsig` and `content` (each subject entry read under its own `hash_alg`), and that

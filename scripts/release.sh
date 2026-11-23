@@ -220,7 +220,7 @@ major, minor, patch, beta = re.fullmatch(
 line = f"{major}.{minor}"
 
 # A 0.3.x comes before any format is released, so like a beta it writes a type
-# of its own, under the entry under development (D6c in docs/040b1-PATH.md).
+# of its own, under the entry under development (docs/DEVELOPMENT.md, Releasing).
 writes_own_type = bool(beta) or line == "0.3"
 
 if writes_own_type:

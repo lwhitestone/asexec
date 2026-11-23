@@ -168,13 +168,13 @@ def _is_before_v1(payload_type):
 # The release commit of a 0.3.x (from 0.3.21) or of a 0.4.0 beta sets MANIFEST_PAYLOAD_TYPE to
 # its own type, and the build reads that type only, so the frozen v1 vectors read as an unknown
 # format there. Every test that reads them is skipped in that build, and
-# test_current_format_sign_then_verify_roundtrip covers the current entry instead (D6b and D6c
-# in docs/040b1-PATH.md). Only those builds: they come before any format is released, and
+# test_current_format_sign_then_verify_roundtrip covers the current entry instead
+# (docs/DEVELOPMENT.md, Releasing). Only those builds: they come before any format is released, and
 # every later build, betas included, still reads v1 and runs these tests
 # (test_v1_is_read_by_every_build_from_0_4_0).
 frozen_v1 = pytest.mark.skipif(
     _is_before_v1(constants.MANIFEST_PAYLOAD_TYPE),
-    reason="a 0.3.x or 0.4.0 beta build does not read v1, the frozen vectors' format (D6b, D6c)",
+    reason="a 0.3.x or 0.4.0 beta build does not read v1, the frozen vectors' format",
 )
 
 
@@ -326,7 +326,7 @@ def test_frozen_v1_vectors_are_skipped_only_before_v1(payload_type, skipped):
 
 def test_current_format_sign_then_verify_roundtrip(tmp_path):
     # Runs in every build, and is what checks the current entry while the frozen vectors are
-    # skipped (D6b): files signed now pass format and selfsig through verify, each ref and
+    # skipped: files signed now pass format and selfsig through verify, each ref and
     # keyid carries the entry's prefix, and content reads each subject entry's own hash_alg.
     # It does not freeze signed bytes; the frozen vectors do.
     entry = _get_signing_format()
