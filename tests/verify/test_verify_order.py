@@ -17,6 +17,7 @@ import manifest_data as d
 import pytest
 
 from asexec import keys
+from asexec.verifier import REASON_ORDER_INVALID_CEILING, verify_paths
 
 PASS = "asexec-verify/1 format=PASS order=PASS selfsig=PASS"
 FAIL = "asexec-verify/1 format=PASS order=FAIL selfsig=PASS"
@@ -188,7 +189,7 @@ def test_order__fail__2_another_signer_s_ceiling_is_not_the_prereg_s(sc, make_se
     other = keys.generate()
     raw = d.decode_payload(json.loads(sc.read("prereg")))
     copy = d.sign_bytes(raw, other)
-    nonce = d.derive_ref(raw).split(":", 1)[-1]
+    nonce = d.derive_witness_nonce(copy)  # its own signature's ceiling
     copy["ceiling"] = ceiling_for(nonce, "synthetic", sc.server_pub, sc.sign_response)
     sc.add_raw("prereg-other-signer", json.dumps(copy))
     sc.add_postreg("post-other", fulfills="prereg")
@@ -205,6 +206,26 @@ def test_order__fail__2_another_signer_s_ceiling_is_not_the_prereg_s(sc, make_se
     assert theirs["ceiling"]["no_later_than_us"] == CEILING_US
     assert [p["status"] for p in theirs["postregs"]] == ["after"] and theirs["ok"]
     assert report["results"]["order"]["reason"] == "1/2 commitment(s) failed"
+
+
+def test_order__fail__2_a_ceiling_copied_to_another_signers_copy_is_no_time(sc, tmp_path):
+    """order #1-#2: the same body and its ceiling, signed again by another key with its own
+    postreg, is another commitment whose prereg has no time: it can't inherit the first's."""
+    other = keys.generate()
+    copies = []
+    for name in ("prereg", "postreg0"):
+        stored = json.loads(sc.read(name))
+        copy = d.sign_bytes(d.decode_payload(stored), other)
+        if "ceiling" in stored:
+            copy["ceiling"] = stored["ceiling"]
+        path = tmp_path / f"{name}.json"
+        path.write_text(json.dumps(copy))
+        copies.append(str(path))
+    report = verify_paths(copies, ["format", "selfsig", "order"], None, servers=sc.servers)
+    assert report["code"] == FAIL
+    (commitment,) = report["commitments"]
+    assert commitment["keyid"] == keys.derive_keyid(other[1])
+    assert commitment["order"]["reason"] == REASON_ORDER_INVALID_CEILING
 
 
 def test_order__fail__3_counted_postreg_has_a_floor(sc):

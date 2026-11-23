@@ -117,8 +117,8 @@ test:
   proves which private key signed, not whose it is, so a signer can still claim "that's not
   my key" or "my key was stolen". The optional
   [identity check](#identity-optional-domain-control-check-no-ca) ties a public key to a
-  domain, outside `verify`; a ceiling witness shows a manifest existed before any claimed
-  theft. There is no key revocation (see [Keys](#keys)).
+  domain, outside `verify`; a ceiling witness shows that the key had signed the manifest by
+  its time, so before any theft claimed after it. There is no key revocation (see [Keys](#keys)).
 - **Provenance.** Content hashes prove a transcript wasn't altered; they do not prove it is the
   output of the named harness+model (asserted by the signer, not re-executed).
 - **Completeness.** It renders only the manifests you give it; it cannot prove a lab pre-registered
@@ -202,7 +202,7 @@ For a worked end-to-end run, with faults replayed against the verifier, see
 | `0` | Success. For `verify`, every requested test is `PASS`; for `identity match`, the key is bound to the domain. |
 | `1` | Error: the arguments are valid, but the command could not complete with the files or network they name, e.g. a missing or invalid key file; an unreadable `--subject`; a `--…-file` that is missing, a directory, or does not hold what its option takes (UTF-8 JSON text with no repeated key, nested at most 64 deep counting its outermost array or object as 1, of the option's shape: for `--target-file`, `--declaration-file` and `--notes-file` a non-empty JSON object or string at most 63 deep, since the body holds it one level down and is itself at most 64; for `--floor-round-file` a round that verifies); a `--fulfills` file that fails `format` (malformed, or of a format this release does not read), or that has no target to inherit when none is given; a `--subject` path, or a name in a `--plan-file` or `--evidence-file`, that no manifest can hold (with a NUL character, or one with no UTF-8 form); a key file it refuses to overwrite; a failed `identity match` fetch, or a document there that is not an identity document; a failed `--floor`/`--ceiling` fetch without `--best-effort`; or a stdout that can't be written, such as a full device. One `error: ...` line is printed (after any `--best-effort` warning), never a traceback. |
 | `2` | `verify`: at least one requested test is `FAIL`. `identity match`: the key is not bound. |
-| `64` | Usage error: the arguments themselves are wrong, whatever the files hold. For example: an unknown command or option; a missing argument; an empty value, for any option or path; two that exclude each other, such as `--target` and `--target-file`, or `--floor` and `--floor-round`; a `--due` that is not an ISO-8601 time with an explicit offset; a `--tests` that names an unknown test, names none, or omits `format` or `selfsig`; an inline `--plan`, `--items`, `--evidence`, `--floor-round` or `--repro-recipe` value that is not JSON, repeats a key, nests more than 64 deep (63 for `--repro-recipe`, which the body holds one level down), or is not of its shape (`--repro-recipe` is an object; a `--plan` or `--evidence` name holds no NUL and has a UTF-8 form), or an inline `--floor-round` that does not verify (`--best-effort` does not sign without it); a `--status` other than `reported`, `excluded` or `blocked`; a `--domain` holding whitespace or a control character; or for `identity match`, not exactly one of `--keyid`, `--pubkey` and `--key`. Usage is printed and nothing runs (`verify` prints no code). |
+| `64` | Usage error: the arguments themselves are wrong, whatever the files hold. For example: an unknown command or option; a missing argument; an empty value, for any option or path; a value with no UTF-8 form (a byte that is not UTF-8, or a lone surrogate, also as a JSON escape in an inline value), for any option that is not a path; two that exclude each other, such as `--target` and `--target-file`, or `--floor` and `--floor-round`; a `--due` that is not an ISO-8601 time with an explicit offset; a `--tests` that names an unknown test, names none, or omits `format` or `selfsig`; an inline `--plan`, `--items`, `--evidence`, `--floor-round` or `--repro-recipe` value that is not JSON, repeats a key, nests more than 64 deep (63 for `--repro-recipe`, which the body holds one level down), or is not of its shape (`--repro-recipe` is an object; a `--plan` or `--evidence` name holds no NUL and has a UTF-8 form), or an inline `--floor-round` that does not verify (`--best-effort` does not sign without it); a `--status` other than `reported`, `excluded` or `blocked`; a `--domain` holding whitespace or a control character; or for `identity match`, not exactly one of `--keyid`, `--pubkey` and `--key`. Usage is printed and nothing runs (`verify` prints no code). |
 
 For `verify`, malformed manifest input is a `FAIL`, never an error. Its exit status is its
 verdict even when stdout closes before the report is printed, as in
@@ -279,7 +279,7 @@ and `sig`). Fields marked `always` are always written by `asexec prereg` or
     "ceiling_type": "roughtime",
     "witness_id": "int08h-Roughtime",
     "pubkey": "016e6e02…",
-    "nonce": "4be1c1f8…",                               // = ref, the sha-256 of the body bytes
+    "nonce": "4be1c1f8…",                               // covers pubkey, sig and the signed bytes
     "midpoint": 1785911400.0,
     "radius": 1.0,
     "response": "0400000040…"
@@ -386,9 +386,9 @@ several, with a threshold). Verify checks the bytes the file stores, exactly as 
 re-serializes them, so a body written by another tool, spaced or ordered differently,
 verifies the same way. The body borrows [in-toto](https://in-toto.io/) field names. A
 postreg carries its prereg's `target`, `due` and `declaration`, links back with `fulfills`
-(the prereg's ref, the sha-256 of its body bytes, which is also its ceiling `nonce`) and
+(the prereg's ref, the sha-256 of its body bytes) and
 `prev_hash`, and, from the CLI, adds `provenance` and `repro_recipe`. The ceiling and
-`pubkey` sit outside the signed body: the ceiling's nonce is the body's own hash, and
+`pubkey` sit outside the signed body: the ceiling's nonce covers the signature itself, and
 `selfsig` requires the signature's `keyid` to derive from `pubkey`, so a substituted key
 fails. The floor sits inside the body, because a value fixed before signing can be signed.
 `untrusted` is the one section of the file nothing checks: unsigned, read by no test and

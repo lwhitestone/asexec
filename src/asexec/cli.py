@@ -390,16 +390,16 @@ def _resolve_ref(value: str, flag: str) -> str:
     )
 
 
-def _attach_ceiling(mani: dict, ref: str, want_ceiling: bool, best_effort: bool) -> None:
+def _attach_ceiling(mani: dict, want_ceiling: bool, best_effort: bool) -> None:
     """Optionally fetch a Roughtime ceiling witness and attach it (sign-time,
-    network). The nonce is the body's ``ref``, so this must run *after* signing; it
-    does not perturb ref. A failed fetch aborts (nothing is written) unless
+    network). Its nonce covers the signature (``manifest.derive_witness_nonce``), so this
+    runs *after* signing. A failed fetch aborts (nothing is written) unless
     ``best_effort``."""
     if not want_ceiling:
         return
     from . import roughtime
 
-    nonce = ref  # sha-256:<hex>
+    nonce = manifest.derive_witness_nonce(mani)
     try:
         ceiling = roughtime.fetch_ceiling(nonce)
     except Exception as e:
@@ -474,7 +474,7 @@ def run_prereg(args) -> int:
     )
     mani = manifest.sign(body, priv, pub)
     ref = manifest.derive_ref(manifest.read_body(mani)[0])
-    _attach_ceiling(mani, ref, args.ceiling, args.best_effort)
+    _attach_ceiling(mani, args.ceiling, args.best_effort)
     manifest.save(mani, args.out)
     print(f"{OK} pre-registration written: {args.out}")
     print(f"  ref : {ref}")
@@ -530,7 +530,7 @@ def run_postreg(args) -> int:
     )
     mani = manifest.sign(body, priv, pub)
     ref = manifest.derive_ref(manifest.read_body(mani)[0])
-    _attach_ceiling(mani, ref, args.ceiling, args.best_effort)
+    _attach_ceiling(mani, args.ceiling, args.best_effort)
     manifest.save(mani, args.out)
     print(f"{OK} post-registration written: {args.out}")
     print(f"  ref      : {ref}")
@@ -870,10 +870,13 @@ def _check_due_arg(value: str) -> str:
     An explicit UTC offset (or ``Z``) is required: verify reads a timezone-less deadline as
     UTC, but flags it, since its writer may have meant local time.
     """
+    _check_text_arg(value)
     try:
         _instant, naive = verifier.parse_due(value)
     except ValueError:
-        raise argparse.ArgumentTypeError(f"not a valid ISO-8601 timestamp: {value!r}") from None
+        raise argparse.ArgumentTypeError(
+            f"not a valid ISO-8601 timestamp, such as 2030-01-31T17:00:00Z: {value!r}"
+        ) from None
     if naive:
         raise argparse.ArgumentTypeError(
             "needs an explicit UTC offset or 'Z' "
@@ -889,6 +892,25 @@ def _check_nonempty_arg(value: str) -> str:
     return value
 
 
+def _check_utf8_form(text: str) -> None:
+    """``ValueError`` if ``text`` has no UTF-8 form (a lone surrogate, which is also how argv
+    decodes a byte that is not UTF-8), so no body can hold it."""
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        raise ValueError("it has a character with no UTF-8 form") from None
+
+
+def _check_text_arg(value: str) -> str:
+    """An option's value that is text, not a path: not empty, and with a UTF-8 form."""
+    _check_nonempty_arg(value)
+    try:
+        _check_utf8_form(value)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e)) from None
+    return value
+
+
 def _check_domain_arg(value: str) -> str:
     """``--domain``: a name with no whitespace or control character (it goes into a URL)."""
     _check_nonempty_arg(value)
@@ -901,13 +923,16 @@ def _check_domain_arg(value: str) -> str:
 
 def _make_json_arg(shape: Callable, max_depth: int):
     """An argparse ``type`` for an inline JSON value: not empty, JSON under a manifest file's
-    rules (``_parse_strict_json``, at most ``max_depth`` deep), and held to ``shape``. A value that
-    fails is a usage error."""
+    rules (``_parse_strict_json``, at most ``max_depth`` deep), held to ``shape``, and every key
+    and string in it with a UTF-8 form. A value that fails is a usage error."""
 
     def parse(value: str):
         _check_nonempty_arg(value)
         try:
-            return shape(_parse_strict_json(value, max_depth))
+            parsed = _parse_strict_json(value, max_depth)
+            shaped = shape(parsed)
+            _check_utf8_form(json.dumps(parsed, ensure_ascii=False))
+            return shaped
         except ValueError as e:
             raise argparse.ArgumentTypeError(str(e)) from None
 
@@ -915,7 +940,7 @@ def _make_json_arg(shape: Callable, max_depth: int):
 
 
 def _add_arg_or_file(
-    p, name: str, required: bool = False, help=None, file_help=None, type=_check_nonempty_arg
+    p, name: str, required: bool = False, help=None, file_help=None, type=_check_text_arg
 ):
     """``--<name>`` and ``--<name>-file``: at most one (exactly one if ``required``). Neither
     may be empty; ``type`` checks the inline value."""
@@ -1058,7 +1083,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_arg_or_file(po, "notes")
     po.add_argument(
         "--item-id",
-        type=_check_nonempty_arg,
+        type=_check_text_arg,
         help="the id of the prereg's item this postreg accounts for",
     )
     po.add_argument(
@@ -1111,8 +1136,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     iv.add_argument("--domain", required=True, type=_check_domain_arg)
     which = iv.add_mutually_exclusive_group(required=True)  # exactly one key to look for
-    which.add_argument("--keyid", type=_check_nonempty_arg)
-    which.add_argument("--pubkey", type=_check_nonempty_arg)
+    which.add_argument("--keyid", type=_check_text_arg)
+    which.add_argument("--pubkey", type=_check_text_arg)
     which.add_argument("--key", type=_check_nonempty_arg, help="a key file, to derive the keyid")
     iv.set_defaults(func=run_identity)
 

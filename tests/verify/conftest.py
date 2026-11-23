@@ -284,7 +284,7 @@ class Scenario:
             envelope = data.sign_bytes(raw, self.signers.get(name, self.key))
             record = self.ceilings.get(name)
             if record is not None:
-                nonce_hex = data.derive_ref(raw).split(":", 1)[-1]
+                nonce_hex = data.derive_witness_nonce(envelope)
                 if record is _AUTO:
                     record = self.ceiling_for(
                         nonce_hex, WITNESS_ID, self.server_pub, self.sign_response

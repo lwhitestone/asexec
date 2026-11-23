@@ -8,7 +8,11 @@ prereg has ``due`` 2099-01-01T00:00:00Z, so a postreg with a ceiling is on time.
 
 import json
 
+import manifest_data as d
 import pytest
+
+from asexec import keys
+from asexec.verifier import verify_paths
 
 PASS = "asexec-verify/1 format=PASS selfsig=PASS timely=PASS"
 FAIL = "asexec-verify/1 format=PASS selfsig=PASS timely=FAIL"
@@ -23,6 +27,24 @@ def sc(scenario):
     for name in POSTREGS:
         scenario.with_ceiling(name)
     return scenario
+
+
+def test_timely__fail__3_a_ceiling_copied_to_another_signers_copy_is_no_time(sc, tmp_path):
+    """timely #3: a postreg re-signed by another key, with the first's ceiling copied onto it,
+    is not shown on time."""
+    other = keys.generate()
+    copies = []
+    for name in ("prereg", "postreg0"):
+        stored = json.loads(sc.read(name))
+        copy = d.sign_bytes(d.decode_payload(stored), other)
+        if "ceiling" in stored:
+            copy["ceiling"] = stored["ceiling"]
+        path = tmp_path / f"{name}.json"
+        path.write_text(json.dumps(copy))
+        copies.append(str(path))
+    report = verify_paths(copies, ["format", "selfsig", "timely"], None, servers=sc.servers)
+    assert report["code"] == FAIL
+    assert _get_statuses(report) == ["invalid-ceiling"]
 
 
 def _set_due(sc, due):

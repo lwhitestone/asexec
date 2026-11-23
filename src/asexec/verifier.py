@@ -26,7 +26,7 @@ The verify code is a summary of a computation, not a credential. Real verificati
 Tests (the catalog - only verifiable claims, no self-declarations)
 --------------------------------------------------------------------
   - ``ceiling``    : a ceiling witness (Roughtime) signature verifies against a
-                     pinned key AND its nonce == ref (of the body bytes). Applies
+                     pinned key AND its nonce is of this file's signature. Applies
                      to manifests that carry a ceiling.
   - ``chain``      : prev_hash chain integrity (one root, no gaps, no forks: a
                      single linear chain). Applies to
@@ -112,6 +112,7 @@ belongs to no commitment, so it has no state, and is reported in its own list.
 from __future__ import annotations
 
 import datetime
+import errno
 import json
 import os
 import re
@@ -195,20 +196,44 @@ _EPOCH = datetime.datetime(1970, 1, 1, tzinfo=datetime.UTC)
 _MICROSECOND = datetime.timedelta(microseconds=1)
 
 
+# The grammar of ``due`` (docs/VERIFICATION.md, Conventions), matched here because
+# ``fromisoformat``'s own differs by Python version. ASCII digits only.
+_DUE = re.compile(
+    r"([0-9]{4})-([0-9]{2})-([0-9]{2})"
+    r"(?:[T ]([0-9]{2}):([0-9]{2})(?::([0-9]{2})(?:\.([0-9]+))?)?"
+    r"(?:Z|([+-])([01][0-9]|2[0-3]):?([0-5][0-9]))?)?"
+)
+
+
 def parse_due(text: str) -> tuple[datetime.datetime, bool]:
     """The instant an ISO-8601 ``due`` names, and whether it has no UTC offset. The one parse
     of ``due``: signing (``cli._check_due_arg``, which refuses a naive one) and verify both use it,
     so what signing takes is what verify reads.
 
-    ``Z`` stands for ``+00:00``. A value with no offset is read as UTC, so the instant never
-    depends on the reader's local timezone. Digits past the microsecond are dropped (Python's
-    ``fromisoformat``). Raises ``ValueError`` if ``text`` is not such a timestamp.
+    Only ``_DUE``'s grammar is such a timestamp, so every Python reads the same instant from
+    it. ``Z`` stands for ``+00:00``. A value with no offset is read as UTC, so the instant
+    never depends on the reader's local timezone. Digits past the microsecond are dropped.
+    Raises ``ValueError`` if ``text`` is not such a timestamp, or no such time exists.
     """
-    dt = datetime.datetime.fromisoformat(text.replace("Z", "+00:00"))
-    naive = dt.tzinfo is None
-    if naive:
-        dt = dt.replace(tzinfo=datetime.UTC)
-    return dt, naive
+    match = _DUE.fullmatch(text)
+    if not match:
+        raise ValueError("not in the grammar of due")
+    year, month, day, hour, minute, second, fraction, sign, off_hours, off_minutes = match.groups()
+    zone = datetime.UTC
+    if sign:
+        offset = datetime.timedelta(hours=int(off_hours), minutes=int(off_minutes))
+        zone = datetime.timezone(-offset if sign == "-" else offset)
+    dt = datetime.datetime(
+        int(year),
+        int(month),
+        int(day),
+        int(hour or 0),
+        int(minute or 0),
+        int(second or 0),
+        int((fraction or "")[:6].ljust(6, "0")),
+        tzinfo=zone,
+    )
+    return dt, not (sign or text.endswith("Z"))
 
 
 def _parse_due(raw: Any) -> tuple[bool, float | None, bool, int | None]:
@@ -379,14 +404,17 @@ def verify_floor(body: dict[str, Any]) -> dict[str, Any]:
     return drand.verify_floor(parsed)  # floor #4 equality, #5 BLS; never raises
 
 
-def verify_ceiling(
-    mani: dict[str, Any], ref: str, servers: dict[str, dict[str, object]]
-) -> dict[str, Any]:
+# Why a ceiling can't be checked: the file has no well-formed signature for its nonce to cover.
+REASON_CEILING_NO_SIGNATURE = "no well-formed signature (selfsig #2) for the nonce to cover"
+
+
+def verify_ceiling(mani: dict[str, Any], servers: dict[str, dict[str, object]]) -> dict[str, Any]:
     """Verify the ceiling witness in the file's wrapper (if present).
 
     Two conditions: (1) the witness signature verifies against a pinned key,
-    and (2) the witness's nonce binds to THIS manifest (nonce == ``ref``, the digest of
-    its body bytes). Called only for a manifest that passed ``format``. Delegates the
+    and (2) the witness's nonce binds to THIS file's signature
+    (``manifest.derive_witness_nonce``: its pubkey, its signature and the bytes signed).
+    Called only for a manifest that passed ``format``. Delegates the
     binding, the pin lookup in ``servers`` (the pinned witnesses, which ``verify_paths``
     resolves) and the witness cryptography to the ``roughtime`` module.
     """
@@ -399,8 +427,12 @@ def verify_ceiling(
         return _invalid(e, "ceiling_type")
     from . import roughtime
 
+    try:  # a pubkey that is not hex, or a sig of the wrong shape (selfsig #2)
+        nonce = manifest.derive_witness_nonce(mani)
+    except (KeyError, IndexError, TypeError, ValueError):
+        return {"status": "invalid", "error": REASON_CEILING_NO_SIGNATURE}
     try:  # ceiling #2 binding, #3 pin lookup, #4 equality, #5 response
-        return roughtime.verify_ceiling(parsed, ref, servers)
+        return roughtime.verify_ceiling(parsed, nonce, servers)
     except Exception as e:  # an unsigned, attacker-shaped wrapper field must not crash verify
         return {"status": "invalid", "error": str(e)}
 
@@ -413,15 +445,29 @@ _NO_SUCH_PATH = object()
 def _resolve_inside(artifacts_dir: str, name: str) -> Any:
     """Resolve a normalized subject ``name`` under ``artifacts_dir``, following symlinks;
     None if it escapes (a symlink pointing outside), ``_NO_SUCH_PATH`` if no path can have
-    it."""
-    root = os.path.realpath(artifacts_dir)
+    it or the OS can't open one by it.
+
+    The OS is asked first. ``realpath`` alone follows more links than any OS does (on 3.12
+    until it hits the recursion limit, later without limit) and steps back out of a missing
+    directory, so it names files that can't be opened by the listed name."""
+    joined = os.path.join(artifacts_dir, name)
     try:
-        path = os.path.realpath(os.path.join(root, name))
+        os.stat(joined)
+        opens = True
+    except OSError as e:
+        if e.errno == errno.ELOOP:  # before realpath follows the links
+            return _NO_SUCH_PATH
+        opens = False
     except ValueError:  # embedded NUL, or UnicodeEncodeError
+        return _NO_SUCH_PATH
+    try:
+        root = os.path.realpath(artifacts_dir)
+        path = os.path.realpath(os.path.join(root, name))
+    except (ValueError, RecursionError):  # links the OS stopped short of, behind a missing one
         return _NO_SUCH_PATH
     if path != root and not path.startswith(root + os.sep):
         return None
-    return path
+    return path if opens else _NO_SUCH_PATH
 
 
 def _verify_entry(item: Any, artifacts_dir: str, repeated: set[str], field: str) -> dict[str, Any]:
@@ -548,7 +594,7 @@ def verify_paths(
         floor = verify_floor(body) if clean else {"status": "absent"}
         if floor.get("status") == "verified":
             floor["no_earlier_than_us"] = _get_no_earlier_than(floor)
-        ceiling = verify_ceiling(mani, fmt["ref"], servers) if clean else {"status": "absent"}
+        ceiling = verify_ceiling(mani, servers) if clean else {"status": "absent"}
         content = verify_content(body, artifacts_dir) if clean else {"status": "skipped"}
         if ceiling.get("status") == "verified":
             ceiling["no_later_than_us"] = _get_no_later_than(ceiling)

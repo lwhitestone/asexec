@@ -131,7 +131,7 @@ class CeilingInput(InputModel):
     """``ceiling`` (VERIFICATION.md ### ceiling)."""
 
     ceiling_type: Literal["roughtime"]  # ceiling #1
-    nonce: str  # ceiling #2 (shape; the binding to ref is code)
+    nonce: str  # ceiling #2 (shape; the binding to the file's signature is code)
     witness_id: str  # ceiling #3 (shape; the pin lookup is code)
     pubkey: Hex | None = None  # ceiling #4 (shape; the equality is code)
     response: Hex  # ceiling #5 (shape; the response check is code)

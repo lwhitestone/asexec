@@ -148,6 +148,15 @@ def sign_bytes(raw: bytes, key: tuple[bytes, bytes] = TEST_KEY) -> dict[str, Any
     }
 
 
+def derive_witness_nonce(envelope: dict[str, Any]) -> str:
+    """What a ceiling witnesses for ``envelope`` (VERIFICATION.md, ceiling #2), in hex: the
+    sha-256 of the pubkey's bytes, the signature's bytes and the signing input."""
+    dsse = envelope["dsse"]
+    signed = build_signing_input(decode_payload(envelope), dsse["payloadType"])
+    sig = base64.b64decode(dsse["signatures"][0]["sig"], validate=True)
+    return hashlib.sha256(bytes.fromhex(envelope["pubkey"]) + sig + signed).hexdigest()
+
+
 def sign(body: dict[str, Any], key: tuple[bytes, bytes] = TEST_KEY) -> dict[str, Any]:
     """A file around ``body``, signed by ``key`` whatever the body holds."""
     return sign_bytes(make_body_bytes(body), key)

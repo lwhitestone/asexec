@@ -6,6 +6,7 @@ import manifest_data as d
 import pytest
 
 from asexec import keys, roughtime
+from asexec.verifier import verify_paths
 
 PASS = "asexec-verify/1 ceiling=PASS format=PASS selfsig=PASS"
 FAIL = "asexec-verify/1 ceiling=FAIL format=PASS selfsig=PASS"
@@ -20,7 +21,8 @@ def sc(scenario):
 
 
 def test_ceiling__pass__all(sc):
-    """ceiling #1-#5: roughtime type, nonce == ref, pinned witness, valid response."""
+    """ceiling #1-#5: roughtime type, the nonce of this signature, pinned witness, valid
+    response."""
     report = sc.verify("ceiling")
     assert report["code"] == PASS
     assert report["manifests"][0]["ceiling"]["status"] == "verified"
@@ -90,11 +92,35 @@ def test_ceiling__fail__1_present_falsy_ceiling_is_examined(sc, value):
     assert sc.code("ceiling") == FAIL
 
 
-def test_ceiling__fail__2_nonce_equals_ref(sc):
-    """ceiling #2: nonce == ref. A genuine response for some other nonce fails."""
+def test_ceiling__fail__2_nonce_is_of_this_signature(sc):
+    """ceiling #2: the nonce is this file's witness nonce. A genuine response for some other
+    nonce fails."""
     other_nonce = "aa" * 32
     sc.ceilings["prereg"] = lambda nonce_hex: _record(sc, other_nonce)
     assert sc.code("ceiling") == FAIL
+
+
+@pytest.mark.parametrize("nonce_of", ["ref", "another-signers-copy"])
+def test_ceiling__fail__2_a_witness_of_the_body_alone_is_not_one_of_this_signature(
+    sc, tmp_path, nonce_of
+):
+    """ceiling #2: a ceiling shows when this key had signed these bytes. One for the body's ref,
+    or copied from the same body signed by another key, fails: else a later key would inherit
+    another's time."""
+    stored = json.loads(sc.read("prereg"))
+    if nonce_of == "ref":
+        sc.ceilings["prereg"] = lambda nonce_hex: _record(
+            sc, d.derive_ref(d.decode_payload(stored)).split(":", 1)[1]
+        )
+        assert sc.code("ceiling") == FAIL
+        return
+    copy = d.sign_bytes(d.decode_payload(stored), keys.generate())
+    copy["ceiling"] = stored["ceiling"]
+    path = tmp_path / "copy.json"
+    path.write_text(json.dumps(copy))
+    report = verify_paths([str(path)], ["format", "selfsig", "ceiling"], None, servers=sc.servers)
+    assert report["code"] == FAIL
+    assert report["manifests"][0]["ceiling"]["status"] == "invalid"
 
 
 def _respell_spaced(raw: bytes) -> bytes:
@@ -104,10 +130,9 @@ def _respell_spaced(raw: bytes) -> bytes:
     return spaced
 
 
-def test_ceiling__pass__2_nonce_is_ref_of_the_stored_bytes(sc):
-    """ceiling #2: the nonce is bound to ref, the sha-256 of the body bytes as stored. A body
-    stored with non-canonical spacing, validly signed, whose ceiling was fetched for those
-    bytes, passes."""
+def test_ceiling__pass__2_nonce_binds_the_stored_bytes(sc):
+    """ceiling #2: the nonce binds the body bytes as stored. A body stored with non-canonical
+    spacing, validly signed, whose ceiling was fetched for that file, passes."""
     sc.edit_body_bytes("prereg", _respell_spaced)
     stored = d.decode_payload(json.loads(sc.read("prereg")))
     assert stored != d.make_body_bytes(json.loads(stored))  # not what the writer would store
@@ -118,11 +143,11 @@ def test_ceiling__pass__2_nonce_is_ref_of_the_stored_bytes(sc):
     assert prereg["ref"] == d.derive_ref(stored)
 
 
-def test_ceiling__fail__2_nonce_is_not_ref_of_a_reserialized_body(sc):
-    """ceiling #2: a witness for the canonical re-serialization of the same JSON value is
-    not a witness for the bytes stored: nothing re-serializes the body, so it fails."""
+def test_ceiling__fail__2_nonce_is_not_of_a_reserialized_body(sc):
+    """ceiling #2: a witness for the canonical re-serialization of the same JSON value, signed,
+    is not a witness for the bytes stored: nothing re-serializes the body, so it fails."""
     sc.edit_body_bytes("prereg", _respell_spaced)
-    canonical_hex = d.derive_ref(d.make_body_bytes(sc._body("prereg"))).split(":", 1)[1]
+    canonical_hex = d.derive_witness_nonce(d.sign(sc._body("prereg")))
     sc.ceilings["prereg"] = lambda nonce_hex: _record(sc, canonical_hex)
     report = sc.verify("ceiling")
     assert report["code"] == FAIL
