@@ -24,7 +24,7 @@ IDENTITY_WELL_KNOWN_PATH = ".well-known/asexec.json"
 # keeps that value until the next release commit. A format not yet released is keyed in FORMATS
 # by this name, so its key moves with the literal. While main writes a released type, a new
 # format can't be keyed by this name too: the two keys would collide (#59).
-MANIFEST_PAYLOAD_TYPE = "application/vnd.asexec.0.3.22+json"
+MANIFEST_PAYLOAD_TYPE = "application/vnd.asexec.0.4.0b1+json"
 
 # The rules of each format verify reads, keyed by ``payloadType``. A file is read only under
 # the entry its own ``dsse.payloadType`` names, never another; one that names none fails
