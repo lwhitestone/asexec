@@ -208,7 +208,7 @@ def test_complete__pass__5_any_qualifying_postreg_on_time_accounts_for_an_item(s
 @pytest.mark.parametrize("absent", ["missing", "null"])
 def test_complete__pass__4_items_under_a_prereg_without_due(sc, absent):
     """complete #4-#5: with no due, items are checked for a counted postreg and a status
-    only, not for time (#46): no ceiling is needed."""
+    only, not for time: no ceiling is needed."""
     if absent == "missing":
         sc.unset("prereg", "body.due")
     else:

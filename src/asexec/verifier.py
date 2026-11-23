@@ -966,7 +966,7 @@ def _judge_complete(
                     statuses=_list_statuses(claims, qualifying),
                     reason=REASON_ITEM_NOT_ON_TIME[kind],
                 )
-        else:  # no due: a postreg and a status only (#46); an unparseable due fails #4 below
+        else:  # no due: a postreg and a status only; an unparseable due fails #4 below
             result.update(ok=True, statuses=_list_statuses(claims, qualifying))
         results.append(result)
     unlisted = [
@@ -1147,7 +1147,7 @@ def _derive_commitment_state(
     pr: dict[str, Any], now: float, due_present: bool, due_ts: float | None
 ) -> str:
     if pr["counted_postregs"]:
-        return "fulfilled"  # even if a counted postreg is late: timely says that (#46)
+        return "fulfilled"  # even if a counted postreg is late: timely says that
     if not due_present:
         return "no-due"  # no deadline declared -> cannot elapse, so it is not open
     if due_ts is None:

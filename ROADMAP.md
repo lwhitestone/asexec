@@ -223,9 +223,9 @@ adds sits outside it, in the wrapper:
   With the unknown-`payloadType` failure above in `format`, version skew reads as
   `format=FAIL`, not as a bad signature.
 - `signer`: `--signer` / `--trusted-keys <file>`.
-- `timely`: postreg ceiling ≤ prereg `due`. (Done ahead of 0.4.0, with the edge cases decided
-  in #46: the ceiling's time is the later end of the signed interval, `MIDP +
-  RADI`, and a missing ceiling or one that fails the `ceiling` conditions is not on time.)
+- `timely`: postreg ceiling ≤ prereg `due`. (Done ahead of 0.4.0: the ceiling's time is the
+  later end of the signed interval, `MIDP + RADI`, and a missing ceiling or one that fails the
+  `ceiling` conditions is not on time.)
 - New commitment state `no-due`, separate from `open`. This changes what `open` means, but
   the code grammar stays `asexec-verify/1`, because the bump rule starts at `0.4.0`. (Done
   ahead of 0.4.0.)
