@@ -187,7 +187,7 @@ def test_timely__pass__2_any_counted_copy_with_a_verified_ceiling_shows_it(sc):
 
 def test_timely__pass__all_a_prereg_without_due_is_not_examined(sc):
     """timely: a commitment whose prereg has no due is not examined, so one open-ended claim
-    does not fail timely for a whole run (D5a). Here the second commitment's postreg has no
+    does not fail timely for a whole run. Here the second commitment's postreg has no
     ceiling at all."""
     sc.add_prereg("open-ended")
     sc.unset("open-ended", "body.due")

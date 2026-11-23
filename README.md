@@ -144,6 +144,9 @@ pip install asexec            # ed25519 (PyNaCl) + BLS verification for drand (p
 pip install 'asexec[blake3]'  # optional: blake3 as a content-hash algorithm
 ```
 
+To try the 0.4.0 format before it is released, install a beta by its exact version: see
+[`docs/BETA.md`](./docs/BETA.md).
+
 ## Usage
 
 ```bash

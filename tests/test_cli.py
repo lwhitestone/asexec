@@ -779,7 +779,7 @@ def test_an_inline_integer_past_the_digit_limit_is_not_valid_json(
     tmp_path, key, flag, value, capsys
 ):
     """Python reads no integer of more than 4,300 digits: such a value is not valid JSON here,
-    and says so, as any other unreadable value does (checkpoint 8's note)."""
+    and says so, as any other unreadable value does."""
     cmd = "postreg" if flag == "--evidence" else "prereg"
     link = ["--target", "t"] if cmd == "prereg" else ["--target", "t", "--fulfills", REF]
     with pytest.raises(SystemExit) as e:
@@ -1112,7 +1112,7 @@ def test_postreg_refuses_to_fulfil_a_prereg_it_cannot_read(
 )
 def test_postreg_fulfils_a_prereg_that_fails_selfsig_as_before(tmp_path, key, prereg, edit):
     """A prereg file that passes format but fails selfsig is still fulfilled: its ref and
-    target are read as for any other (whether to refuse it is open for the human gate)."""
+    target are read as for any other."""
     mani = json.loads(open(prereg).read())
     edit(mani)
     open(prereg, "w").write(json.dumps(mani))
